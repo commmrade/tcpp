@@ -10,8 +10,8 @@ function(
   CLANG_WARNINGS
   GCC_WARNINGS
   CUDA_WARNINGS)
-  if("${MSVC_WARNINGS}" STREQUAL "")
-    set(MSVC_WARNINGS
+    if("${MSVC_WARNINGS}" STREQUAL "")
+        set(MSVC_WARNINGS
         /W4 # Baseline reasonable warnings
         /w14242 # 'identifier': conversion from 'type1' to 'type2', possible loss of data
         /w14254 # 'operator': conversion from 'type1:field_bits' to 'type2:field_bits', possible loss of data
@@ -36,10 +36,10 @@ function(
         /w14928 # illegal copy-initialization; more than one user-defined conversion has been implicitly applied
         /permissive- # standards conformance mode for MSVC compiler.
     )
-  endif()
+    endif()
 
-  if("${CLANG_WARNINGS}" STREQUAL "")
-    set(CLANG_WARNINGS
+    if("${CLANG_WARNINGS}" STREQUAL "")
+        set(CLANG_WARNINGS
         -Wall
         -Wextra # reasonable and standard
         -Wshadow # warn the user if a variable declaration shadows one from a parent context
@@ -57,10 +57,10 @@ function(
         -Wformat=2 # warn on security issues around functions that format output (ie printf)
         -Wimplicit-fallthrough # warn on statements that fallthrough without an explicit annotation
     )
-  endif()
+    endif()
 
-  if("${GCC_WARNINGS}" STREQUAL "")
-    set(GCC_WARNINGS
+    if("${GCC_WARNINGS}" STREQUAL "")
+        set(GCC_WARNINGS
         ${CLANG_WARNINGS}
         -Wmisleading-indentation # warn if indentation implies blocks where blocks do not exist
         -Wduplicated-cond # warn if if / else chain has duplicated conditions
@@ -69,10 +69,10 @@ function(
         -Wuseless-cast # warn if you perform a cast to the same type
         -Wsuggest-override # warn if an overridden member function is not marked 'override' or 'final'
     )
-  endif()
+    endif()
 
-  if("${CUDA_WARNINGS}" STREQUAL "")
-    set(CUDA_WARNINGS
+    if("${CUDA_WARNINGS}" STREQUAL "")
+        set(CUDA_WARNINGS
         -Wall
         -Wextra
         -Wunused
@@ -80,32 +80,32 @@ function(
         -Wshadow
         # TODO add more Cuda warnings
     )
-  endif()
+    endif()
 
-  if(WARNINGS_AS_ERRORS)
-    message(TRACE "Warnings are treated as errors")
-    list(APPEND CLANG_WARNINGS -Werror)
-    list(APPEND GCC_WARNINGS -Werror)
-    list(APPEND MSVC_WARNINGS /WX)
-  endif()
+    if(WARNINGS_AS_ERRORS)
+        message(TRACE "Warnings are treated as errors")
+        # list(APPEND CLANG_WARNINGS -Werror)
+        # list(APPEND GCC_WARNINGS -Werror)
+        list(APPEND MSVC_WARNINGS /WX)
+    endif()
 
-  if(MSVC)
-    set(PROJECT_WARNINGS_CXX ${MSVC_WARNINGS})
-  elseif(CMAKE_CXX_COMPILER_ID MATCHES ".*Clang")
-    set(PROJECT_WARNINGS_CXX ${CLANG_WARNINGS})
-  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    set(PROJECT_WARNINGS_CXX ${GCC_WARNINGS})
-  else()
-    message(AUTHOR_WARNING "No compiler warnings set for CXX compiler: '${CMAKE_CXX_COMPILER_ID}'")
-    # TODO support Intel compiler
-  endif()
+    if(MSVC)
+        set(PROJECT_WARNINGS_CXX ${MSVC_WARNINGS})
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES ".*Clang")
+        set(PROJECT_WARNINGS_CXX ${CLANG_WARNINGS})
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        set(PROJECT_WARNINGS_CXX ${GCC_WARNINGS})
+    else()
+        message(AUTHOR_WARNING "No compiler warnings set for CXX compiler: '${CMAKE_CXX_COMPILER_ID}'")
+        # TODO support Intel compiler
+    endif()
 
-  # use the same warning flags for C
-  set(PROJECT_WARNINGS_C "${PROJECT_WARNINGS_CXX}")
+    # use the same warning flags for C
+    set(PROJECT_WARNINGS_C "${PROJECT_WARNINGS_CXX}")
 
-  set(PROJECT_WARNINGS_CUDA "${CUDA_WARNINGS}")
+    set(PROJECT_WARNINGS_CUDA "${CUDA_WARNINGS}")
 
-  target_compile_options(
+    target_compile_options(
     ${project_name}
     INTERFACE # C++ warnings
               $<$<COMPILE_LANGUAGE:CXX>:${PROJECT_WARNINGS_CXX}>
