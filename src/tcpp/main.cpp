@@ -28,19 +28,22 @@ int main()
         const ssize_t rd_bytes = tun.read(buf);
         assert(rd_bytes);
 
-        netparser::IpHeaderView iph{std::span<const std::byte, netparser::IPV4H_MIN_SIZE>{buf.data(), netparser::IPV4H_MIN_SIZE}};
+        const netparser::IpHeaderView iph{std::span<const std::byte, netparser::IPV4H_MIN_SIZE>{buf.data(), netparser::IPV4H_MIN_SIZE}};
+        if (iph.protocol() == 6) {
+            const auto src_addr = iph.source_addr();
+            const auto dest_addr = iph.dest_addr();
 
-        const auto src_addr = iph.source_addr();
-        const auto dest_addr = iph.dest_addr();
+            std::array<char, INET_ADDRSTRLEN> src{};
+            std::array<char, INET_ADDRSTRLEN> dest{};
 
-        std::array<char, INET_ADDRSTRLEN> src{};
-        std::array<char, INET_ADDRSTRLEN> dest{};
-
-        inet_ntop(AF_INET, src_addr.data(), src.data(), INET_ADDRSTRLEN);
-        inet_ntop(AF_INET, dest_addr.data(), dest.data(), INET_ADDRSTRLEN);
+            inet_ntop(AF_INET, src_addr.data(), src.data(), INET_ADDRSTRLEN);
+            inet_ntop(AF_INET, dest_addr.data(), dest.data(), INET_ADDRSTRLEN);
 
 
-        std::println("Protocol: {}. Addr {} and {}", iph.protocol(), src.data(), dest.data());
+            // std::println("Ver: {}, IHL: {}, Protocol: {}. Addr {} and {}", iph.version(), iph.ihl(), iph.protocol(), src.data(), dest.data());
+            std::println("DF: {}. MF: {}", iph.dont_fragment(), iph.more_fragments());
+        }
+
     }
 
     return 0;
