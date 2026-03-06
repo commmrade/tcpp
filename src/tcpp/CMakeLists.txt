@@ -1,8 +1,10 @@
-add_executable(main main.cpp)
+add_executable(main main.cpp
+        tun.cpp
+        tun.hpp)
 
 target_link_libraries(
   main
-  PRIVATE tcpp::tcpp_options
+  PRIVATE tcpp::tcpp_options tcpp::netparser
           tcpp::tcpp_warnings)
 
 target_link_system_libraries(
