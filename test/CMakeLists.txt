@@ -32,7 +32,8 @@ add_test(NAME cli.version_matches COMMAND main --version)
 set_tests_properties(cli.version_matches PROPERTIES PASS_REGULAR_EXPRESSION "${PROJECT_VERSION}")
 
 add_executable(tests tests.cpp
-        ip_tests.cpp)
+        ip_tests.cpp
+        tcp_tests.cpp)
 target_link_libraries(
         tests
         PRIVATE tcpp::tcpp_warnings

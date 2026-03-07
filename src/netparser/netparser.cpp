@@ -1,5 +1,7 @@
 #include <print>
 #include "netparser.hpp"
+
+#include <assert.h>
 #include <arpa/inet.h>
 //
 // Created by klewy on 3/6/26.
@@ -200,4 +202,298 @@ std::uint8_t IpHeader::protocol() const { return hdr_.protocol; }
 std::uint32_t IpHeader::source_addr() const { return hdr_.saddr; }
 
 std::uint32_t IpHeader::dest_addr() const { return hdr_.daddr; }
+
+TcpHeaderView::TcpHeaderView(const std::span<const std::byte> bytes) : bytes_(bytes)
+{
+    if (bytes_.size() < TCPH_MIN_SIZE) {
+        throw std::runtime_error("Bytes is too small for a tcp header");
+    }
+}
+
+std::uint16_t TcpHeaderView::src_port() const
+{
+    std::uint16_t port{};
+    std::memcpy(&port, bytes_.data() + TCPH_SRC_PORT_OFFSET, sizeof(port));
+    return ntohs(port);
+}
+
+std::uint16_t TcpHeaderView::dest_port() const
+{
+    std::uint16_t port{};
+    std::memcpy(&port, bytes_.data() + TCPH_DEST_PORT_OFFSET, sizeof(port));
+    return ntohs(port);
+}
+
+std::uint32_t TcpHeaderView::seqn() const
+{
+    std::uint32_t seq{};
+    std::memcpy(&seq, bytes_.data() + TCPH_SEQN_OFFSET, sizeof(seq));
+    return ntohl(seq);
+}
+
+std::uint32_t TcpHeaderView::ackn() const
+{
+    std::uint32_t ackn{};
+    std::memcpy(&ackn, bytes_.data() + TCPH_ACKN_OFFSET, sizeof(ackn));
+    return ntohl(ackn);
+}
+
+std::uint8_t TcpHeaderView::data_off() const
+{
+    const std::uint8_t byte = std::to_integer<std::uint8_t>(bytes_[TCPH_DOFF_OFFSET]) >> 4U;
+    return byte;
+}
+
+bool TcpHeaderView::cwr() const
+{
+    const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
+    const bool cwr = flags & (1U << 7U); // NOLINT
+    return cwr;
+}
+
+bool TcpHeaderView::ece() const
+{
+    const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
+    const bool ece = flags & (1U << 6U); // NOLINT
+    return ece;
+}
+
+bool TcpHeaderView::urg() const
+{
+    const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
+    const bool urg = flags & (1U << 5U); // NOLINT
+    return urg;
+}
+
+bool TcpHeaderView::ack() const
+{
+    const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
+    const bool ack = flags & (1U << 4U); // NOLINT
+    return ack;
+}
+
+bool TcpHeaderView::psh() const
+{
+    const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
+    const bool psh = flags & (1U << 3U); // NOLINT
+    return psh;
+}
+
+bool TcpHeaderView::rst() const
+{
+    const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
+    const bool rst = flags & (1U << 2U); // NOLINT
+    return rst;
+}
+
+bool TcpHeaderView::syn() const
+{
+    const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
+    const bool syn = flags & (1U << 1U); // NOLINT
+    return syn;
+}
+
+bool TcpHeaderView::fin() const
+{
+    const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
+    const bool fin = flags & 1U; // NOLINT
+    return fin;
+}
+
+std::uint16_t TcpHeaderView::window() const
+{
+    std::uint16_t wnd{};
+    std::memcpy(&wnd, bytes_.data() + TCPH_WIN_OFFSET, sizeof(wnd));
+    return ntohs(wnd);
+}
+
+std::uint16_t TcpHeaderView::checksum() const
+{
+    std::uint16_t cksum{};
+    std::memcpy(&cksum, bytes_.data() + TCPH_CKSUM_OFFSET, sizeof(cksum));
+    return ntohs(cksum);
+}
+
+std::uint16_t TcpHeaderView::urg_ptr() const
+{
+    std::uint16_t urgptr{};
+    std::memcpy(&urgptr, bytes_.data() + TCPH_URGPTR_OFFSET, sizeof(urgptr));
+    return ntohs(urgptr);
+}
+
+TcpHeader::TcpHeader(const TcpHeaderView &tcph)
+{
+    const auto data = tcph.data();
+    assert(sizeof(hdr_) >= data.size());
+    std::memcpy(&hdr_, data.data(), sizeof(hdr_));
+}
+
+std::uint16_t TcpHeader::src_port() const
+{
+    return ntohs(hdr_.source);
+}
+
+void TcpHeader::src_port(const std::uint16_t port)
+{
+    hdr_.source = htons(port);
+}
+
+std::uint16_t TcpHeader::dest_port() const
+{
+    return ntohs(hdr_.dest);
+}
+
+void TcpHeader::dest_port(const std::uint16_t port)
+{
+    hdr_.dest = htons(port);
+}
+
+std::uint32_t TcpHeader::seqn() const
+{
+    return ntohl(hdr_.seq);
+}
+
+void TcpHeader::seqn(const std::uint32_t num)
+{
+    hdr_.seq = htonl(num);
+}
+
+std::uint32_t TcpHeader::ackn() const
+{
+    return ntohl(hdr_.ack_seq);
+}
+
+void TcpHeader::ackn(const std::uint32_t num)
+{
+    hdr_.ack_seq = htonl(num);
+}
+
+std::uint8_t TcpHeader::data_off() const
+{
+    return hdr_.doff;
+}
+
+void TcpHeader::data_off(const std::uint8_t val)
+{
+    hdr_.doff = val;
+}
+
+bool TcpHeader::cwr() const
+{
+    return hdr_.cwr;
+}
+
+void TcpHeader::cwr(const bool val)
+{
+    hdr_.cwr = val;
+}
+
+bool TcpHeader::ece() const
+{
+    return hdr_.ece;
+}
+
+void TcpHeader::ece(const bool val)
+{
+    hdr_.ece = val;
+}
+
+bool TcpHeader::urg() const
+{
+    return hdr_.urg;
+}
+
+void TcpHeader::urg(const bool val)
+{
+    hdr_.urg = val;
+}
+
+bool TcpHeader::ack() const
+{
+    return hdr_.ack;
+}
+
+void TcpHeader::ack(const bool val)
+{
+    hdr_.ack = val;
+}
+
+bool TcpHeader::psh() const
+{
+    return hdr_.psh;
+}
+
+void TcpHeader::psh(const bool val)
+{
+    hdr_.psh = val;
+}
+
+bool TcpHeader::rst() const
+{
+    return hdr_.rst;
+}
+
+void TcpHeader::rst(const bool val)
+{
+    hdr_.rst = val;
+}
+
+bool TcpHeader::syn() const
+{
+    return hdr_.syn;
+}
+
+void TcpHeader::syn(const bool val)
+{
+    hdr_.syn = val;
+}
+
+bool TcpHeader::fin() const
+{
+    return hdr_.fin;
+}
+
+void TcpHeader::fin(const bool val)
+{
+    hdr_.fin = val;
+}
+
+std::uint16_t TcpHeader::window() const
+{
+    return ntohs(hdr_.window);
+}
+
+void TcpHeader::window(const std::uint16_t wnd_size)
+{
+    hdr_.window = htons(wnd_size);
+}
+
+std::uint16_t TcpHeader::checksum() const
+{
+    return ntohs(hdr_.check);
+}
+
+void TcpHeader::checksum(const std::uint16_t cksum)
+{
+    hdr_.check = htons(cksum);
+}
+
+std::uint16_t TcpHeader::urg_ptr() const
+{
+    return ntohs(hdr_.urg_ptr);
+}
+
+void TcpHeader::urg_ptr(const std::uint16_t ptr)
+{
+    hdr_.urg_ptr = htons(ptr);
+}
+
+std::vector<std::byte> TcpHeader::serialize() const
+{
+    std::vector<std::byte> res{};
+    res.resize(sizeof(hdr_)); // TODO: MAKE IT INCLUDE OPTIONS
+    std::memcpy(res.data(), &hdr_, sizeof(hdr_));
+    return res;
+}
+
 }// namespace netparser

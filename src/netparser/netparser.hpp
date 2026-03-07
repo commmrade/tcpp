@@ -6,6 +6,7 @@
 #include <cstring>
 #include <vector>
 #include <linux/ip.h>
+#include <linux/tcp.h>
 #include <span>
 #include <cstdint>
 #include <cstddef>
@@ -25,6 +26,8 @@ static constexpr std::size_t IPV4H_FLAGS_OFFSET = 6;
 static constexpr std::size_t IPV4H_FRAG_OFFSET = 6;
 static constexpr std::size_t IPV4H_TTL_OFFSET = 8;
 static constexpr std::size_t IPV4H_HDR_CHECKSUM_OFFSET = 10;
+
+
 /// Non-owning IP Header
 class IpHeaderView
 {
@@ -114,15 +117,115 @@ public:
 };
 
 
+static constexpr std::size_t TCPH_MIN_SIZE = 20;
+static constexpr std::size_t TCPH_SRC_PORT_OFFSET = 0;
+static constexpr std::size_t TCPH_DEST_PORT_OFFSET = 2;
+static constexpr std::size_t TCPH_SEQN_OFFSET = 4;
+static constexpr std::size_t TCPH_ACKN_OFFSET = 8;
+static constexpr std::size_t TCPH_DOFF_OFFSET = 12;
+static constexpr std::size_t TCPH_FLAGS_OFFSET = 13;
+static constexpr std::size_t TCPH_WIN_OFFSET = 14;
+static constexpr std::size_t TCPH_CKSUM_OFFSET = 16;
+static constexpr std::size_t TCPH_URGPTR_OFFSET = 18;
+
 class TcpHeaderView
 {
     const std::span<const std::byte> bytes_;
 public:
-    explicit TcpHeaderView(std::span<std::byte> bytes) : bytes_(bytes)
+    TcpHeaderView() = default;
+    explicit TcpHeaderView(const std::span<const std::byte> bytes);
+
+    [[nodiscard]] std::uint16_t src_port() const;
+    [[nodiscard]] std::uint16_t dest_port() const;
+
+    [[nodiscard]] std::uint32_t seqn() const;
+    [[nodiscard]] std::uint32_t ackn() const;
+
+    [[nodiscard]] std::uint8_t data_off() const;
+
+    // Flags
+    [[nodiscard]] bool cwr() const;
+    [[nodiscard]] bool ece() const;
+    [[nodiscard]] bool urg() const;
+    [[nodiscard]] bool ack() const;
+    [[nodiscard]] bool psh() const;
+    [[nodiscard]] bool rst() const;
+    [[nodiscard]] bool syn() const;
+    [[nodiscard]] bool fin() const;
+
+    [[nodiscard]] std::uint16_t window() const;
+    [[nodiscard]] std::uint16_t checksum() const;
+    [[nodiscard]] std::uint16_t urg_ptr() const;
+
+    [[nodiscard]] std::span<const std::byte> data() const
     {
+        return bytes_;
     }
+    // TODO: Options
 };
 
+class TcpHeader
+{
+private:
+    tcphdr hdr_{};
+public:
+    TcpHeader() = default;
+    explicit TcpHeader(const TcpHeaderView& tcph);
+
+    /// Everything is set/returned in Host Byte Order
+    [[nodiscard]] std::uint16_t src_port() const;
+    void src_port(const std::uint16_t port);
+
+    [[nodiscard]] std::uint16_t dest_port() const;
+    void dest_port(const std::uint16_t port);
+
+    [[nodiscard]] std::uint32_t seqn() const;
+    void seqn(const std::uint32_t num);
+
+    [[nodiscard]] std::uint32_t ackn() const;
+    void ackn(const std::uint32_t num);
+
+    [[nodiscard]] std::uint8_t data_off() const;
+    void data_off(const std::uint8_t val);
+
+    // Flags
+    [[nodiscard]] bool cwr() const;
+    void cwr(const bool val);
+
+    [[nodiscard]] bool ece() const;
+    void ece(const bool val);
+
+    [[nodiscard]] bool urg() const;
+    void urg(const bool val);
+
+    [[nodiscard]] bool ack() const;
+    void ack(const bool val);
+
+    [[nodiscard]] bool psh() const;
+    void psh(const bool val);
+
+    [[nodiscard]] bool rst() const;
+    void rst(const bool val);
+
+    [[nodiscard]] bool syn() const;
+    void syn(const bool val);
+
+    [[nodiscard]] bool fin() const;
+    void fin(const bool val);
+
+    [[nodiscard]] std::uint16_t window() const;
+    void window(const std::uint16_t wnd_size);
+
+    [[nodiscard]] std::uint16_t checksum() const;
+    void checksum(const std::uint16_t cksum);
+
+    [[nodiscard]] std::uint16_t urg_ptr() const;
+    void urg_ptr(const std::uint16_t ptr);
+
+    std::vector<std::byte> serialize() const;
+
+    // TODO: options
+};
 
 } // namespace netparser
 
