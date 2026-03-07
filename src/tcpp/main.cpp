@@ -5,18 +5,8 @@
 #include <cstring>
 #include "tun.hpp"
 
-constexpr std::array<std::byte, 20> ip_header{
-    std::byte{0x45}, // Version(4) + IHL(5)
-    std::byte{0x00}, // DSCP/ECN
-    std::byte{0x00}, std::byte{0x28}, // Total length = 40
-    std::byte{0x12}, std::byte{0x34}, // Identification
-    std::byte{0x40}, std::byte{0x00}, // Flags + fragment offset
-    std::byte{0x40}, // TTL = 64
-    std::byte{0x06}, // Protocol = TCP
-    std::byte{0x00}, std::byte{0x00}, // Header checksum (placeholder)
-    std::byte{0xC0}, std::byte{0xA8}, std::byte{0x01}, std::byte{0x01}, // Source IP
-    std::byte{0xC0}, std::byte{0xA8}, std::byte{0x01}, std::byte{0x02}  // Destination IP
-};
+
+
 
 int main()
 {
@@ -32,19 +22,19 @@ int main()
         if (iph.protocol() == 6) {
 
             const netparser::IpHeader owned_iph{iph};
-            iphdr iph = owned_iph.test();
-            const auto src_addr = iph.saddr;
-            const auto dest_addr = iph.daddr;
+            // iphdr iph = owned_iph.test();
+            // const auto src_addr = iph.saddr;
+            // const auto dest_addr = iph.daddr;
 
-            std::array<char, INET_ADDRSTRLEN> src{};
-            std::array<char, INET_ADDRSTRLEN> dest{};
+            // std::array<char, INET_ADDRSTRLEN> src{};
+            // std::array<char, INET_ADDRSTRLEN> dest{};
 
-            inet_ntop(AF_INET, &src_addr, src.data(), INET_ADDRSTRLEN);
-            inet_ntop(AF_INET, &dest_addr, dest.data(), INET_ADDRSTRLEN);
+            // inet_ntop(AF_INET, &src_addr, src.data(), INET_ADDRSTRLEN);
+            // inet_ntop(AF_INET, &dest_addr, dest.data(), INET_ADDRSTRLEN);
 
-            auto ver = iph.version;
-            auto ihl = iph.ihl;
-            std::println("RAW IP Ver: {}, IHL: {}, Protocol: {}. Addr {} and {}", ver, ihl, iph.protocol, src.data(), dest.data());
+            // auto ver = iph.version;
+            // auto ihl = iph.ihl;
+            // std::println("RAW IP Ver: {}, IHL: {}, Protocol: {}. Addr {} and {}", ver, ihl, iph.protocol, src.data(), dest.data());
             // std::println("DF: {}. MF: {}", iph.dont_fragment(), iph.more_fragments());
 
 
