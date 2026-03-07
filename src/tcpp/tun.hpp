@@ -21,7 +21,7 @@ class tun
 private:
     int tun_fd{};
 public:
-    tun(std::string_view dev_name)
+    explicit tun(std::string_view dev_name)
     {
         tun_fd = open("/dev/net/tun", O_RDWR);
         if (tun_fd < 0) {
@@ -70,7 +70,7 @@ public:
     }
 
     template<typename T, std::size_t N>
-    [[nodiscard]] ssize_t read(std::array<T, N>& buf)
+    [[nodiscard]] ssize_t read(std::array<T, N>& buf) const
     {
         return read(buf.data(), N);
     }
