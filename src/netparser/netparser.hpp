@@ -2,7 +2,7 @@
 // Created by klewy on 3/6/26.
 //
 #include <cstring>
-
+#include <linux/ip.h>
 #ifndef TCPP_NETPARSER_H
 #define TCPP_NETPARSER_H
 
@@ -17,6 +17,9 @@ static constexpr std::size_t IPV4H_TYPE_OF_SERVICE_OFFSET = 1;
 static constexpr std::size_t IPV4H_TOT_LEN_OFFSET = 2;
 static constexpr std::size_t IPV4H_ID_OFFSET = 3;
 static constexpr std::size_t IPV4H_FLAGS_OFFSET = 6;
+static constexpr std::size_t IPV4H_FRAG_OFFSET = 6;
+static constexpr std::size_t IPV4H_TTL_OFFSET = 8;
+static constexpr std::size_t IPV4H_HDR_CHECKSUM_OFFSET = 10;
 /// Non-owning IP Header
 class IpHeaderView
 {
@@ -30,36 +33,77 @@ public:
     [[nodiscard]] std::uint8_t version() const;
     [[nodiscard]] std::uint8_t ihl() const;
 
-    // TODO: Make this actually return bit flags
     [[nodiscard]] std::uint8_t type_of_service() const;
 
     [[nodiscard]] std::uint16_t total_len() const;
     [[nodiscard]] std::uint16_t id() const;
     [[nodiscard]] bool dont_fragment() const;
     [[nodiscard]] bool more_fragments() const;
+    [[nodiscard]] std::uint16_t frag_offset() const;
+    [[nodiscard]] std::uint8_t ttl() const;
+    [[nodiscard]] std::uint16_t checksum() const;
     [[nodiscard]] std::uint8_t protocol() const;
 
-    [[nodiscard]] std::array<std::byte, 4> source_addr() const;
-    [[nodiscard]] std::array<std::byte, 4> dest_addr() const;
-    // Etc...
+    [[nodiscard]] std::uint32_t source_addr() const;
+    [[nodiscard]] std::uint32_t dest_addr() const;
+
+    [[nodiscard]] std::span<const std::byte> data() const;
+    // No options yet
 };
 
 /// Owning IP Header
 class IpHeader
 {
 private:
-    std::byte ver_ihl_{0x45};
-    std::byte type_of_service_{};
-    unsigned short total_len_{};
-    // Etc...
+    iphdr hdr_{};
 public:
     IpHeader() = default;
-    // todo all construcotrs and destructors
-    // TODO: ONLY IMPL WHAT I NEED FOR TCPP PROJECT
-    explicit IpHeader(const IpHeaderView& iph)
-    {
-        // construct IpHeader from view
-    }
+    explicit IpHeader(const IpHeaderView& iph);
+
+    [[nodiscard]] std::uint8_t version() const;
+    void version(const std::uint8_t ver);
+    [[nodiscard]] std::uint8_t ihl() const;
+    void ihl(const std::uint8_t ihl);
+
+    [[nodiscard]] std::uint8_t type_of_service() const;
+    void type_of_service(const std::uint8_t tos);
+
+    [[nodiscard]] std::uint16_t total_len() const;
+    /// Pass argument in NET. Byte Order
+    void total_len(const std::uint16_t len);
+    [[nodiscard]] std::uint16_t id() const;
+    /// Pass argument in NET. Byte Order
+    void id(const std::uint16_t ident);
+
+    [[nodiscard]] bool dont_fragment() const;
+    void dont_fragment(bool val);
+
+    [[nodiscard]] bool more_fragments() const;
+    void more_fragments(bool val);
+
+    [[nodiscard]] std::uint16_t frag_offset() const;
+    /// Pass argument in NET. Byte Order
+    void frag_offset(const std::uint16_t frag_off);
+
+    [[nodiscard]] std::uint8_t ttl() const;
+    void ttl(const std::uint8_t val);
+
+    [[nodiscard]] std::uint16_t checksum() const;
+    /// Pass argument in NET. Byte Order
+    void checksun(const std::uint16_t cksum);
+
+    [[nodiscard]] std::uint8_t protocol() const;
+    void protocol(const std::uint8_t proto);
+
+    /// Returns IPV4 addr. in NETWORK order
+    [[nodiscard]] std::uint32_t source_addr() const;
+    /// Pass argument in NET. Byte Order
+    void source_addr(const std::uint32_t addr);
+
+    /// Returns IPV4 addr. in NETWORK order
+    [[nodiscard]] std::uint32_t dest_addr() const;
+    /// Pass argument in NET. Byte Order
+    void dest_addr(const std::uint32_t addr);
 };
 
 
