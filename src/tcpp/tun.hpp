@@ -46,7 +46,9 @@ public:
 
     void set_addr(const std::string_view addr)
     {
-        int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+        // Need to create a socket to dispatch ioctl properly, since TUN is just a char. device.
+        // SOCK_DGRAM is cheapest to create
+        int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
 
         struct ifreq ifr{};
         strncpy(ifr.ifr_name, dev_name_.data(), dev_name_.size());
@@ -65,7 +67,7 @@ public:
 
     void set_mask(const std::string_view mask)
     {
-        int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+        int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
 
         struct ifreq ifr{};
         strncpy(ifr.ifr_name, dev_name_.data(), dev_name_.size());
@@ -84,7 +86,7 @@ public:
 
     void set_flags(short int flags)
     {
-        int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+        int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
 
         struct ifreq ifr{};
         strncpy(ifr.ifr_name, dev_name_.data(), dev_name_.size());
