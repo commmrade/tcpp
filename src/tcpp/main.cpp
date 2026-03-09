@@ -102,11 +102,8 @@ struct TcpConnection
         std::span<const std::byte> payload)
     {
         // First, check sequence number
-        if (!validate_seq_n(tcph, payload)) {
+        if (!validate_seq_n(tcph, payload) && recv_.wnd != 0) { // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
             std::println("INVALID SEQ");
-            if (recv_.wnd == 0) {
-                // TODO: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
-            }
 
             // If an incoming segment is not acceptable, an acknowledgment should be sent in reply (unless the RST bit is set, if so drop the segment and return):
             if (tcph.rst()) { return; }
@@ -117,7 +114,6 @@ struct TcpConnection
             write(tun, payload);
             return;
         }
-        // TODO: MIND RCV.WND == 0.
 
         if (tcph.rst()) {
             // TODO: diff handling for diff states
