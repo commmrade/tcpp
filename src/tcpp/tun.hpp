@@ -107,9 +107,9 @@ public:
 
     void close() { ::close(tun_fd); }
 
-    void write(const void *buf, const std::size_t buf_len)// NOLINT
+    ssize_t write(const void *buf, const std::size_t buf_len)// NOLINT
     {
-        ::write(tun_fd, buf, buf_len);
+        return ::write(tun_fd, buf, buf_len);
     }
 
     [[nodiscard]] ssize_t read(void *buf, const std::size_t buf_len) const { return ::read(tun_fd, buf, buf_len); }

@@ -1,6 +1,7 @@
 add_executable(main main.cpp
         tun.cpp
-        tun.hpp)
+        tun.hpp
+        util.hpp)
 
 add_custom_target(setcap
         COMMAND sudo setcap cap_net_admin+ep $<TARGET_FILE:main>
@@ -18,8 +19,7 @@ target_link_system_libraries(
   PRIVATE
           fmt::fmt
           spdlog::spdlog
-          lefticus::tools)
-
+)
 
 tcpp_configure_linker(main)
 
