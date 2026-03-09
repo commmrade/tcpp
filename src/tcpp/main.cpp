@@ -117,6 +117,7 @@ struct TcpConnection
             write(tun, payload);
             return;
         }
+        // TODO: MIND RCV.WND == 0.
 
         if (tcph.rst()) {
             // TODO: diff handling for diff states
