@@ -103,8 +103,6 @@ struct TcpConnection
     {
         // First, check sequence number
         if (!validate_seq_n(tcph, payload) && recv_.wnd != 0) { // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
-            std::println("INVALID SEQ");
-
             // If an incoming segment is not acceptable, an acknowledgment should be sent in reply (unless the RST bit is set, if so drop the segment and return):
             if (tcph.rst()) { return; }
             tcph_.seqn(send_.nxt);
@@ -118,6 +116,20 @@ struct TcpConnection
         if (tcph.rst()) {
             // TODO: diff handling for diff states
             // from 3.10.7.4. Other States later TODO
+
+            if (!is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd)) { // Outside the window
+                return; // Just drop the segment
+            } else if (tcph.seqn() != recv_.nxt) { // Inside window
+                tcph_.seqn(send_.nxt);
+                tcph_.ackn(recv_.nxt);
+                tcph_.ack(true);
+                tcph_.calculate_checksum(iph_, payload);
+                write(tun, payload);
+                return;
+            }
+
+            // If the RST bit is set and the sequence number exactly matches the next expected sequence number (RCV.NXT),
+            // then TCP endpoints MUST reset the connection in the manner prescribed below according to the connection state
             switch (state_) {
             case TcpState::SYN_RCVD: {
                 // TODO: how to handle?
@@ -132,6 +144,10 @@ struct TcpConnection
             }
         }
 
+        // Fourth
+        if (tcph.syn()) {
+            // TODO: handle
+        }
 
         // Fifth, check the ACK field
         if (!tcph.ack()) { return; }
@@ -291,14 +307,10 @@ struct Tcp
                                                                           netparser::TCPH_MIN_SIZE } };
                 const Quad quad{ iph.source_addr(), tcph.source_port(), iph.dest_addr(), tcph.dest_port() };
 
-                // TODO: Check if port is being listened to. later, when ill do user facing interface
-                if (tcph.syn()) {
-                    // I think this wont work for active open but idc.
-                    accept(tun, iph, tcph);// Accept connection and enter SYN_RCVD
+                auto iter = connections.find(quad);
+                if (iter == connections.end()) {
+                    accept(tun, iph, tcph);
                 } else {
-                    auto iter = connections.find(quad);
-                    if (iter == connections.end()) { throw std::logic_error("Connection must exist"); }
-
                     const std::size_t offset = netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
                     // TODO: CALCULATE PROPERLY
                     std::span<const std::byte> payload{ buf.data() + offset, rd_bytes - offset };
