@@ -108,8 +108,8 @@ struct TcpConnection
             tcph_.seqn(send_.nxt);
             tcph_.ackn(recv_.nxt);
             tcph_.ack(true);
-            tcph_.calculate_checksum(iph_, payload);
-            write(tun, payload);
+            tcph_.calculate_checksum(iph_, {});
+            write(tun, {});
             return;
         }
 
@@ -123,8 +123,8 @@ struct TcpConnection
                 tcph_.seqn(send_.nxt);
                 tcph_.ackn(recv_.nxt);
                 tcph_.ack(true);
-                tcph_.calculate_checksum(iph_, payload);
-                write(tun, payload);
+                tcph_.calculate_checksum(iph_, {});
+                write(tun, {});
                 return;
             }
 
@@ -157,8 +157,8 @@ struct TcpConnection
                 std::println("ACK IS NOT VALID");
                 tcph_.seqn(tcph.ackn());
                 tcph_.rst(true);
-                tcph_.calculate_checksum(iph_, payload);
-                write(tun, payload);
+                tcph_.calculate_checksum(iph_, {});
+                write(tun, {});
             }
 
             state_ = TcpState::ESTAB;
