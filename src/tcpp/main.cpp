@@ -93,7 +93,7 @@ struct TcpConnection
     ReceiveSequence recv_;
     TcpState state_;
 
-    bool validate_seq_n(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) const
+    [[nodiscard]] bool validate_seq_n(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) const
     {
         if (payload.size() == 0 && recv_.wnd == 0 && tcph.seqn() == recv_.nxt) { return true; } else if (
             payload.size() == 0 && recv_.wnd > 0 &&
@@ -107,82 +107,53 @@ struct TcpConnection
         return false;
     }
 
-    void on_packet(tun &tun,
-        const netparser::IpHeaderView &iph,
-        const netparser::TcpHeaderView &tcph,
-        std::span<const std::byte> payload)
+    // lile false if it should return
+    bool handle_rst(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
-        // First, check sequence number
-        if (!validate_seq_n(tcph, payload) && recv_.wnd != 0) {
-            // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
-            // If an incoming segment is not acceptable, an acknowledgment should be sent in reply (unless the RST bit is set, if so drop the segment and return):
-            if (tcph.rst()) { return; }
+        // TODO: diff handling for diff states
+        // from 3.10.7.4. Other States later TODO
 
-            // tcph_.seqn(send_.nxt);
-            // tcph_.ackn(recv_.nxt);
-            // tcph_.ack(true);
-            // tcph_.calculate_checksum(iph_, {});
-            // write_temp(tun, {});
+        if (!is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd)) {
+            // Outside the window
+            return false;// Just drop the segment
+        } else if (tcph.seqn() != recv_.nxt) {
+            // Inside window
             tcph_.ack(true);
             write(tun, send_.nxt, 0);
-
-            return;
+            return false;
         }
 
-        if (tcph.rst()) {
-            // TODO: diff handling for diff states
-            // from 3.10.7.4. Other States later TODO
-
-            if (!is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd)) {
-                // Outside the window
-                return;// Just drop the segment
-            } else if (tcph.seqn() != recv_.nxt) {
-                // Inside window
-
-                // tcph_.seqn(send_.nxt);
-                // tcph_.ackn(recv_.nxt);
-                // tcph_.ack(true);
-                // tcph_.calculate_checksum(iph_, {});
-                // write_temp(tun, {});
-                tcph_.ack(true);
-                write(tun, send_.nxt, 0);
-
-                return;
-            }
-
-            // If the RST bit is set and the sequence number exactly matches the next expected sequence number (RCV.NXT),
-            // then TCP endpoints MUST reset the connection in the manner prescribed below according to the connection state
-            switch (state_) {
-            case TcpState::SYN_RCVD: {
-                // TODO: how to handle?
-                // If the connection was initiated with a passive OPEN,
-                // then return this connection to the LISTEN state and return.
-                // Otherwise, handle per the directions for synchronized states below.
-                break;
-            }
-            // IF synchronized state: then TODO:
-            default:
-                break;
-            }
+        // If the RST bit is set and the sequence number exactly matches the next expected sequence number (RCV.NXT),
+        // then TCP endpoints MUST reset the connection in the manner prescribed below according to the connection state
+        switch (state_) {
+        case TcpState::SYN_RCVD: {
+            // TODO: how to handle?
+            // If the connection was initiated with a passive OPEN,
+            // then return this connection to the LISTEN state and return.
+            // Otherwise, handle per the directions for synchronized states below.
+            break;
         }
-
-        // Fourth
-        if (tcph.syn()) {
-            // TODO: handle
-            // TODO: Challenge ACK in synchronized states <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
+        // IF synchronized state: then TODO:
+        default:
+            break;
         }
+        return true;
+    }
 
-        // Fifth, check the ACK field
-        if (!tcph.ack()) { return; }
+    bool handle_syn(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+    {
+        // TODO: handle
+        // TODO: Challenge ACK in synchronized states <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
+        return true;
+    }
+
+
+    bool handle_ack(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+    {
         switch (state_) {
         case TcpState::SYN_RCVD: {
             if (!is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
                 std::println("ACK IS NOT VALID");
-
-                // tcph_.seqn(tcph.ackn());
-                // tcph_.rst(true);
-                // tcph_.calculate_checksum(iph_, {});
-                // write_temp(tun, {});
                 tcph_.rst(true);
                 write(tun, tcph.ackn(), 0);
             }
@@ -193,26 +164,14 @@ struct TcpConnection
             send_.wl1 = tcph.seqn();
             send_.wl2 = tcph.ackn();
 
-
             // TODO: for now, lets do an active close right after switching to estab
             // THIS IS the only place in state machine where passive/active close interwine
             // Note: Uncomment for active close
-
-            // tcph_.fin(true);
-            // tcph_.rst(false);
-            // tcph_.ack(true);
-            // tcph_.syn(false);
-            // tcph_.seqn(send_.nxt);
-            // tcph_.ackn(recv_.nxt);
-            // tcph_.calculate_checksum(iph_, {});
-            // write_temp(tun, {});
-            // send_.nxt += 1; // For FIN
-
-            // tcph_.ack(true);
-            // tcph_.fin(true);
-            // write(tun, send_.nxt, 0);
-            // TODO: Don't forget to send all the data before sending a FIN.
-            // state_ = TcpState::FIN_WAIT_1;
+            tcph_.ack(true);
+            tcph_.fin(true);
+            write(tun, send_.nxt, 0);
+            state_ = TcpState::FIN_WAIT_1;
+            // TODO: Don't forget to send all the data before sending a FIN
             break;
         }
         case TcpState::ESTAB: { break; }
@@ -226,70 +185,90 @@ struct TcpConnection
             state_ = TcpState::FIN_WAIT_2;
             break;
         }
-        default: // TODO
-
-
-
+        default:
+            break;// TODO
         }
+        return true;
+    }
 
-        // TODO: Check URG bit
-        if (tcph.urg()) {}
+    bool handle_urg(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) { return true; }
 
-        // TODO: Process segment text
-        if (!payload.empty()) {}
+    bool handle_seg_text(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+    {
+        return true;
+    }
 
-        // TODO: Check FIN bit
-        if (tcph.fin()) {
-            recv_.nxt += 1;// Advance over FIN bit
-            // TODO: SEND FINACK AND SHIT
-            std::println("Connection is closing");
+    bool handle_fin(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+    {
+        recv_.nxt += 1;// Advance over FIN bit
+        // TODO: SEND FINACK AND SHIT
+        std::println("Connection is closing");
 
-            // TODO: Send all buffered segments
+        // TODO: Send all buffered segments
+        tcph_.ack(true);
+        write(tun, send_.nxt, 0);
 
-            // tcph_.fin(false);
-            // tcph_.ack(true);
-            // tcph_.rst(false);
-            // tcph_.syn(false);
-            // tcph_.seqn(send_.nxt);// 0 payload
-            // tcph_.ackn(recv_.nxt);
-            // tcph_.calculate_checksum(iph_, {});
-            // write_temp(tun, {});// Send an ACK for the FIN. and FIN.
+        switch (state_) {
+        case TcpState::ESTAB: {
+            state_ = TcpState::CLOSE_WAIT;
+            // But since I already sent a FIN and an ACK I may switch to LAST_ACK (**???**)
+            // TODO: At first, i should send all data, then switch to LAST_ACK, but since no buffers yet do this.
+
+            tcph_.fin(true);
             tcph_.ack(true);
             write(tun, send_.nxt, 0);
 
-            switch (state_) {
-            case TcpState::ESTAB: {
-                state_ = TcpState::CLOSE_WAIT;
-                // But since I already sent a FIN and an ACK I may switch to LAST_ACK (**???**)
-                // TODO: At first, i should send all data, then switch to LAST_ACK, but since no buffers yet do this.
-
-                // tcph_.fin(true);
-                // tcph_.ack(true);
-                // tcph_.seqn(send_.nxt);
-                // tcph_.ackn(recv_.nxt);
-                // tcph_.calculate_checksum(iph_, {});
-                // write_temp(tun, {});
-                // send_.nxt += 1;
-                tcph_.fin(true);
-                tcph_.ack(true);
-                write(tun, send_.nxt, 0);
-
-
-                state_ = TcpState::LAST_ACK;// TODO: Wait for ACK of FIN properly
-                break;
-            }
-            case TcpState::FIN_WAIT_2: {
-                // WE got a FIN from the other side, now switch to time_wait
-                state_ = TcpState::TIME_WAIT;
-                // TODO: start wait timer and then close
-                // But for now, just close at once
-                state_ = TcpState::CLOSED;
-                break;
-            }
-            default:
-                break;// TODO
-            }
+            state_ = TcpState::LAST_ACK;// TODO: Wait for ACK of FIN properly
+            break;
         }
+        case TcpState::FIN_WAIT_2: {
+            // WE got a FIN from the other side, now switch to time_wait
+            state_ = TcpState::TIME_WAIT;
+            // TODO: start wait timer and then close
+            // But for now, just close at once
+            state_ = TcpState::CLOSED;
+            break;
+        }
+        default:
+            break;// TODO
+        }
+        return true;
+    }
+
+    void on_packet(tun &tun,
+        const netparser::IpHeaderView &iph,
+        const netparser::TcpHeaderView &tcph,
+        std::span<const std::byte> payload)
+    {
+        // First, check sequence number
+        if (!validate_seq_n(tcph, payload) && recv_.wnd != 0) {
+            // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
+            // If an incoming segment is not acceptable, an acknowledgment should be sent in reply (unless the RST bit is set, if so drop the segment and return):
+            if (tcph.rst()) { return; }
+
+            tcph_.ack(true);
+            write(tun, send_.nxt, 0);
+            return;
+        }
+
+        // False signals, that a handler wants to return (usually in drop-and-return situations)
+        if (tcph.rst()) { if (!handle_rst(tun, tcph, payload)) { return; } }
+
+        // Fourth
+        if (tcph.syn()) { if (!handle_syn(tun, tcph, payload)) { return; } }// NOLINT
+
+        // Fifth, check the ACK field
+        if (!tcph.ack()) { return; }
+        if (!handle_ack(tun, tcph, payload)) { return; }
+
+        // TODO: Check URG bit
+        if (tcph.urg()) { if (!handle_urg(tun, tcph, payload)) { return; } }// NOLINT
+
+        // TODO: Process segment text
+        if (!payload.empty()) { if (!handle_seg_text(tun, tcph, payload)) { return; } } // NOLINT
+
+        // TODO: Check FIN bit
+        if (tcph.fin()) { if (!handle_fin(tun, tcph, payload)) { return; } } // NOLINT
     }
 
     /// @param seqn_from first sequence number to send
@@ -305,17 +284,17 @@ struct TcpConnection
         const auto ip_data = iph_.serialize();
         const auto tcp_data = tcph_.serialize();
         std::size_t offset = 0;
-        std::memcpy(buf.data() + offset, ip_data.data(), ip_data.size()); // NOLINT
+        std::memcpy(buf.data() + offset, ip_data.data(), ip_data.size());// NOLINT
         offset += ip_data.size();
-        std::memcpy(buf.data() + offset, tcp_data.data(), tcp_data.size()); // NOLINT
+        std::memcpy(buf.data() + offset, tcp_data.data(), tcp_data.size());// NOLINT
         offset += tcp_data.size();
 
         const auto written = tun.write(buf.data(), offset);
         if (written < 0) {
-            throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno))); // NOLINT
+            throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno)));// NOLINT
         }
 
-        const std::size_t payload_bytes_sent = 0; // mock variable
+        const std::size_t payload_bytes_sent = 0;// mock variable
         send_.nxt += payload_bytes_sent + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
 
         tcph_.syn(false);
