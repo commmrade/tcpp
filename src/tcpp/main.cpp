@@ -17,10 +17,21 @@
 
 enum class TcpState// NOLINT
 {
+    // Passive open
     CLOSED,
     LISTEN,
     SYN_RCVD,
-    ESTAB
+    ESTAB,
+
+    // Passive close
+    CLOSE_WAIT,
+    LAST_ACK,
+
+    // Active close
+    FIN_WAIT_1,
+    FIN_WAIT_2,
+
+    TIME_WAIT,
 };
 
 struct Quad
@@ -102,7 +113,8 @@ struct TcpConnection
         std::span<const std::byte> payload)
     {
         // First, check sequence number
-        if (!validate_seq_n(tcph, payload) && recv_.wnd != 0) { // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
+        if (!validate_seq_n(tcph, payload) && recv_.wnd != 0) {
+            // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
             // If an incoming segment is not acceptable, an acknowledgment should be sent in reply (unless the RST bit is set, if so drop the segment and return):
             if (tcph.rst()) { return; }
             tcph_.seqn(send_.nxt);
@@ -117,9 +129,11 @@ struct TcpConnection
             // TODO: diff handling for diff states
             // from 3.10.7.4. Other States later TODO
 
-            if (!is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd)) { // Outside the window
-                return; // Just drop the segment
-            } else if (tcph.seqn() != recv_.nxt) { // Inside window
+            if (!is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd)) {
+                // Outside the window
+                return;// Just drop the segment
+            } else if (tcph.seqn() != recv_.nxt) {
+                // Inside window
                 tcph_.seqn(send_.nxt);
                 tcph_.ackn(recv_.nxt);
                 tcph_.ack(true);
@@ -147,6 +161,7 @@ struct TcpConnection
         // Fourth
         if (tcph.syn()) {
             // TODO: handle
+            // TODO: Challenge ACK in synchronized states <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
         }
 
         // Fifth, check the ACK field
@@ -166,24 +181,91 @@ struct TcpConnection
             send_.wnd = tcph.window();
             send_.wl1 = tcph.seqn();
             send_.wl2 = tcph.ackn();
+
+
+
+            // TODO: for now, lets do an active close right after switching to estab
+            // THIS IS the only place in state machine where passive/active close interwine
+            // Note: Uncomment for active close
+            tcph_.fin(true);
+            tcph_.rst(false);
+            tcph_.ack(true);
+            tcph_.syn(false);
+            tcph_.seqn(send_.nxt);
+            tcph_.ackn(recv_.nxt);
+            tcph_.calculate_checksum(iph_, {});
+
+            write(tun, {});
+            // TODO: Don't forget to send all the data before sending a FIN.
+            send_.nxt += 1; // For FIN
+            state_ = TcpState::FIN_WAIT_1;
             break;
         }
-        case TcpState::ESTAB: { break; }
+        case TcpState::ESTAB: {
+            break;
+        }
+        case TcpState::LAST_ACK: { // The only thing that can arrive in this state is an acknowledgment of our FIN
+            state_ = TcpState::CLOSED;
+            break;
+        }
+        case TcpState::FIN_WAIT_1: {
+            // Probably got an ACK of our FIN. TODO: Make sure
+            state_ = TcpState::FIN_WAIT_2;
+            break;
+        }
         default: // TODO
+
 
         }
 
         // TODO: Check URG bit
+        if (tcph.urg()) {}
 
         // TODO: Process segment text
+        if (!payload.empty()) {}
 
         // TODO: Check FIN bit
         if (tcph.fin()) {
             recv_.nxt += 1;// Advance over FIN bit
             // TODO: SEND FINACK AND SHIT
+            std::println("Connection is closing");
+
+            // TODO: Send all buffered segments
+
+            tcph_.fin(false);
+            // tcph_.fin(true);
+            tcph_.ack(true);
+            tcph_.rst(false);
+            tcph_.syn(false);
+            tcph_.seqn(send_.nxt); // 0 payload
+            tcph_.ackn(recv_.nxt);
+            tcph_.calculate_checksum(iph_, {});
+            write(tun, {}); // Send an ACK for the FIN. and FIN.
+
+            // send_.nxt += 1; // For the FIN, that I have sent
+
             switch (state_) {
             case TcpState::ESTAB: {
-                // TODO:
+                state_ = TcpState::CLOSE_WAIT; // But since I already sent a FIN and an ACK I may switch to LAST_ACK (**???**)
+                // TODO: At first, i should send all data, then switch to LAST_ACK, but since no buffers yet do this.
+
+                tcph_.fin(true);
+                tcph_.ack(true);
+                tcph_.seqn(send_.nxt);
+                tcph_.ackn(recv_.nxt);
+                tcph_.calculate_checksum(iph_, {});
+                write(tun, {});
+                send_.nxt += 1;
+
+                state_ = TcpState::LAST_ACK; // TODO: Wait for ACK of FIN properly
+                break;
+            }
+            case TcpState::FIN_WAIT_2: {
+                // WE got a FIN from the other side, now switch to time_wait
+                state_ = TcpState::TIME_WAIT;
+                // TODO: start wait timer and then close
+                // But for now, just close at once
+                state_ = TcpState::CLOSED;
                 break;
             }
             default:
@@ -265,6 +347,7 @@ struct TcpConnection
             // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
             tcph_.seqn(send_.iss);
             tcph_.ackn(recv_.nxt);
+            tcph_.window(send_.wnd);
             tcph_.syn(true);
             tcph_.ack(true);
 
@@ -308,13 +391,15 @@ struct Tcp
                 const Quad quad{ iph.source_addr(), tcph.source_port(), iph.dest_addr(), tcph.dest_port() };
 
                 auto iter = connections.find(quad);
-                if (iter == connections.end()) {
-                    accept(tun, iph, tcph);
-                } else {
+                if (iter == connections.end()) { accept(tun, iph, tcph); } else {
                     const std::size_t offset = netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
                     // TODO: CALCULATE PROPERLY
                     std::span<const std::byte> payload{ buf.data() + offset, rd_bytes - offset };
                     iter->second.on_packet(tun, iph, tcph, payload);
+                    if (iter->second.state_ == TcpState::CLOSED) {
+                        std::println("DELETE TCB");
+                        connections.erase(iter);
+                    }
                 }
             }
         }
