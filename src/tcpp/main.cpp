@@ -31,6 +31,7 @@ enum class TcpState// NOLINT
     FIN_WAIT_1,
     FIN_WAIT_2,
 
+    CLOSING,
     TIME_WAIT,
 };
 
@@ -110,7 +111,6 @@ struct TcpConnection
     // lile false if it should return
     bool handle_rst(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
-        // TODO: diff handling for diff states
         // from 3.10.7.4. Other States later TODO
 
         if (!is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd)) {
@@ -119,7 +119,7 @@ struct TcpConnection
         } else if (tcph.seqn() != recv_.nxt) {
             // Inside window
             tcph_.ack(true);
-            write(tun, send_.nxt, 0);
+            write(tun, send_.nxt, 0); // Challenge ACK
             return false;
         }
 
@@ -133,7 +133,18 @@ struct TcpConnection
             // Otherwise, handle per the directions for synchronized states below.
             break;
         }
-        // IF synchronized state: then TODO:
+        case TcpState::ESTAB:
+        case TcpState::FIN_WAIT_1:
+        case TcpState::FIN_WAIT_2:
+        case TcpState::CLOSE_WAIT:
+            // TODO: any outstanding RECEIVEs and SEND should receive "reset" responses. All segment queues should be flushed. Users should also receive an unsolicited general "connection reset" signal
+            state_ = TcpState::CLOSED;
+            break;
+        case TcpState::CLOSING:
+        case TcpState::LAST_ACK:
+        case TcpState::TIME_WAIT:
+            state_ = TcpState::CLOSED;
+            break;
         default:
             break;
         }
@@ -337,10 +348,6 @@ struct TcpConnection
         if (tcph.ack()) {
             // ACK shouldn't be set in initial SYN segment
 
-            // tcph_.seqn(tcph.ackn());
-            // tcph_.rst(true);
-            // tcph_.calculate_checksum(iph_, {});
-            // write_temp(tun, {});
             tcph_.rst(true);
             write(tun, tcph.ackn(), 0);
             return;
@@ -359,13 +366,7 @@ struct TcpConnection
             send_.iss = 10;
 
             // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
-            // tcph_.seqn(send_.iss);
-            // tcph_.ackn(recv_.nxt);
             tcph_.window(send_.wnd);
-            // tcph_.syn(true);
-            // tcph_.ack(true);
-            // tcph_.calculate_checksum(iph_, {});
-            // write_temp(tun, {});
             tcph_.syn(true);
             tcph_.ack(true);
             write(tun, send_.iss, 0);
