@@ -117,11 +117,15 @@ struct TcpConnection
             // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
             // If an incoming segment is not acceptable, an acknowledgment should be sent in reply (unless the RST bit is set, if so drop the segment and return):
             if (tcph.rst()) { return; }
-            tcph_.seqn(send_.nxt);
-            tcph_.ackn(recv_.nxt);
+
+            // tcph_.seqn(send_.nxt);
+            // tcph_.ackn(recv_.nxt);
+            // tcph_.ack(true);
+            // tcph_.calculate_checksum(iph_, {});
+            // write_temp(tun, {});
             tcph_.ack(true);
-            tcph_.calculate_checksum(iph_, {});
-            write(tun, {});
+            write(tun, send_.nxt, 0);
+
             return;
         }
 
@@ -134,11 +138,15 @@ struct TcpConnection
                 return;// Just drop the segment
             } else if (tcph.seqn() != recv_.nxt) {
                 // Inside window
-                tcph_.seqn(send_.nxt);
-                tcph_.ackn(recv_.nxt);
+
+                // tcph_.seqn(send_.nxt);
+                // tcph_.ackn(recv_.nxt);
+                // tcph_.ack(true);
+                // tcph_.calculate_checksum(iph_, {});
+                // write_temp(tun, {});
                 tcph_.ack(true);
-                tcph_.calculate_checksum(iph_, {});
-                write(tun, {});
+                write(tun, send_.nxt, 0);
+
                 return;
             }
 
@@ -170,10 +178,13 @@ struct TcpConnection
         case TcpState::SYN_RCVD: {
             if (!is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
                 std::println("ACK IS NOT VALID");
-                tcph_.seqn(tcph.ackn());
+
+                // tcph_.seqn(tcph.ackn());
+                // tcph_.rst(true);
+                // tcph_.calculate_checksum(iph_, {});
+                // write_temp(tun, {});
                 tcph_.rst(true);
-                tcph_.calculate_checksum(iph_, {});
-                write(tun, {});
+                write(tun, tcph.ackn(), 0);
             }
 
             state_ = TcpState::ESTAB;
@@ -183,28 +194,30 @@ struct TcpConnection
             send_.wl2 = tcph.ackn();
 
 
-
             // TODO: for now, lets do an active close right after switching to estab
             // THIS IS the only place in state machine where passive/active close interwine
             // Note: Uncomment for active close
-            tcph_.fin(true);
-            tcph_.rst(false);
-            tcph_.ack(true);
-            tcph_.syn(false);
-            tcph_.seqn(send_.nxt);
-            tcph_.ackn(recv_.nxt);
-            tcph_.calculate_checksum(iph_, {});
 
-            write(tun, {});
+            // tcph_.fin(true);
+            // tcph_.rst(false);
+            // tcph_.ack(true);
+            // tcph_.syn(false);
+            // tcph_.seqn(send_.nxt);
+            // tcph_.ackn(recv_.nxt);
+            // tcph_.calculate_checksum(iph_, {});
+            // write_temp(tun, {});
+            // send_.nxt += 1; // For FIN
+
+            // tcph_.ack(true);
+            // tcph_.fin(true);
+            // write(tun, send_.nxt, 0);
             // TODO: Don't forget to send all the data before sending a FIN.
-            send_.nxt += 1; // For FIN
-            state_ = TcpState::FIN_WAIT_1;
+            // state_ = TcpState::FIN_WAIT_1;
             break;
         }
-        case TcpState::ESTAB: {
-            break;
-        }
-        case TcpState::LAST_ACK: { // The only thing that can arrive in this state is an acknowledgment of our FIN
+        case TcpState::ESTAB: { break; }
+        case TcpState::LAST_ACK: {
+            // The only thing that can arrive in this state is an acknowledgment of our FIN
             state_ = TcpState::CLOSED;
             break;
         }
@@ -214,6 +227,7 @@ struct TcpConnection
             break;
         }
         default: // TODO
+
 
 
         }
@@ -232,32 +246,36 @@ struct TcpConnection
 
             // TODO: Send all buffered segments
 
-            tcph_.fin(false);
-            // tcph_.fin(true);
+            // tcph_.fin(false);
+            // tcph_.ack(true);
+            // tcph_.rst(false);
+            // tcph_.syn(false);
+            // tcph_.seqn(send_.nxt);// 0 payload
+            // tcph_.ackn(recv_.nxt);
+            // tcph_.calculate_checksum(iph_, {});
+            // write_temp(tun, {});// Send an ACK for the FIN. and FIN.
             tcph_.ack(true);
-            tcph_.rst(false);
-            tcph_.syn(false);
-            tcph_.seqn(send_.nxt); // 0 payload
-            tcph_.ackn(recv_.nxt);
-            tcph_.calculate_checksum(iph_, {});
-            write(tun, {}); // Send an ACK for the FIN. and FIN.
-
-            // send_.nxt += 1; // For the FIN, that I have sent
+            write(tun, send_.nxt, 0);
 
             switch (state_) {
             case TcpState::ESTAB: {
-                state_ = TcpState::CLOSE_WAIT; // But since I already sent a FIN and an ACK I may switch to LAST_ACK (**???**)
+                state_ = TcpState::CLOSE_WAIT;
+                // But since I already sent a FIN and an ACK I may switch to LAST_ACK (**???**)
                 // TODO: At first, i should send all data, then switch to LAST_ACK, but since no buffers yet do this.
 
+                // tcph_.fin(true);
+                // tcph_.ack(true);
+                // tcph_.seqn(send_.nxt);
+                // tcph_.ackn(recv_.nxt);
+                // tcph_.calculate_checksum(iph_, {});
+                // write_temp(tun, {});
+                // send_.nxt += 1;
                 tcph_.fin(true);
                 tcph_.ack(true);
-                tcph_.seqn(send_.nxt);
-                tcph_.ackn(recv_.nxt);
-                tcph_.calculate_checksum(iph_, {});
-                write(tun, {});
-                send_.nxt += 1;
+                write(tun, send_.nxt, 0);
 
-                state_ = TcpState::LAST_ACK; // TODO: Wait for ACK of FIN properly
+
+                state_ = TcpState::LAST_ACK;// TODO: Wait for ACK of FIN properly
                 break;
             }
             case TcpState::FIN_WAIT_2: {
@@ -274,24 +292,38 @@ struct TcpConnection
         }
     }
 
-    // TODO: this is a temp write, make it right later
-    ssize_t write(tun &tun, std::span<const std::byte> payload)
+    /// @param seqn_from first sequence number to send
+    /// @param max_size how many bytes of payload it is allowed to send at most.
+    ssize_t write(tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
     {
+        tcph_.seqn(seqn_from);
+        tcph_.ackn(recv_.nxt);
+        tcph_.calculate_checksum(iph_, {});
+
         std::vector<std::byte> buf{};
-        buf.resize(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + payload.size());
+        buf.resize(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE);
         const auto ip_data = iph_.serialize();
         const auto tcp_data = tcph_.serialize();
         std::size_t offset = 0;
-        std::memcpy(buf.data() + offset, ip_data.data(), ip_data.size());
+        std::memcpy(buf.data() + offset, ip_data.data(), ip_data.size()); // NOLINT
         offset += ip_data.size();
-        std::memcpy(buf.data() + offset, tcp_data.data(), tcp_data.size());
+        std::memcpy(buf.data() + offset, tcp_data.data(), tcp_data.size()); // NOLINT
         offset += tcp_data.size();
 
-        if (!payload.empty()) {
-            std::memcpy(buf.data() + offset, payload.data(), payload.size());
-            offset += payload.size();
+        const auto written = tun.write(buf.data(), offset);
+        if (written < 0) {
+            throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno))); // NOLINT
         }
-        return tun.write(buf.data(), buf.size());
+
+        const std::size_t payload_bytes_sent = 0; // mock variable
+        send_.nxt += payload_bytes_sent + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
+
+        tcph_.syn(false);
+        tcph_.ack(false);
+        tcph_.fin(false);
+        tcph_.rst(false);
+
+        return written;
     }
 
     void accept(tun &tun, const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
@@ -325,10 +357,13 @@ struct TcpConnection
         // Second, check for an ACK:
         if (tcph.ack()) {
             // ACK shouldn't be set in initial SYN segment
-            tcph_.seqn(tcph.ackn());
+
+            // tcph_.seqn(tcph.ackn());
+            // tcph_.rst(true);
+            // tcph_.calculate_checksum(iph_, {});
+            // write_temp(tun, {});
             tcph_.rst(true);
-            tcph_.calculate_checksum(iph_, {});
-            write(tun, {});
+            write(tun, tcph.ackn(), 0);
             return;
         }
 
@@ -345,14 +380,16 @@ struct TcpConnection
             send_.iss = 10;
 
             // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
-            tcph_.seqn(send_.iss);
-            tcph_.ackn(recv_.nxt);
+            // tcph_.seqn(send_.iss);
+            // tcph_.ackn(recv_.nxt);
             tcph_.window(send_.wnd);
+            // tcph_.syn(true);
+            // tcph_.ack(true);
+            // tcph_.calculate_checksum(iph_, {});
+            // write_temp(tun, {});
             tcph_.syn(true);
             tcph_.ack(true);
-
-            tcph_.calculate_checksum(iph_, {});
-            write(tun, {});
+            write(tun, send_.iss, 0);
 
             send_.una = send_.iss;
             send_.nxt = send_.iss + 1;// 1 goes for SYN, since it uses up a SEQ number
