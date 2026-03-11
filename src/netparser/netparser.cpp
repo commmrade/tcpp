@@ -122,30 +122,26 @@ void IpHeader::dont_fragment(bool val)
 {
     constexpr std::uint16_t DF_BIT = (1U << 14U);
     std::uint16_t frag_off = ntohs(hdr_.frag_off);
-    if (val) {
-        frag_off |= DF_BIT;
-    } else {
+    if (val) { frag_off |= DF_BIT; } else {
         frag_off &= ~DF_BIT;// NOLINT
     }
-    hdr_.frag_off = htons(frag_off); // NOLINT
+    hdr_.frag_off = htons(frag_off);// NOLINT
 }
 
 void IpHeader::more_fragments(bool val)
 {
     constexpr std::uint16_t MF_BIT = (1U << 13U);
     std::uint16_t frag_off = ntohs(hdr_.frag_off);
-    if (val) {
-        frag_off |= MF_BIT;
-    } else {
+    if (val) { frag_off |= MF_BIT; } else {
         frag_off &= ~MF_BIT;// NOLINT
     }
-    hdr_.frag_off = htons(frag_off); // NOLINT
+    hdr_.frag_off = htons(frag_off);// NOLINT
 }
 
 void IpHeader::frag_offset(const std::uint16_t frag_off)
 {
     std::uint16_t off = ntohs(hdr_.frag_off);
-    off = (off & 0xE000U) | (frag_off & 0x1FFFU); // NOLINT
+    off = (off & 0xE000U) | (frag_off & 0x1FFFU);// NOLINT
     hdr_.frag_off = htons(off);
 }
 
@@ -154,6 +150,31 @@ void IpHeader::ttl(const std::uint8_t val) { hdr_.ttl = val; }
 void IpHeader::checksum(const std::uint16_t cksum) { hdr_.check = htons(cksum); }
 
 void IpHeader::protocol(const std::uint8_t proto) { hdr_.protocol = proto; }
+
+void IpHeader::calculate_checksum()
+{
+    // Zero out existing checksum before calculating
+    hdr_.check = 0;
+
+    uint32_t sum = 0;
+    const uint16_t *ptr = reinterpret_cast<const uint16_t *>(&hdr_);
+    int length = hdr_.ihl * 4;// IHL field is in 32-bit words
+
+    // Sum all 16-bit words in the header
+    while (length > 1) {
+        sum += *ptr++;
+        length -= 2;
+    }
+
+    // If odd byte remains, pad with zero and add
+    if (length == 1) { sum += *reinterpret_cast<const uint8_t *>(ptr); }
+
+    // Fold 32-bit sum into 16 bits by adding carry bits
+    while (sum >> 16) { sum = (sum & 0xFFFF) + (sum >> 16); }
+
+    // One's complement
+    hdr_.check = static_cast<uint16_t>(~sum);
+}
 
 void IpHeader::source_addr(const std::uint32_t addr) { hdr_.saddr = addr; }
 
@@ -203,14 +224,13 @@ std::uint32_t IpHeader::source_addr() const { return hdr_.saddr; }
 
 std::uint32_t IpHeader::dest_addr() const { return hdr_.daddr; }
 
-TcpHeaderView::TcpHeaderView(const std::span<const std::byte> bytes) : bytes_(bytes)
+TcpHeaderView::TcpHeaderView(const std::span<const std::byte> bytes)
+    : bytes_(bytes)
 {
-    if (bytes_.size() < TCPH_MIN_SIZE) {
-        throw std::runtime_error("Bytes is too small for a tcp header");
-    }
+    if (bytes_.size() < TCPH_MIN_SIZE) { throw std::runtime_error("Bytes is too small for a tcp header"); }
 }
 
-std::uint16_t TcpHeaderView::src_port() const
+std::uint16_t TcpHeaderView::source_port() const
 {
     std::uint16_t port{};
     std::memcpy(&port, bytes_.data() + TCPH_SRC_PORT_OFFSET, sizeof(port));
@@ -247,56 +267,56 @@ std::uint8_t TcpHeaderView::data_off() const
 bool TcpHeaderView::cwr() const
 {
     const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
-    const bool cwr = flags & (1U << 7U); // NOLINT
+    const bool cwr = flags & (1U << 7U);// NOLINT
     return cwr;
 }
 
 bool TcpHeaderView::ece() const
 {
     const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
-    const bool ece = flags & (1U << 6U); // NOLINT
+    const bool ece = flags & (1U << 6U);// NOLINT
     return ece;
 }
 
 bool TcpHeaderView::urg() const
 {
     const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
-    const bool urg = flags & (1U << 5U); // NOLINT
+    const bool urg = flags & (1U << 5U);// NOLINT
     return urg;
 }
 
 bool TcpHeaderView::ack() const
 {
     const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
-    const bool ack = flags & (1U << 4U); // NOLINT
+    const bool ack = flags & (1U << 4U);// NOLINT
     return ack;
 }
 
 bool TcpHeaderView::psh() const
 {
     const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
-    const bool psh = flags & (1U << 3U); // NOLINT
+    const bool psh = flags & (1U << 3U);// NOLINT
     return psh;
 }
 
 bool TcpHeaderView::rst() const
 {
     const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
-    const bool rst = flags & (1U << 2U); // NOLINT
+    const bool rst = flags & (1U << 2U);// NOLINT
     return rst;
 }
 
 bool TcpHeaderView::syn() const
 {
     const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
-    const bool syn = flags & (1U << 1U); // NOLINT
+    const bool syn = flags & (1U << 1U);// NOLINT
     return syn;
 }
 
 bool TcpHeaderView::fin() const
 {
     const auto flags = std::to_integer<std::uint8_t>(bytes_[TCPH_FLAGS_OFFSET]);
-    const bool fin = flags & 1U; // NOLINT
+    const bool fin = flags & 1U;// NOLINT
     return fin;
 }
 
@@ -328,170 +348,129 @@ TcpHeader::TcpHeader(const TcpHeaderView &tcph)
     std::memcpy(&hdr_, data.data(), sizeof(hdr_));
 }
 
-std::uint16_t TcpHeader::src_port() const
+std::uint16_t TcpHeader::source_port() const { return ntohs(hdr_.source); }
+
+void TcpHeader::source_port(const std::uint16_t port) { hdr_.source = htons(port); }
+
+std::uint16_t TcpHeader::dest_port() const { return ntohs(hdr_.dest); }
+
+void TcpHeader::dest_port(const std::uint16_t port) { hdr_.dest = htons(port); }
+
+std::uint32_t TcpHeader::seqn() const { return ntohl(hdr_.seq); }
+
+void TcpHeader::seqn(const std::uint32_t num) { hdr_.seq = htonl(num); }
+
+std::uint32_t TcpHeader::ackn() const { return ntohl(hdr_.ack_seq); }
+
+void TcpHeader::ackn(const std::uint32_t num) { hdr_.ack_seq = htonl(num); }
+
+std::uint8_t TcpHeader::data_off() const { return hdr_.doff; }
+
+void TcpHeader::data_off(const std::uint8_t val) { hdr_.doff = val; }
+
+bool TcpHeader::cwr() const { return hdr_.cwr; }
+
+void TcpHeader::cwr(const bool val) { hdr_.cwr = val; }
+
+bool TcpHeader::ece() const { return hdr_.ece; }
+
+void TcpHeader::ece(const bool val) { hdr_.ece = val; }
+
+bool TcpHeader::urg() const { return hdr_.urg; }
+
+void TcpHeader::urg(const bool val) { hdr_.urg = val; }
+
+bool TcpHeader::ack() const { return hdr_.ack; }
+
+void TcpHeader::ack(const bool val) { hdr_.ack = val; }
+
+bool TcpHeader::psh() const { return hdr_.psh; }
+
+void TcpHeader::psh(const bool val) { hdr_.psh = val; }
+
+bool TcpHeader::rst() const { return hdr_.rst; }
+
+void TcpHeader::rst(const bool val) { hdr_.rst = val; }
+
+bool TcpHeader::syn() const { return hdr_.syn; }
+
+void TcpHeader::syn(const bool val) { hdr_.syn = val; }
+
+bool TcpHeader::fin() const { return hdr_.fin; }
+
+void TcpHeader::fin(const bool val) { hdr_.fin = val; }
+
+std::uint16_t TcpHeader::window() const { return ntohs(hdr_.window); }
+
+void TcpHeader::window(const std::uint16_t wnd_size) { hdr_.window = htons(wnd_size); }
+
+std::uint16_t TcpHeader::checksum() const { return ntohs(hdr_.check); }
+
+void TcpHeader::checksum(const std::uint16_t cksum) { hdr_.check = htons(cksum); }
+
+void TcpHeader::calculate_checksum(const netparser::IpHeader& iph, std::span<const std::byte> payload)
 {
-    return ntohs(hdr_.source);
+    // Zero out existing checksum before calculating
+    hdr_.check = 0;
+
+    // Build pseudo header
+    struct PseudoHeader
+    {
+        std::uint32_t src_addr;
+        std::uint32_t dst_addr;
+        std::uint8_t  zero;
+        std::uint8_t  protocol;
+        std::uint16_t tcp_length;
+    } pseudo{};
+
+    pseudo.src_addr   = iph.source_addr();
+    pseudo.dst_addr   = iph.dest_addr();
+    pseudo.zero       = 0;
+    pseudo.protocol   = iph.protocol();
+    pseudo.tcp_length = htons(sizeof(tcphdr) + static_cast<std::uint16_t>(payload.size())); // NOLINT
+
+    uint32_t sum = 0;
+
+    // Helper: accumulate 16-bit words from a raw buffer
+    auto accumulate = [&sum](const void* data, std::size_t length)
+    {
+        const auto* ptr = static_cast<const uint16_t*>(data);
+
+        while (length > 1)
+        {
+            sum += *ptr++;
+            length -= 2;
+        }
+
+        // Odd trailing byte — pad with zero
+        if (length == 1)
+        {
+            sum += *reinterpret_cast<const uint8_t*>(ptr);
+        }
+    };
+
+    accumulate(&pseudo,  sizeof(pseudo));
+    accumulate(&hdr_,    sizeof(tcphdr));
+    accumulate(payload.data(), payload.size());
+
+    // Fold carries
+    while (sum >> 16)
+    {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+
+    // One's complement
+    hdr_.check = static_cast<uint16_t>(~sum);
 }
 
-void TcpHeader::src_port(const std::uint16_t port)
-{
-    hdr_.source = htons(port);
-}
+std::uint16_t TcpHeader::urg_ptr() const { return ntohs(hdr_.urg_ptr); }
 
-std::uint16_t TcpHeader::dest_port() const
-{
-    return ntohs(hdr_.dest);
-}
-
-void TcpHeader::dest_port(const std::uint16_t port)
-{
-    hdr_.dest = htons(port);
-}
-
-std::uint32_t TcpHeader::seqn() const
-{
-    return ntohl(hdr_.seq);
-}
-
-void TcpHeader::seqn(const std::uint32_t num)
-{
-    hdr_.seq = htonl(num);
-}
-
-std::uint32_t TcpHeader::ackn() const
-{
-    return ntohl(hdr_.ack_seq);
-}
-
-void TcpHeader::ackn(const std::uint32_t num)
-{
-    hdr_.ack_seq = htonl(num);
-}
-
-std::uint8_t TcpHeader::data_off() const
-{
-    return hdr_.doff;
-}
-
-void TcpHeader::data_off(const std::uint8_t val)
-{
-    hdr_.doff = val;
-}
-
-bool TcpHeader::cwr() const
-{
-    return hdr_.cwr;
-}
-
-void TcpHeader::cwr(const bool val)
-{
-    hdr_.cwr = val;
-}
-
-bool TcpHeader::ece() const
-{
-    return hdr_.ece;
-}
-
-void TcpHeader::ece(const bool val)
-{
-    hdr_.ece = val;
-}
-
-bool TcpHeader::urg() const
-{
-    return hdr_.urg;
-}
-
-void TcpHeader::urg(const bool val)
-{
-    hdr_.urg = val;
-}
-
-bool TcpHeader::ack() const
-{
-    return hdr_.ack;
-}
-
-void TcpHeader::ack(const bool val)
-{
-    hdr_.ack = val;
-}
-
-bool TcpHeader::psh() const
-{
-    return hdr_.psh;
-}
-
-void TcpHeader::psh(const bool val)
-{
-    hdr_.psh = val;
-}
-
-bool TcpHeader::rst() const
-{
-    return hdr_.rst;
-}
-
-void TcpHeader::rst(const bool val)
-{
-    hdr_.rst = val;
-}
-
-bool TcpHeader::syn() const
-{
-    return hdr_.syn;
-}
-
-void TcpHeader::syn(const bool val)
-{
-    hdr_.syn = val;
-}
-
-bool TcpHeader::fin() const
-{
-    return hdr_.fin;
-}
-
-void TcpHeader::fin(const bool val)
-{
-    hdr_.fin = val;
-}
-
-std::uint16_t TcpHeader::window() const
-{
-    return ntohs(hdr_.window);
-}
-
-void TcpHeader::window(const std::uint16_t wnd_size)
-{
-    hdr_.window = htons(wnd_size);
-}
-
-std::uint16_t TcpHeader::checksum() const
-{
-    return ntohs(hdr_.check);
-}
-
-void TcpHeader::checksum(const std::uint16_t cksum)
-{
-    hdr_.check = htons(cksum);
-}
-
-std::uint16_t TcpHeader::urg_ptr() const
-{
-    return ntohs(hdr_.urg_ptr);
-}
-
-void TcpHeader::urg_ptr(const std::uint16_t ptr)
-{
-    hdr_.urg_ptr = htons(ptr);
-}
+void TcpHeader::urg_ptr(const std::uint16_t ptr) { hdr_.urg_ptr = htons(ptr); }
 
 std::vector<std::byte> TcpHeader::serialize() const
 {
     std::vector<std::byte> res{};
-    res.resize(sizeof(hdr_)); // TODO: MAKE IT INCLUDE OPTIONS
+    res.resize(sizeof(hdr_));// TODO: MAKE IT INCLUDE OPTIONS
     std::memcpy(res.data(), &hdr_, sizeof(hdr_));
     return res;
 }

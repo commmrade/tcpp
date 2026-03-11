@@ -103,6 +103,8 @@ public:
     [[nodiscard]] std::uint8_t protocol() const;
     void protocol(const std::uint8_t proto);
 
+    void calculate_checksum();
+
     /// Returns IPV4 addr. in NETWORK order
     [[nodiscard]] std::uint32_t source_addr() const;
     /// Pass argument in Network Byte Order
@@ -135,7 +137,7 @@ public:
     TcpHeaderView() = default;
     explicit TcpHeaderView(const std::span<const std::byte> bytes);
 
-    [[nodiscard]] std::uint16_t src_port() const;
+    [[nodiscard]] std::uint16_t source_port() const;
     [[nodiscard]] std::uint16_t dest_port() const;
 
     [[nodiscard]] std::uint32_t seqn() const;
@@ -173,8 +175,8 @@ public:
     explicit TcpHeader(const TcpHeaderView& tcph);
 
     /// Everything is set/returned in Host Byte Order
-    [[nodiscard]] std::uint16_t src_port() const;
-    void src_port(const std::uint16_t port);
+    [[nodiscard]] std::uint16_t source_port() const;
+    void source_port(const std::uint16_t port);
 
     [[nodiscard]] std::uint16_t dest_port() const;
     void dest_port(const std::uint16_t port);
@@ -218,6 +220,8 @@ public:
 
     [[nodiscard]] std::uint16_t checksum() const;
     void checksum(const std::uint16_t cksum);
+
+    void calculate_checksum(const netparser::IpHeader& iph, std::span<const std::byte> payload);
 
     [[nodiscard]] std::uint16_t urg_ptr() const;
     void urg_ptr(const std::uint16_t ptr);
