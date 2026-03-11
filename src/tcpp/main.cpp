@@ -93,10 +93,10 @@ void run_underlying_stuff(Context &ctx)
     }
     std::jthread tcp_thread{ [&ctx] {
             while (true) { // NOLINT
-                std::unique_lock lock{ ctx.mx }; // This lock breaks locking mutex in accept()
+                std::unique_lock lock{ ctx.mx };
                 ctx.tcp.process_packet(ctx.tun);
                 lock.unlock();
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Let other threads lock the mutex
             }
         }
     };
