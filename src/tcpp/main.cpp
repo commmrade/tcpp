@@ -1,437 +1,132 @@
 #include <print>
-#include "../netparser/netparser.hpp"
-#include <arpa/inet.h>
 #include "tun.hpp"
-#include "spdlog/common.h"
-#include "util.hpp"
-#include <unordered_map>
-#include <array>
-#include <cassert>
-#include <cstddef>
-#include <sys/types.h>
-#include <span>
-#include <bits/this_thread_sleep.h>
-#include <netinet/in.h>
-#include <sys/ioctl.h>
-#include <net/if.h>
+#include "tcp.hpp"
 
-enum class TcpState// NOLINT
+#include <mutex>
+#include <thread>
+
+struct Context
 {
-    // Passive open
-    CLOSED,
-    LISTEN,
-    SYN_RCVD,
-    ESTAB,
+    Tcp tcp{};
+    tun tun;
+    std::mutex mx; // BEFORE ACCESSING ANY FIELD IT MUST BE LOCKED
 
-    // Passive close
-    CLOSE_WAIT,
-    LAST_ACK,
-
-    // Active close
-    FIN_WAIT_1,
-    FIN_WAIT_2,
-
-    CLOSING,
-    TIME_WAIT,
+    Context(std::string_view dev_name)
+        : tun(dev_name) {}
 };
 
-struct Quad
+struct Socket
 {
-    std::uint32_t src_addr;
-    std::uint16_t src_port;
+    // TODO: Fix this
+    Quad quad_;
+    Context &ctx_;
 
-    std::uint32_t dst_addr;
-    std::uint16_t dst_port;
 
-    bool operator==(const Quad &quad) const
+    ssize_t read(void *buf, const std::size_t buf_sz)
     {
-        return src_addr == quad.src_addr && src_port == quad.src_port && dst_addr == quad.dst_addr && dst_port == quad.
-               dst_port;
+        std::unique_lock recv_lock{ctx_.mx};
+        assert(ctx_.tcp.connections.contains(quad_));
+        auto& conn = ctx_.tcp.connections[quad_];
+        conn->recv_var_.wait(recv_lock);
+
+        // We got notified
+        if (conn->is_finished) {
+            return 0; // EOF
+        }
+
+        return 148;
+    }
+
+    ssize_t write(const void *buf, const std::size_t buf_sz)
+    {
+        // NOT IMPLEMENTED
+        throw std::runtime_error("not implemented");
     }
 };
 
-template<> struct std::hash<Quad>
+
+struct Listener
 {
-    std::size_t operator()(const Quad &quad) const noexcept
+    // TODO: this is kinda stupid?
+    Context &ctx_;
+    std::uint16_t port_{};
+
+public:
+    void bind(const std::uint16_t port)
     {
-        std::size_t hash;
-        hash_combine(hash, quad.src_addr);
-        hash_combine(hash, quad.src_port);
-        hash_combine(hash, quad.dst_addr);
-        hash_combine(hash, quad.dst_port);
-        return hash;
+        std::unique_lock lock{ctx_.mx};
+        port_ = port;
+        if (ctx_.tcp.pending.contains(port)) {
+            throw std::runtime_error("Already bound");
+        }
+        ctx_.tcp.pending.emplace(port, std::deque<Quad>{});
+    }
+
+    void listen(int backlog)
+    {
+        // TODO: set max capacity
+    }
+
+    Socket accept()
+    {
+        std::unique_lock accept_lock{ctx_.mx};
+        std::println("Locked mutex in accept");
+        ctx_.tcp.accept_var_.wait(accept_lock, [this]{ return ctx_.tcp.pending.contains(port_) && !ctx_.tcp.pending[port_].empty(); });
+        std::println("AFTER WAIT");
+        assert(ctx_.tcp.pending.contains(port_));
+        auto iter = ctx_.tcp.pending.find(port_);
+        assert(!iter->second.empty());
+        auto quad = iter->second.front();
+        iter->second.pop_front();
+        Socket ret{quad, ctx_};
+        return ret;
+    }
+};
+
+void run_underlying_stuff(Context &ctx)
+{
+    {
+        std::unique_lock lock{ ctx.mx };
+        ctx.tun.set_addr("10.0.0.1");
+        ctx.tun.set_mask("255.255.255.0");
+        ctx.tun.set_flags(IFF_UP | IFF_RUNNING);
+    }
+    std::jthread tcp_thread{ [&ctx] {
+            while (true) { // NOLINT
+                std::unique_lock lock{ ctx.mx }; // This lock breaks locking mutex in accept()
+                ctx.tcp.process_packet(ctx.tun);
+                lock.unlock();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        }
     };
-};
-
-struct SendSequence
-{
-    std::uint32_t una;// send unack'ed
-    std::uint32_t nxt;// send next
-    std::uint16_t wnd;// send window size
-    std::uint16_t up;// urgent pointer
-    std::uint32_t wl1;// segment sequence number used for last window update
-    std::uint32_t wl2;// segment acknowledgment number used for last window update
-    std::uint32_t iss;// initial sequence number
-};
-
-struct ReceiveSequence
-{
-    std::uint32_t nxt;// next to receive, which is +1 byte. so this equals to the next seqn that is expected
-    std::uint16_t wnd;// receiver window size
-    std::uint16_t up;// urgent pointer
-    std::uint32_t irs;// initial receiver seq n
-};
-
-struct TcpConnection
-{
-    // Not tcp protocol things
-    // So I don't need to recreate ip header or tcp header each write
-    netparser::IpHeader iph_;
-    netparser::TcpHeader tcph_;
-
-    // Tcp protocol stuff
-    SendSequence send_;
-    ReceiveSequence recv_;
-    TcpState state_;
-
-    [[nodiscard]] bool validate_seq_n(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) const
-    {
-        if (payload.size() == 0 && recv_.wnd == 0 && tcph.seqn() == recv_.nxt) { return true; } else if (
-            payload.size() == 0 && recv_.wnd > 0 &&
-            is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd)) { return true; } else if (
-            payload.size() > 0 && recv_.wnd == 0) { return false; } else if (
-            payload.size() > 0 && recv_.wnd > 0 && (
-                is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd) || is_between_wrapped(
-                    recv_.nxt - 1,
-                    tcph.seqn() + payload.size() - 1,
-                    recv_.nxt + recv_.wnd))) { return true; }
-        return false;
-    }
-
-    // lile false if it should return
-    bool handle_rst(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
-    {
-        // from 3.10.7.4. Other States later TODO
-
-        if (!is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd)) {
-            // Outside the window
-            return false;// Just drop the segment
-        } else if (tcph.seqn() != recv_.nxt) {
-            // Inside window
-            tcph_.ack(true);
-            write(tun, send_.nxt, 0); // Challenge ACK
-            return false;
-        }
-
-        // If the RST bit is set and the sequence number exactly matches the next expected sequence number (RCV.NXT),
-        // then TCP endpoints MUST reset the connection in the manner prescribed below according to the connection state
-        switch (state_) {
-        case TcpState::SYN_RCVD: {
-            // TODO: how to handle?
-            // If the connection was initiated with a passive OPEN,
-            // then return this connection to the LISTEN state and return.
-            // Otherwise, handle per the directions for synchronized states below.
-            break;
-        }
-        case TcpState::ESTAB:
-        case TcpState::FIN_WAIT_1:
-        case TcpState::FIN_WAIT_2:
-        case TcpState::CLOSE_WAIT:
-            // TODO: any outstanding RECEIVEs and SEND should receive "reset" responses. All segment queues should be flushed. Users should also receive an unsolicited general "connection reset" signal
-            state_ = TcpState::CLOSED;
-            break;
-        case TcpState::CLOSING:
-        case TcpState::LAST_ACK:
-        case TcpState::TIME_WAIT:
-            state_ = TcpState::CLOSED;
-            break;
-        default:
-            break;
-        }
-        return true;
-    }
-
-    bool handle_syn(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
-    {
-        // TODO: handle
-        // TODO: Challenge ACK in synchronized states <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
-        return true;
-    }
-
-
-    bool handle_ack(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
-    {
-        switch (state_) {
-        case TcpState::SYN_RCVD: {
-            if (!is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
-                std::println("ACK IS NOT VALID");
-                tcph_.rst(true);
-                write(tun, tcph.ackn(), 0);
-            }
-
-            state_ = TcpState::ESTAB;
-            std::println("MOVED TO ESTABILISHED");
-            send_.wnd = tcph.window();
-            send_.wl1 = tcph.seqn();
-            send_.wl2 = tcph.ackn();
-
-            // TODO: for now, lets do an active close right after switching to estab
-            // THIS IS the only place in state machine where passive/active close interwine
-            // Note: Uncomment for active close
-            tcph_.ack(true);
-            tcph_.fin(true);
-            write(tun, send_.nxt, 0);
-            state_ = TcpState::FIN_WAIT_1;
-            // TODO: Don't forget to send all the data before sending a FIN
-            break;
-        }
-        case TcpState::ESTAB: { break; }
-        case TcpState::LAST_ACK: {
-            // The only thing that can arrive in this state is an acknowledgment of our FIN
-            state_ = TcpState::CLOSED;
-            break;
-        }
-        case TcpState::FIN_WAIT_1: {
-            // Probably got an ACK of our FIN. TODO: Make sure
-            state_ = TcpState::FIN_WAIT_2;
-            break;
-        }
-        default:
-            break;// TODO
-        }
-        return true;
-    }
-
-    bool handle_urg(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) { return true; }
-
-    bool handle_seg_text(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
-    {
-        return true;
-    }
-
-    bool handle_fin(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
-    {
-        recv_.nxt += 1;// Advance over FIN bit
-        // TODO: SEND FINACK AND SHIT
-        std::println("Connection is closing");
-
-        // TODO: Send all buffered segments
-        tcph_.ack(true);
-        write(tun, send_.nxt, 0);
-
-        switch (state_) {
-        case TcpState::ESTAB: {
-            state_ = TcpState::CLOSE_WAIT;
-            // But since I already sent a FIN and an ACK I may switch to LAST_ACK (**???**)
-            // TODO: At first, i should send all data, then switch to LAST_ACK, but since no buffers yet do this.
-
-            tcph_.fin(true);
-            tcph_.ack(true);
-            write(tun, send_.nxt, 0);
-
-            state_ = TcpState::LAST_ACK;// TODO: Wait for ACK of FIN properly
-            break;
-        }
-        case TcpState::FIN_WAIT_2: {
-            // WE got a FIN from the other side, now switch to time_wait
-            state_ = TcpState::TIME_WAIT;
-            // TODO: start wait timer and then close
-            // But for now, just close at once
-            state_ = TcpState::CLOSED;
-            break;
-        }
-        default:
-            break;// TODO
-        }
-        return true;
-    }
-
-    void on_packet(tun &tun,
-        const netparser::IpHeaderView &iph,
-        const netparser::TcpHeaderView &tcph,
-        std::span<const std::byte> payload)
-    {
-        // First, check sequence number
-        if (!validate_seq_n(tcph, payload) && recv_.wnd != 0) {
-            // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
-            // If an incoming segment is not acceptable, an acknowledgment should be sent in reply (unless the RST bit is set, if so drop the segment and return):
-            if (tcph.rst()) { return; }
-
-            tcph_.ack(true);
-            write(tun, send_.nxt, 0);
-            return;
-        }
-
-        // False signals, that a handler wants to return (usually in drop-and-return situations)
-        if (tcph.rst()) { if (!handle_rst(tun, tcph, payload)) { return; } }
-
-        // Fourth
-        if (tcph.syn()) { if (!handle_syn(tun, tcph, payload)) { return; } }// NOLINT
-
-        // Fifth, check the ACK field
-        if (!tcph.ack()) { return; }
-        if (!handle_ack(tun, tcph, payload)) { return; }
-
-        // TODO: Check URG bit
-        if (tcph.urg()) { if (!handle_urg(tun, tcph, payload)) { return; } }// NOLINT
-
-        // TODO: Process segment text
-        if (!payload.empty()) { if (!handle_seg_text(tun, tcph, payload)) { return; } } // NOLINT
-
-        // TODO: Check FIN bit
-        if (tcph.fin()) { if (!handle_fin(tun, tcph, payload)) { return; } } // NOLINT
-    }
-
-    /// @param seqn_from first sequence number to send
-    /// @param max_size how many bytes of payload it is allowed to send at most.
-    ssize_t write(tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
-    {
-        tcph_.seqn(seqn_from);
-        tcph_.ackn(recv_.nxt);
-        tcph_.calculate_checksum(iph_, {});
-
-        std::vector<std::byte> buf{};
-        buf.resize(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE);
-        const auto ip_data = iph_.serialize();
-        const auto tcp_data = tcph_.serialize();
-        std::size_t offset = 0;
-        std::memcpy(buf.data() + offset, ip_data.data(), ip_data.size());// NOLINT
-        offset += ip_data.size();
-        std::memcpy(buf.data() + offset, tcp_data.data(), tcp_data.size());// NOLINT
-        offset += tcp_data.size();
-
-        const auto written = tun.write(buf.data(), offset);
-        if (written < 0) {
-            throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno)));// NOLINT
-        }
-
-        const std::size_t payload_bytes_sent = 0;// mock variable
-        send_.nxt += payload_bytes_sent + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
-
-        tcph_.syn(false);
-        tcph_.ack(false);
-        tcph_.fin(false);
-        tcph_.rst(false);
-
-        return written;
-    }
-
-    void accept(tun &tun, const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
-    {
-        iph_.version(iph.version());
-        iph_.ihl(iph.ihl());
-        iph_.total_len(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE);
-        // It is just that, since IP and TCP do not support options for now.
-        iph_.id(1212);
-        iph_.dont_fragment(iph.dont_fragment());
-        iph_.more_fragments(iph.more_fragments());
-        iph_.frag_offset(iph.frag_offset());
-        iph_.ttl(iph.ttl());
-        iph_.protocol(iph.protocol());
-        iph_.source_addr(iph.dest_addr());
-        iph_.dest_addr(iph.source_addr());
-        iph_.calculate_checksum();
-
-        tcph_.source_port(tcph.dest_port());
-        tcph_.dest_port(tcph.source_port());
-        tcph_.data_off(5);// SIZE OF HEADER (INCLUDING OPTIONS)
-
-
-        // 3.10.7.2. LISTEN STATE
-        // First, check for a RST: (TODO: Make RST work)
-        if (tcph.rst()) {
-            // RST should be ignored at this point, since connection doesn't even exist yet. So this RST is a creepy one :/
-            return;
-        }
-
-        // Second, check for an ACK:
-        if (tcph.ack()) {
-            // ACK shouldn't be set in initial SYN segment
-
-            tcph_.rst(true);
-            write(tun, tcph.ackn(), 0);
-            return;
-        }
-
-        // Third, check for a SYN
-        if (tcph.syn()) {
-            recv_.nxt = tcph.seqn() + 1;
-            recv_.irs = tcph.seqn();
-
-            recv_.wnd = tcph.window();// I think this is correct? TODO: MAKE SURE
-            send_.wnd = 4380;
-
-            // SEt ISS
-            // TODO: use a better mechanism, just 10 for now
-            send_.iss = 10;
-
-            // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
-            tcph_.window(send_.wnd);
-            tcph_.syn(true);
-            tcph_.ack(true);
-            write(tun, send_.iss, 0);
-
-            send_.una = send_.iss;
-            send_.nxt = send_.iss + 1;// 1 goes for SYN, since it uses up a SEQ number
-            state_ = TcpState::SYN_RCVD;
-        }
-    }
-};
-
-struct Tcp
-{
-    std::unordered_map<Quad, TcpConnection> connections;
-
-    // Accept a SYN packet
-    void accept(tun &tun, const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
-    {
-        Quad quad{ iph.source_addr(), tcph.source_port(), iph.dest_addr(), tcph.dest_port() };
-        auto [iter, inserted] = connections.emplace(quad, TcpConnection{});
-        assert(inserted);
-        auto &conn = iter->second;
-        conn.accept(tun, iph, tcph);
-    }
-
-    void packet_loop(tun &tun)// NOLINT
-    {
-        while (true) {
-            std::array<std::byte, 1500> buf{};// NOLINT
-            const ssize_t rd_bytes = tun.read(buf);
-            assert(rd_bytes);
-
-            const netparser::IpHeaderView iph{
-                std::span<const std::byte, netparser::IPV4H_MIN_SIZE>{ buf.data(), netparser::IPV4H_MIN_SIZE } };
-            if (iph.protocol() == 6) {// NOLINT
-                const netparser::TcpHeaderView tcph{
-                    std::span<const std::byte, netparser::TCPH_MIN_SIZE>{ buf.data() + netparser::IPV4H_MIN_SIZE,
-                                                                          netparser::TCPH_MIN_SIZE } };
-                const Quad quad{ iph.source_addr(), tcph.source_port(), iph.dest_addr(), tcph.dest_port() };
-
-                auto iter = connections.find(quad);
-                if (iter == connections.end()) { accept(tun, iph, tcph); } else {
-                    const std::size_t offset = netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
-                    // TODO: CALCULATE PROPERLY
-                    std::span<const std::byte> payload{ buf.data() + offset, rd_bytes - offset };
-                    iter->second.on_packet(tun, iph, tcph, payload);
-                    if (iter->second.state_ == TcpState::CLOSED) {
-                        std::println("DELETE TCB");
-                        connections.erase(iter);
-                    }
-                }
-            }
-        }
-    }
-};
+    tcp_thread.detach();
+}
 
 int main()
 {
-    tun tun{ "tun1" };
 
-    tun.set_addr("10.0.0.1");
-    tun.set_mask("255.255.255.0");
-    tun.set_flags(IFF_UP | IFF_RUNNING);
+    Context ctx{"tun1"};
+    run_underlying_stuff(ctx);
 
-    Tcp tcp{};
-    tcp.packet_loop(tun);
+    // Now it's userspace things
+    Listener listener{ ctx };
+    listener.bind(8090);
+    listener.listen(999);
+    std::println("user: bound and listening");
+    auto sock = listener.accept();
+    std::println("user: accepted");
+    while (true) {
+        std::array<char, 512> buf{};
+        auto rd = sock.read(buf.data(), buf.size());
+        if (rd == 0) {
+            std::println("user: DATA FINISHED, CLOSIGN...");
+            break;
+        } else {
+            std::println("Oof");
+        }
+    }
+
+    sleep(5);
     return 0;
 }
