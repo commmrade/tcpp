@@ -97,7 +97,7 @@ struct TcpConnection
 {
     // TODO: clean up user sutff
     TcpConnection() = default;
-    std::condition_variable recv_var_; // Notified when something is received
+    std::condition_variable recv_var_;// Notified when something is received
 
     // Not tcp protocol things
     // So I don't need to recreate ip header or tcp header each write
@@ -108,7 +108,7 @@ struct TcpConnection
     SendSequence send_;
     ReceiveSequence recv_;
     TcpState state_;
-    bool is_finished{false};
+    bool is_finished{ false };
 
     [[nodiscard]] bool validate_seq_n(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) const
     {
@@ -227,7 +227,7 @@ struct TcpConnection
     bool handle_fin(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
         is_finished = true;
-        recv_var_.notify_all(); // Notify socekts about a read, now they should check is_finished
+        recv_var_.notify_all();// Notify socekts about a read, now they should check is_finished
 
         recv_.nxt += 1;// Advance over FIN bit
         // TODO: SEND FINACK AND SHIT
@@ -398,7 +398,6 @@ struct TcpConnection
 
 struct Tcp
 {
-    // TODO: FIX CONCURRENCY STUFF
     using PortType = std::uint16_t;
     std::unordered_map<Quad, std::unique_ptr<TcpConnection>> connections;
     std::unordered_map<PortType, std::deque<Quad>> pending;
@@ -417,25 +416,32 @@ struct Tcp
         conn->accept(tun, iph, tcph);
     }
 
+    void on_tick(tun& tun)
+    {
+
+    }
+
     void process_packet(tun &tun)// NOLINT
     {
         std::array<std::byte, 1500> buf{};// NOLINT
 
         std::array<pollfd, 1> poll_fds;
-        auto& fd = poll_fds[0];
+        auto &fd = poll_fds[0];
         fd.fd = tun.raw_fd();
         fd.events = POLLIN;
         int ret = poll(poll_fds.data(), poll_fds.size(), 1);
         if (ret < 0) {
             perror("poll");
-            throw std::runtime_error(std::format("poll failed: {}", std::strerror(errno))); // NOLINT
+            throw std::runtime_error(std::format("poll failed: {}", std::strerror(errno)));// NOLINT
             return;
         }
 
-        // TImed out, process other things
+        on_tick(tun);
+
         if (ret == 0) {
-            return;
+            return; // Nothing to read
         }
+
         const ssize_t rd_bytes = tun.read(buf);
         assert(rd_bytes);
 
@@ -445,31 +451,33 @@ struct Tcp
             const netparser::TcpHeaderView tcph{
                 std::span<const std::byte, netparser::TCPH_MIN_SIZE>{ buf.data() + netparser::IPV4H_MIN_SIZE,
                                                                       netparser::TCPH_MIN_SIZE } };
-            const Quad quad{ iph.source_addr(), tcph.source_port(), iph.dest_addr(), tcph.dest_port() };
+            const Quad quad{ .src_addr = iph.source_addr(), .src_port = tcph.source_port(), .dst_addr = iph.dest_addr(),
+                             .dst_port = tcph.dest_port() };
 
             // If we do listen to this port
-            if (pending.contains(quad.dst_port) && !connections.contains(quad)) {
-                // LISTEN state. Port is bound, but such connection does nto exist yet
-                // This is probably a new connection, accept it
-                pending[quad.dst_port].push_back(quad);
-                accept(tun, iph, tcph);
-                accept_var_.notify_all();
-                std::println("NOTIFIED ABOUT ACCEPT");
-            } else if (connections.contains(quad)) {
-                // Connection is already established
-                auto iter = connections.find(quad);
-                const std::size_t offset = netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
-                // TODO: CALCULATE PROPERLY
-                std::span<const std::byte> payload{ buf.data() + offset, rd_bytes - offset };
+            auto p_iter = pending.find(quad.dst_port);
+            if (p_iter != pending.end()) {
+                auto conn_iter = connections.find(quad);
+                if (conn_iter != connections.end()) {
+                    const std::size_t offset = netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
+                    // TODO: CALCULATE PROPERLY. tkae options into account
+                    const std::span<const std::byte> payload{ buf.data() + offset, rd_bytes - offset };
 
-                iter->second->on_packet(tun, iph, tcph, payload);
-                if (iter->second->state_ == TcpState::CLOSED) {
-                    std::println("Deleted TCB");
-                    connections.erase(iter); // TODO: this may cause problems when waiting on a cond var
+                    conn_iter->second->on_packet(tun, iph, tcph, payload);
+                    if (conn_iter->second->state_ == TcpState::CLOSED) {
+                        std::println("Delete TCB");
+                        connections.erase(conn_iter);// TODO: this may cause problems when waiting on a cond var
+                    }
+                } else {
+                    // Add this new connection to the list of pending connections, then notify userspace
+                    p_iter->second.push_back(quad);
+                    accept(tun, iph, tcph);
+
+                    accept_var_.notify_all();
                 }
             } else {
-                std::println("RST, fuck you, not listening");
-                // TODO: should send RST
+                std::println("Port isn't bound, sending RST...");
+                // TODO: send rst
             }
         }
     }

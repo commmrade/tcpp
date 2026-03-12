@@ -9,29 +9,42 @@ struct Context
 {
     Tcp tcp{};
     tun tun;
-    std::mutex mx; // BEFORE ACCESSING ANY FIELD IT MUST BE LOCKED
+    std::mutex mx;// BEFORE ACCESSING ANY FIELD IT MUST BE LOCKED
 
-    Context(std::string_view dev_name)
+    static Context &instance()
+    {
+        static Context ctx{"dev1"};
+        return ctx;
+    }
+
+    Context(const Context&) = delete;
+
+    Context(Context&&) = delete;
+
+    Context& operator=(Context&) = delete;
+
+    Context& operator=(Context&&) = delete;
+private:
+    explicit Context(std::string_view dev_name)
         : tun(dev_name) {}
 };
 
-struct Socket
+struct TcpSocket
 {
-    // TODO: Fix this
     Quad quad_;
-    Context &ctx_;
-
 
     ssize_t read(void *buf, const std::size_t buf_sz)
     {
-        std::unique_lock recv_lock{ctx_.mx};
-        assert(ctx_.tcp.connections.contains(quad_));
-        auto& conn = ctx_.tcp.connections[quad_];
+        auto& ctx_ = Context::instance();
+        std::unique_lock recv_lock{ ctx_.mx };
+        std::println("USER: TAKE THE READ LOCK");
+        auto &conn = ctx_.tcp.connections[quad_];
         conn->recv_var_.wait(recv_lock);
 
+        assert(ctx_.tcp.connections.contains(quad_));
         // We got notified
         if (conn->is_finished) {
-            return 0; // EOF
+            return 0;// EOF
         }
 
         return 148;
@@ -45,72 +58,75 @@ struct Socket
 };
 
 
-struct Listener
+struct TcpListener
 {
-    // TODO: this is kinda stupid?
-    Context &ctx_;
     std::uint16_t port_{};
-
 public:
     void bind(const std::uint16_t port)
     {
-        std::unique_lock lock{ctx_.mx};
+        auto& ctx_ = Context::instance();
+        std::unique_lock lock{ ctx_.mx };
         port_ = port;
-        if (ctx_.tcp.pending.contains(port)) {
-            throw std::runtime_error("Already bound");
-        }
+        if (ctx_.tcp.pending.contains(port)) { throw std::runtime_error("Already bound"); }
         ctx_.tcp.pending.emplace(port, std::deque<Quad>{});
     }
 
     void listen(int backlog)
     {
+        assert(backlog > 0);
         // TODO: set max capacity
+        auto& ctx_ = Context::instance();
+        std::unique_lock lock{ ctx_.mx };
+
+        auto iter = ctx_.tcp.pending.find(port_);
+        assert(iter != ctx_.tcp.pending.end());
+
+        // TODO: find a way to set a limit
+        // iter->second.reserve(static_cast<std::size_t>(backlog));
     }
 
-    Socket accept()
+    TcpSocket accept()
     {
-        std::unique_lock accept_lock{ctx_.mx};
-        std::println("Locked mutex in accept");
-        ctx_.tcp.accept_var_.wait(accept_lock, [this]{ return ctx_.tcp.pending.contains(port_) && !ctx_.tcp.pending[port_].empty(); });
-        std::println("AFTER WAIT");
-        assert(ctx_.tcp.pending.contains(port_));
+        auto& ctx_ = Context::instance();
+
+        std::unique_lock accept_lock{ ctx_.mx };
+        ctx_.tcp.accept_var_.wait(accept_lock,
+            [this, &ctx_] { return ctx_.tcp.pending.contains(port_) && !ctx_.tcp.pending[port_].empty(); });
+
         auto iter = ctx_.tcp.pending.find(port_);
-        assert(!iter->second.empty());
+
         auto quad = iter->second.front();
         iter->second.pop_front();
-        Socket ret{quad, ctx_};
+
+        TcpSocket ret{ quad };
         return ret;
     }
 };
 
-void run_underlying_stuff(Context &ctx)
+std::jthread run_underlying_stuff()
 {
-    {
-        std::unique_lock lock{ ctx.mx };
-        ctx.tun.set_addr("10.0.0.1");
-        ctx.tun.set_mask("255.255.255.0");
-        ctx.tun.set_flags(IFF_UP | IFF_RUNNING);
-    }
-    std::jthread tcp_thread{ [&ctx] {
-            while (true) { // NOLINT
+    auto& ctx = Context::instance();
+    ctx.tun.set_addr("10.0.0.1");
+    ctx.tun.set_mask("255.255.255.0");
+    ctx.tun.set_flags(IFF_UP | IFF_RUNNING);
+    std::jthread tcp_thread{ [] {
+            while (true) {// NOLINT
+                auto& ctx = Context::instance();
                 std::unique_lock lock{ ctx.mx };
                 ctx.tcp.process_packet(ctx.tun);
                 lock.unlock();
-                std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Let other threads lock the mutex
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));// Let other threads lock the mutex
             }
         }
     };
-    tcp_thread.detach();
+    return tcp_thread;
 }
 
 int main()
 {
+    auto net_thread = run_underlying_stuff();
 
-    Context ctx{"tun1"};
-    run_underlying_stuff(ctx);
-
-    // Now it's userspace things
-    Listener listener{ ctx };
+    TcpListener listener{};
     listener.bind(8090);
     listener.listen(999);
     std::println("user: bound and listening");
@@ -120,13 +136,12 @@ int main()
         std::array<char, 512> buf{};
         auto rd = sock.read(buf.data(), buf.size());
         if (rd == 0) {
-            std::println("user: DATA FINISHED, CLOSIGN...");
+            std::println("user: DATA FINISHED, CLOSING...");
             break;
-        } else {
-            std::println("Oof");
         }
     }
+    sleep(2);
 
-    sleep(5);
+    net_thread.join();
     return 0;
 }
