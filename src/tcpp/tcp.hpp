@@ -16,6 +16,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
+#include <netdb.h>
 #include <sys/types.h>
 #include <span>
 #include <unordered_set>
@@ -24,6 +25,7 @@
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <poll.h>
+#include <random>
 
 
 enum class TcpState// NOLINT
@@ -37,6 +39,9 @@ enum class TcpState// NOLINT
     // Passive close
     CLOSE_WAIT,
     LAST_ACK,
+
+    // Active open
+    SYN_SENT,
 
     // Active close
     FIN_WAIT_1,
@@ -98,6 +103,7 @@ struct TcpConnection
     // TODO: clean up user sutff
     TcpConnection() = default;
     std::condition_variable recv_var_;// Notified when something is received
+    std::condition_variable conn_var_;
 
     // Not tcp protocol things
     // So I don't need to recreate ip header or tcp header each write
@@ -169,7 +175,72 @@ struct TcpConnection
 
     bool handle_syn(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
-        // TODO: handle
+        switch (state_) {
+        case TcpState::SYN_SENT: {
+            assert(payload.empty()); // No support for payload here
+
+            bool is_ack_acceptable = false;
+            if (tcph.ack()) {
+                std::println("{} {}. {} {}", tcph.ackn() - 1, send_.iss, tcph.ackn(), send_.nxt);
+                if (wrapping_lt(tcph.ackn() - 1, send_.iss) || tcph.ackn() > send_.nxt) {
+                    tcph_.syn(false); // it was probably true because of connect()
+                    tcph_.rst(true);
+                    std::println("SENDING RST");
+                    write(tun, tcph.ackn(), 0);
+                    return false; // return from processing
+                }
+                if (is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
+                    // ACK is acceptable
+                    is_ack_acceptable = true;
+                }
+            }
+            if (tcph.rst()) {
+                // TODO: IDC about it right now
+                // implementation that supports the mitigation described in RFC 5961 SHOULD first check that
+                // the sequence number exactly matches RCV.NXT prior to executing the action in the next paragraph
+
+               //If the ACK was acceptable, then signal to the user
+               // "error: connection reset", drop the segment, enter CLOSED state, delete TCB, and return.
+               // Otherwise (no ACK), drop the segment and return
+            }
+
+            assert((is_ack_acceptable || !tcph.ack()) && !tcph.rst()); // This step should be reached only if the ACK is ok, or there is no ACK, and the segment did not contain a RST.
+            if (tcph.syn()) {
+                recv_.nxt = tcph.seqn() + 1;
+                recv_.irs = tcph.seqn();
+                if (tcph.ack()) {
+                    send_.una = tcph.ackn();
+                }
+
+                if (send_.una > send_.iss /* SYN has been ACKed */) {
+                    state_ = TcpState::ESTAB;
+
+                    tcph_.ack(true);
+                    write(tun, send_.nxt, 0);
+
+                    // 3 way handshake is done at this point
+                    conn_var_.notify_all();
+                } else {
+                    // TODO: how to handle this in terms of *conn_var_*?
+                    state_ = TcpState::SYN_RCVD; // Sim. open things
+
+                    tcph_.ack(true);
+                    tcph_.syn(true);
+                    write(tun, send_.iss, 0);
+                }
+
+                send_.wnd = tcph.window();
+                send_.wl1 = tcph.seqn();
+                send_.wl2 = tcph.ackn();
+            }
+
+            if (!tcph.syn() && !tcph.rst()) {
+                return false; // return from processing
+            }
+            break;
+        }
+        default: break;
+        }
         // TODO: Challenge ACK in synchronized states <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
         return true;
     }
@@ -269,6 +340,9 @@ struct TcpConnection
         const netparser::TcpHeaderView &tcph,
         std::span<const std::byte> payload)
     {
+        // TODO: FIND WHERE IT SENDS RST
+
+        std::println("on packet: {} {}", tcph.syn(), tcph.ack());
         // First, check sequence number
         if (!validate_seq_n(tcph, payload) && recv_.wnd != 0) {
             // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
@@ -304,6 +378,7 @@ struct TcpConnection
     /// @param max_size how many bytes of payload it is allowed to send at most.
     ssize_t write(tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
     {
+        std::println("DOING A WRITE");
         tcph_.seqn(seqn_from);
         tcph_.ackn(recv_.nxt);
         tcph_.calculate_checksum(iph_, {});
@@ -394,6 +469,50 @@ struct TcpConnection
             state_ = TcpState::SYN_RCVD;
         }
     }
+
+    void connect(tun &tun, const std::uint32_t saddr, const std::uint16_t sport, const std::uint32_t daddr, const std::uint16_t dport)
+    {
+        // 1. construct ip and tcp headers
+        // 2. send a create connection in **connections**.
+        // 3. something esle i guess?
+
+        std::random_device rnd;
+        std::mt19937 gen(rnd());
+        std::uniform_int_distribution<std::uint32_t> dis(std::numeric_limits<std::uint32_t>::min(), std::numeric_limits<std::uint32_t>::max() - 1U);
+
+        send_.iss = dis(gen);
+        send_.una = send_.iss;
+        send_.nxt = send_.iss; // it is incremented in write()
+        send_.wnd = 4380;
+
+        iph_.version(4);
+        iph_.ihl(5);// 5 * 4 = 20 bytes (no options)
+        iph_.type_of_service(0);
+        iph_.total_len(40);// 20 (IP) + 20 (TCP) — update once you know payload size
+        iph_.id(0);
+        iph_.dont_fragment(true);
+        iph_.more_fragments(false);
+        iph_.frag_offset(0);
+        iph_.ttl(64);
+        iph_.protocol(IPPROTO_TCP);// 6
+        iph_.source_addr(saddr);// already in network byte order from inet_pton
+        iph_.dest_addr(daddr);// assumed network byte order
+        iph_.calculate_checksum();
+
+        tcph_.source_port(sport);// ephemeral port, pick randomly or track in connections
+        tcph_.dest_port(dport);// destination port, you'll need to pass this into connect()
+        tcph_.seqn(send_.iss);
+        tcph_.ackn(0);// 0 on SYN
+        tcph_.data_off(5);// 5 * 4 = 20 bytes, no options
+        tcph_.syn(true);
+        tcph_.window(send_.wnd);// TODO: set sendewr window to this
+        tcph_.urg_ptr(0);
+        tcph_.calculate_checksum(iph_, {});// empty payload span for a bare SYN
+
+        write(tun, send_.iss, 0);
+
+        state_ = TcpState::SYN_SENT;
+    }
 };
 
 struct Tcp
@@ -416,10 +535,32 @@ struct Tcp
         conn->accept(tun, iph, tcph);
     }
 
-    void on_tick(tun& tun)
+    Quad connect(tun &tun, const std::uint32_t daddr, const std::uint16_t dport)
     {
+        // TODO: clean it up
+        std::uint32_t s_addr{};
+        int ret = inet_pton(AF_INET, "10.0.0.2", &s_addr);
+        assert(ret >= 0);// It can't really fail
 
+        std::random_device rnd;
+        std::mt19937 gen(rnd());
+        std::uniform_int_distribution<> dist(1025, std::numeric_limits<std::uint16_t>::max());
+        std::uint16_t port = static_cast<std::uint16_t>(dist(gen));
+        Quad quad{ daddr, dport, s_addr, port };
+        // TODO: fix QUAD things, its kinda weird that i have to reverse it
+
+        auto [iter, inserted] = connections.emplace(quad, std::make_unique<TcpConnection>());
+        assert(inserted);
+        auto &conn = iter->second;
+
+        // TODO: stooooopid, get rid of it
+        pending[quad.dst_port] = {};
+
+        conn->connect(tun, s_addr, port, daddr, dport);
+        return quad;
     }
+
+    void on_tick(tun &tun) {}
 
     void process_packet(tun &tun)// NOLINT
     {
@@ -439,11 +580,13 @@ struct Tcp
         on_tick(tun);
 
         if (ret == 0) {
-            return; // Nothing to read
+            return;// Nothing to read
         }
 
         const ssize_t rd_bytes = tun.read(buf);
         assert(rd_bytes);
+
+        std::println("Read something");
 
         const netparser::IpHeaderView iph{
             std::span<const std::byte, netparser::IPV4H_MIN_SIZE>{ buf.data(), netparser::IPV4H_MIN_SIZE } };
@@ -459,8 +602,8 @@ struct Tcp
             if (p_iter != pending.end()) {
                 auto conn_iter = connections.find(quad);
                 if (conn_iter != connections.end()) {
-                    const std::size_t offset = netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
-                    // TODO: CALCULATE PROPERLY. tkae options into account
+                    std::println("calling on packet");
+                    const std::size_t offset = iph.ihl() * 4 + tcph.data_off() * 4;
                     const std::span<const std::byte> payload{ buf.data() + offset, rd_bytes - offset };
 
                     conn_iter->second->on_packet(tun, iph, tcph, payload);
@@ -469,6 +612,7 @@ struct Tcp
                         connections.erase(conn_iter);// TODO: this may cause problems when waiting on a cond var
                     }
                 } else {
+                    std::println("accepting");
                     // Add this new connection to the list of pending connections, then notify userspace
                     p_iter->second.push_back(quad);
                     accept(tun, iph, tcph);

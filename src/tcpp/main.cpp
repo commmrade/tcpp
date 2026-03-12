@@ -33,6 +33,25 @@ struct TcpSocket
 {
     Quad quad_;
 
+    void connect(const std::string_view daddr, const std::uint16_t dport)
+    {
+        auto& ctx_ = Context::instance();
+        std::unique_lock conn_lock{ctx_.mx};
+        std::println("user: connect got mutex");
+
+        std::uint32_t addr{};
+        int ret = inet_pton(AF_INET, daddr.data(), &addr);
+        if (ret < 0) {
+            throw std::runtime_error("Ill formated address");
+        }
+        quad_ = ctx_.tcp.connect(ctx_.tun,  addr, dport);
+
+        auto& conn = ctx_.tcp.connections[quad_];
+        conn->conn_var_.wait(conn_lock);
+        std::println("user: handshaked");
+        // 3 way handshake is complete at this point
+    }
+
     ssize_t read(void *buf, const std::size_t buf_sz)
     {
         auto& ctx_ = Context::instance();
@@ -126,20 +145,36 @@ int main()
 {
     auto net_thread = run_underlying_stuff();
 
-    TcpListener listener{};
-    listener.bind(8090);
-    listener.listen(999);
-    std::println("user: bound and listening");
-    auto sock = listener.accept();
-    std::println("user: accepted");
+    sleep(3);
+
+    TcpSocket sock{};
+    sock.connect("10.0.0.1", 8090);
+
     while (true) {
         std::array<char, 512> buf{};
         auto rd = sock.read(buf.data(), buf.size());
         if (rd == 0) {
-            std::println("user: DATA FINISHED, CLOSING...");
+            std::println("user: FIN");
             break;
         }
     }
+
+    // TcpListener listener{};
+    // listener.bind(8090);
+    // listener.listen(999);
+    // std::println("user: bound and listening");
+    // auto sock = listener.accept();
+    // std::println("user: accepted");
+    // while (true) {
+    //     std::array<char, 512> buf{};
+    //     auto rd = sock.read(buf.data(), buf.size());
+    //     if (rd == 0) {
+    //         std::println("user: DATA FINISHED, CLOSING...");
+    //         break;
+    //     }
+    // }
+
+
     sleep(2);
 
     net_thread.join();
