@@ -511,14 +511,18 @@ struct TcpConnection
 
             // SEt ISS
             // TODO: use a better mechanism, just 10 for now
-            send_.iss = 10;
-
+            std::random_device rnd;
+            std::mt19937 gen(rnd());
+            std::uniform_int_distribution<std::uint32_t> dis(std::numeric_limits<std::uint32_t>::min(),
+                std::numeric_limits<std::uint32_t>::max());
+            auto iss = dis(gen);
             // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
             tcph_.window(send_.wnd);
             tcph_.syn(true);
             tcph_.ack(true);
-            write(tun, send_.iss, 0);
+            write(tun, iss, 0);
 
+            send_.iss = iss;
             send_.una = send_.iss;
             send_.nxt = send_.iss + 1;// 1 goes for SYN, since it uses up a SEQ number
             state_ = TcpState::SYN_RCVD;

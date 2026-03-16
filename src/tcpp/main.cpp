@@ -13,7 +13,7 @@ struct Context
 
     static Context &instance()
     {
-        static Context ctx{"dev1"};
+        static Context ctx{"tun1"};
         return ctx;
     }
 
@@ -139,6 +139,7 @@ public:
         auto quad = iter->second.front();
         iter->second.pop_front();
 
+        // TODO: Fix, this causes first SYN to retransmit
         // Mutex is locked again at this point
         auto conn_iter = ctx_.tcp.connections.find(quad);
         conn_iter->second->conn_var_.wait(accept_lock);
@@ -197,14 +198,14 @@ int main()
     // auto sock = listener.accept();
     // std::println("user: accepted");
     // while (true) {
-        // std::array<char, 512> buf{};
-        // auto rd = sock.read(buf.data(), buf.size());
-        // if (rd == 0) {
-            // std::println("user: DATA FINISHED, CLOSING...");
-            // break;
-        // }
+    //     std::array<char, 512> buf{};
+    //     auto rd = sock.read(buf.data(), buf.size());
+    //     if (rd == 0) {
+    //         std::println("user: DATA FINISHED, CLOSING...");
+    //         break;
+    //     }
     // }
-
+    //
 
     // Test FIN
     TcpListener listener{};
@@ -214,7 +215,7 @@ int main()
     auto sock = listener.accept();
     std::println("user: accepted");
     sock.shutdown(ShutdownType::WRITE);
-
+    //
 
     sleep(2);
 
