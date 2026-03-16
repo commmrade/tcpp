@@ -1,7 +1,10 @@
 add_executable(main main.cpp
         tun.cpp
         tun.hpp
-        util.hpp)
+        util.hpp
+        tcp.cpp
+        tcp.hpp
+)
 
 add_custom_target(setcap
         COMMAND sudo setcap cap_net_admin+ep $<TARGET_FILE:main>
@@ -20,6 +23,9 @@ target_link_system_libraries(
           fmt::fmt
           spdlog::spdlog
 )
+
+target_compile_options(main PRIVATE -fno-omit-frame-pointer -g)
+
 
 tcpp_configure_linker(main)
 
