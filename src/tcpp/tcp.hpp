@@ -141,7 +141,7 @@ struct TcpConnection
     }
 
     // lile false if it should return
-    bool handle_rst(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+    bool handle_rst(Tun& tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
         // from 3.10.7.4. Other States later TODO
 
@@ -183,14 +183,14 @@ struct TcpConnection
         return true;
     }
 
-    bool handle_syn(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+    bool handle_syn(Tun& tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
         // TODO: Challenge ACK in synchronized states <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
         return true;
     }
 
 
-    bool handle_ack(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+    bool handle_ack(Tun& tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
         switch (state_) {
         case TcpState::SYN_RCVD: {
@@ -233,14 +233,14 @@ struct TcpConnection
         return true;
     }
 
-    bool handle_urg(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) { return true; }
+    bool handle_urg(Tun& tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) { return true; }
 
-    bool handle_seg_text(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+    bool handle_seg_text(Tun& tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
         return true;
     }
 
-    bool handle_fin(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+    bool handle_fin(Tun& tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
         is_finished = true;
         recv_var_.notify_all();// Notify socekts about a read, now they should check is_finished
@@ -280,7 +280,7 @@ struct TcpConnection
         return true;
     }
 
-    bool handle_syn_sent(tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+    bool handle_syn_sent(Tun& tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
         assert(payload.empty());// No support for payload here
 
@@ -344,7 +344,7 @@ struct TcpConnection
         return true;
     }
 
-    void on_packet(tun &tun,
+    void on_packet(Tun& tun,
         const netparser::IpHeaderView &iph,
         const netparser::TcpHeaderView &tcph,
         std::span<const std::byte> payload)
@@ -391,13 +391,13 @@ struct TcpConnection
     }
 
 
-    bool handle_send(tun& tun)
+    bool handle_send(Tun& tun)
     {
         // TODO: We can piggyback FIN on last segment of data
         return true;
     }
 
-    bool handle_close(tun& tun)
+    bool handle_close(Tun& tun)
     {
         // If piggybacking FIN wasn't possible, just send a raw FIN here
         if (should_send_fin /* && send_buffer.empty() */) {
@@ -418,7 +418,7 @@ struct TcpConnection
     // Check timers, all sorts of events and issue SENDs
     // TODO: Piggybacked ACKs should be here
     // Method is used for SENDs and TIMEOUTs and all other kinds of events except SEGMENT ARRIVES
-    void on_tick(tun &tun)
+    void on_tick(Tun& tun)
     {
         if (!handle_send(tun)) {
             return;
@@ -432,7 +432,7 @@ struct TcpConnection
 
     /// @param seqn_from first sequence number to send
     /// @param max_size how many bytes of payload it is allowed to send at most.
-    ssize_t write(tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
+    ssize_t write(Tun& tun, const std::uint32_t seqn_from, const std::size_t max_size)
     {
         tcph_.seqn(seqn_from);
         tcph_.ackn(recv_.nxt);
@@ -464,7 +464,7 @@ struct TcpConnection
         return written;
     }
 
-    void accept(tun &tun, const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
+    void accept(Tun& tun, const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
     {
         iph_.version(iph.version());
         iph_.ihl(iph.ihl());
@@ -511,21 +511,25 @@ struct TcpConnection
 
             // SEt ISS
             // TODO: use a better mechanism, just 10 for now
-            send_.iss = 10;
-
+            std::random_device rnd;
+            std::mt19937 gen(rnd());
+            std::uniform_int_distribution<std::uint32_t> dis(std::numeric_limits<std::uint32_t>::min(),
+                std::numeric_limits<std::uint32_t>::max());
+            auto iss = dis(gen);
             // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
             tcph_.window(send_.wnd);
             tcph_.syn(true);
             tcph_.ack(true);
-            write(tun, send_.iss, 0);
+            write(tun, iss, 0);
 
+            send_.iss = iss;
             send_.una = send_.iss;
             send_.nxt = send_.iss + 1;// 1 goes for SYN, since it uses up a SEQ number
             state_ = TcpState::SYN_RCVD;
         }
     }
 
-    void connect(tun &tun,
+    void connect(Tun& tun,
         const std::uint32_t saddr,
         const std::uint16_t sport,
         const std::uint32_t daddr,
@@ -601,7 +605,7 @@ struct Tcp
     // Sockets that are ready to be accepted. When they are accepted, they are removed from this queue.
 
     // Accept a SYN packet
-    void accept(tun &tun, const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
+    void accept(Tun& tun, const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
     {
         Quad quad{ iph.source_addr(), tcph.source_port(), iph.dest_addr(), tcph.dest_port() };
         auto [iter, inserted] = connections.emplace(quad, std::make_unique<TcpConnection>());
@@ -611,7 +615,7 @@ struct Tcp
         conn->accept(tun, iph, tcph);
     }
 
-    Quad connect(tun &tun, const std::uint32_t daddr, const std::uint16_t dport)
+    Quad connect(Tun& tun, const std::uint32_t daddr, const std::uint16_t dport)
     {
         std::uint32_t s_addr{};
         // TODO: avoid hardcoding src_ip
@@ -633,7 +637,7 @@ struct Tcp
     }
 
 
-    void process_packet(tun &tun)// NOLINT
+    void process_packet(Tun& tun)// NOLINT
     {
         std::array<std::byte, 1500> buf{};// NOLINT
 

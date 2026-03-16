@@ -8,12 +8,12 @@
 struct Context
 {
     Tcp tcp{};
-    tun tun;
+    Tun tun;
     std::mutex mx;// BEFORE ACCESSING ANY FIELD IT MUST BE LOCKED
 
     static Context &instance()
     {
-        static Context ctx{"dev1"};
+        static Context ctx{"tun1"};
         return ctx;
     }
 
@@ -139,6 +139,7 @@ public:
         auto quad = iter->second.front();
         iter->second.pop_front();
 
+        // TODO: Fix, this causes first SYN to retransmit
         // Mutex is locked again at this point
         auto conn_iter = ctx_.tcp.connections.find(quad);
         conn_iter->second->conn_var_.wait(accept_lock);
@@ -153,8 +154,8 @@ public:
 std::jthread run_underlying_stuff()
 {
     auto& ctx = Context::instance();
-    ctx.tun.set_addr("10.0.0.1");
-    ctx.tun.set_mask("255.255.255.0");
+    ctx.tun.set_addr("172.16.0.0");
+    ctx.tun.set_mask("255.240.0.0");
     ctx.tun.set_flags(IFF_UP | IFF_RUNNING);
     std::jthread tcp_thread{ [] {
             while (true) {// NOLINT
@@ -173,7 +174,7 @@ int main()
 {
     auto net_thread = run_underlying_stuff();
 
-    sleep(3);
+    // sleep(3);
 
     // std::jthread conn_thread{[] {
     //     TcpSocket sock{};
@@ -190,31 +191,45 @@ int main()
     //     }
     // }};
 
-    // TcpListener listener{};
-    // listener.bind(8090);
-    // listener.listen(999);
-    // std::println("user: bound and listening");
-    // auto sock = listener.accept();
-    // std::println("user: accepted");
-    // while (true) {
-        // std::array<char, 512> buf{};
-        // auto rd = sock.read(buf.data(), buf.size());
-        // if (rd == 0) {
-            // std::println("user: DATA FINISHED, CLOSING...");
-            // break;
-        // }
-    // }
-
-
-    // Test FIN
     TcpListener listener{};
     listener.bind(8090);
     listener.listen(999);
     std::println("user: bound and listening");
     auto sock = listener.accept();
     std::println("user: accepted");
-    sock.shutdown(ShutdownType::WRITE);
+    while (true) {
+        std::array<char, 512> buf{};
+        auto rd = sock.read(buf.data(), buf.size());
+        if (rd == 0) {
+            std::println("user: DATA FINISHED, CLOSING...");
+            break;
+        }
+    }
 
+
+    // Test FIN
+    // TcpListener listener{};
+    // listener.bind(8090);
+    // listener.listen(999);
+    // std::println("user: bound and listening");
+    // auto sock = listener.accept();
+    // std::println("user: accepted");
+    // sock.shutdown(ShutdownType::WRITE);
+    //
+
+    sleep(3); // Wait for py test thing to start
+    // TcpSocket sock{};
+    // sock.connect("10.0.0.1", 8090);
+    //
+    // while (true) {
+    //     std::array<char, 512> buf{};
+    //     auto rd = sock.read(buf.data(), buf.size());
+    //     std::println("user: rd {}", rd);
+    //     if (rd == 0) {
+    //         std::println("user: FIN");
+    //         break;
+    //     }
+    // }
 
     sleep(2);
 
