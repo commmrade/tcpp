@@ -19,14 +19,14 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
-class tun
+class Tun
 {
 private:
     int tun_fd{};
     std::string dev_name_;
 
 public:
-    explicit tun(std::string_view dev_name)
+    explicit Tun(std::string_view dev_name)
         : dev_name_(dev_name)
     {
         tun_fd = open("/dev/net/tun", O_RDWR);
@@ -103,7 +103,7 @@ public:
         }
     }
 
-    ~tun() { close(); }
+    ~Tun() { close(); }
 
     void close() { ::close(tun_fd); }
 
