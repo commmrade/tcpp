@@ -28,6 +28,13 @@
 #include <random>
 
 
+enum class ShutdownType
+{
+    WRITE,
+    READ,
+    RDWR,
+};
+
 enum class TcpState// NOLINT
 {
     // Passive open
@@ -103,7 +110,7 @@ struct TcpConnection
     // TODO: clean up user sutff
     TcpConnection() = default;
     std::condition_variable recv_var_;// Notified when something is received
-    std::condition_variable conn_var_;
+    std::condition_variable conn_var_;// Notified when 3 way handshake is done (both active and passive)
 
     // Not tcp protocol things
     // So I don't need to recreate ip header or tcp header each write
@@ -114,6 +121,9 @@ struct TcpConnection
     SendSequence send_;
     ReceiveSequence recv_;
     TcpState state_;
+
+    // Buffers and stuff
+    bool should_send_fin{ false };// TODO: Get rid of this. This should be sent after all data in buffers is sent
     bool is_finished{ false };
 
     [[nodiscard]] bool validate_seq_n(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) const
@@ -190,6 +200,7 @@ struct TcpConnection
                 write(tun, tcph.ackn(), 0);
             }
 
+            conn_var_.notify_all();
             state_ = TcpState::ESTAB;
             send_.wnd = tcph.window();
             send_.wl1 = tcph.seqn();
@@ -379,6 +390,46 @@ struct TcpConnection
         }
     }
 
+
+    bool handle_send(tun& tun)
+    {
+        // TODO: We can piggyback FIN on last segment of data
+        return true;
+    }
+
+    bool handle_close(tun& tun)
+    {
+        // If piggybacking FIN wasn't possible, just send a raw FIN here
+        if (should_send_fin /* && send_buffer.empty() */) {
+            tcph_.fin(true);
+            tcph_.ack(true);
+            // TODO: use actual SEQ num of FIN
+            write(tun, send_.nxt, 0);
+
+            // TODO: make sure it is retransmitted
+            state_ = TcpState::FIN_WAIT_1;
+            should_send_fin = false;
+        } else {
+            // TODO: not impl yet
+        }
+        return true;
+    }
+
+    // Check timers, all sorts of events and issue SENDs
+    // TODO: Piggybacked ACKs should be here
+    // Method is used for SENDs and TIMEOUTs and all other kinds of events except SEGMENT ARRIVES
+    void on_tick(tun &tun)
+    {
+        if (!handle_send(tun)) {
+            return;
+        }
+
+        // do_close is second, because if we are done sending in SEND (buffers are empty), we can try to issue a FIN
+        if (!handle_close(tun)) {
+            return;
+        }
+    }
+
     /// @param seqn_from first sequence number to send
     /// @param max_size how many bytes of payload it is allowed to send at most.
     ssize_t write(tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
@@ -521,6 +572,23 @@ struct TcpConnection
 
         state_ = TcpState::SYN_SENT;
     }
+
+    // "Userspace" kinda functions
+    void shutdown(ShutdownType sht)
+    {
+        // TODO: It should buffer FIN at the end of send buffer
+        if (sht == ShutdownType::WRITE) {
+            should_send_fin = true;
+        } else {
+            throw std::runtime_error("This shutdown type is not impl");
+        }
+    }
+
+    void close()
+    {
+        // TODO: it should buffer FIN
+        should_send_fin = true;
+    }
 };
 
 struct Tcp
@@ -564,7 +632,6 @@ struct Tcp
         return quad;
     }
 
-    void on_tick(tun &tun) {}
 
     void process_packet(tun &tun)// NOLINT
     {
@@ -581,7 +648,7 @@ struct Tcp
             return;
         }
 
-        on_tick(tun);
+        for (const auto &[quad, conn] : connections) { conn->on_tick(tun); }
 
         if (ret == 0) {
             return;// Nothing to read
@@ -624,6 +691,13 @@ struct Tcp
                 }
             }
         }
+    }
+
+    // "USERSPACE" functions
+    void bind(const std::uint16_t port)
+    {
+        if (pending.contains(port)) { throw std::runtime_error("Already bound"); }
+        pending.emplace(port, std::deque<Quad>{});
     }
 };
 

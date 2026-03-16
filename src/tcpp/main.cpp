@@ -29,6 +29,7 @@ private:
         : tun(dev_name) {}
 };
 
+
 struct TcpSocket
 {
     Quad quad_;
@@ -72,6 +73,29 @@ struct TcpSocket
         // NOT IMPLEMENTED
         throw std::runtime_error("not implemented");
     }
+
+    // This will initiase a one-side close (send FIN)
+    void shutdown(const ShutdownType sht)
+    {
+        if (sht == ShutdownType::WRITE) {
+            auto& ctx = Context::instance();
+            std::unique_lock ctx_lock{ctx.mx};
+            auto conn_iter = ctx.tcp.connections.find(quad_);
+            conn_iter->second->shutdown(sht);
+        } else {
+            throw std::runtime_error("Unimplemented other shutdown types");
+        }
+    }
+
+    // This will initiate a full shutdown
+    void close()
+    {
+        // This function shall not wait for connection teardown and return immediately. TCP will take care of proper closing
+        auto& ctx = Context::instance();
+        std::unique_lock ctx_lock{ctx.mx};
+        auto conn_iter = ctx.tcp.connections.find(quad_);
+        conn_iter->second->close();
+    }
 };
 
 
@@ -84,8 +108,8 @@ public:
         auto& ctx_ = Context::instance();
         std::unique_lock lock{ ctx_.mx };
         port_ = port;
-        if (ctx_.tcp.pending.contains(port)) { throw std::runtime_error("Already bound"); }
-        ctx_.tcp.pending.emplace(port, std::deque<Quad>{});
+
+        ctx_.tcp.bind(port);
     }
 
     void listen(int backlog)
@@ -106,15 +130,21 @@ public:
     {
         auto& ctx_ = Context::instance();
 
+        // TODO: maybe make it in 1 step some time later
         std::unique_lock accept_lock{ ctx_.mx };
         ctx_.tcp.accept_var_.wait(accept_lock,
             [this, &ctx_] { return ctx_.tcp.pending.contains(port_) && !ctx_.tcp.pending[port_].empty(); });
 
         auto iter = ctx_.tcp.pending.find(port_);
-
         auto quad = iter->second.front();
         iter->second.pop_front();
 
+        // Mutex is locked again at this point
+        auto conn_iter = ctx_.tcp.connections.find(quad);
+        conn_iter->second->conn_var_.wait(accept_lock);
+
+        // At this point 3 way handshake is likely to be complete
+        assert(conn_iter->second->state_ == TcpState::ESTAB);
         TcpSocket ret{ quad };
         return ret;
     }
@@ -145,35 +175,45 @@ int main()
 
     sleep(3);
 
-    std::jthread conn_thread{[] {
-        TcpSocket sock{};
-        sock.connect("10.0.0.1", 8090);
+    // std::jthread conn_thread{[] {
+    //     TcpSocket sock{};
+    //     sock.connect("10.0.0.1", 8090);
+    //
+    //     while (true) {
+    //         std::array<char, 512> buf{};
+    //         auto rd = sock.read(buf.data(), buf.size());
+    //         std::println("user: rd {}", rd);
+    //         if (rd == 0) {
+    //             std::println("user: FIN");
+    //             break;
+    //         }
+    //     }
+    // }};
 
-        while (true) {
-            std::array<char, 512> buf{};
-            auto rd = sock.read(buf.data(), buf.size());
-            std::println("user: rd {}", rd);
-            if (rd == 0) {
-                std::println("user: FIN");
-                break;
-            }
-        }
-    }};
+    // TcpListener listener{};
+    // listener.bind(8090);
+    // listener.listen(999);
+    // std::println("user: bound and listening");
+    // auto sock = listener.accept();
+    // std::println("user: accepted");
+    // while (true) {
+        // std::array<char, 512> buf{};
+        // auto rd = sock.read(buf.data(), buf.size());
+        // if (rd == 0) {
+            // std::println("user: DATA FINISHED, CLOSING...");
+            // break;
+        // }
+    // }
 
+
+    // Test FIN
     TcpListener listener{};
     listener.bind(8090);
     listener.listen(999);
     std::println("user: bound and listening");
     auto sock = listener.accept();
     std::println("user: accepted");
-    while (true) {
-        std::array<char, 512> buf{};
-        auto rd = sock.read(buf.data(), buf.size());
-        if (rd == 0) {
-            std::println("user: DATA FINISHED, CLOSING...");
-            break;
-        }
-    }
+    sock.shutdown(ShutdownType::WRITE);
 
 
     sleep(2);
