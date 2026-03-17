@@ -670,12 +670,10 @@ struct Tcp
 
             const netparser::TcpHeaderView tcph{
                 std::span<const std::byte>{ std::next(buf.data(), static_cast<std::ptrdiff_t>(rd_offset)), static_cast<std::size_t>(rd_bytes) - rd_offset } };
+
             rd_offset += tcph.data_off() * 4UL;
-            std::println("TCPH size: {} bytes, options: {} bytes", tcph.data_off() * 4, tcph.data_off() * 4 - netparser::TCPH_MIN_SIZE);
             const Quad quad{ .src_addr = iph.source_addr(), .src_port = tcph.source_port(), .dst_addr = iph.dest_addr(),
                              .dst_port = tcph.dest_port() };
-
-            std::println("MSS has: {}, SACK has: {}, Timestamp has: {}", tcph.has_option(netparser::TcpOptionKind::MSS), tcph.has_option(netparser::TcpOptionKind::SACK_PERM), tcph.has_option(netparser::TcpOptionKind::TIMESTAMP));
 
             auto conn_iter = connections.find(quad);
             if (conn_iter != connections.end()) {

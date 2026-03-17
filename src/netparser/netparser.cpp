@@ -9,13 +9,16 @@
 //
 namespace netparser {
 
-IpHeaderView::IpHeaderView(const std::span<const std::byte> bytes) : bytes_(bytes)
+IpHeaderView::IpHeaderView(const std::span<const std::byte> bytes)
+    : bytes_(bytes)
 {
     if (bytes.size() < IPV4H_MIN_SIZE) { throw std::logic_error{ "Array must be 20 bytes> for IP header" }; }
 }
 
 [[nodiscard]] std::uint8_t IpHeaderView::version() const
-{ return std::to_integer<std::uint8_t>(bytes_[IPV4H_VER_OFFSET] >> 4); }
+{
+    return std::to_integer<std::uint8_t>(bytes_[IPV4H_VER_OFFSET] >> 4);
+}
 
 [[nodiscard]] std::uint8_t IpHeaderView::ihl() const
 {
@@ -24,7 +27,9 @@ IpHeaderView::IpHeaderView(const std::span<const std::byte> bytes) : bytes_(byte
 
 // TODO: Make it work propely
 std::uint8_t IpHeaderView::type_of_service() const
-{ return std::to_integer<std::uint8_t>(bytes_[IPV4H_TYPE_OF_SERVICE_OFFSET]); }
+{
+    return std::to_integer<std::uint8_t>(bytes_[IPV4H_TYPE_OF_SERVICE_OFFSET]);
+}
 
 std::uint16_t IpHeaderView::total_len() const
 {
@@ -75,7 +80,9 @@ std::uint16_t IpHeaderView::checksum() const
 }
 
 [[nodiscard]] std::uint8_t IpHeaderView::protocol() const
-{ return std::to_integer<std::uint8_t>(bytes_[IPV4H_PROTO_OFFSET]); }
+{
+    return std::to_integer<std::uint8_t>(bytes_[IPV4H_PROTO_OFFSET]);
+}
 
 [[nodiscard]] std::uint32_t IpHeaderView::source_addr() const
 {
@@ -116,9 +123,7 @@ void IpHeader::dont_fragment(bool val)
 {
     constexpr std::uint16_t DF_BIT = (1U << 14U);
     std::uint16_t frag_off = ntohs(hdr_.frag_off);
-    if (val) {
-        frag_off |= DF_BIT;
-    } else {
+    if (val) { frag_off |= DF_BIT; } else {
         frag_off &= ~DF_BIT;// NOLINT
     }
     hdr_.frag_off = htons(frag_off);// NOLINT
@@ -128,9 +133,7 @@ void IpHeader::more_fragments(bool val)
 {
     constexpr std::uint16_t MF_BIT = (1U << 13U);
     std::uint16_t frag_off = ntohs(hdr_.frag_off);
-    if (val) {
-        frag_off |= MF_BIT;
-    } else {
+    if (val) { frag_off |= MF_BIT; } else {
         frag_off &= ~MF_BIT;// NOLINT
     }
     hdr_.frag_off = htons(frag_off);// NOLINT
@@ -222,7 +225,8 @@ std::uint32_t IpHeader::source_addr() const { return hdr_.saddr; }
 
 std::uint32_t IpHeader::dest_addr() const { return hdr_.daddr; }
 
-TcpHeaderView::TcpHeaderView(const std::span<const std::byte> bytes) : bytes_(bytes)
+TcpHeaderView::TcpHeaderView(const std::span<const std::byte> bytes)
+    : bytes_(bytes)
 {
     if (bytes_.size() < TCPH_MIN_SIZE) { throw std::runtime_error("Bytes is too small for a tcp header"); }
 
@@ -342,38 +346,181 @@ std::uint16_t TcpHeaderView::urg_ptr() const
 
 bool TcpHeaderView::has_option(const TcpOptionKind kind) const
 {
+    auto [has, _] = has_option_inner(kind);
+    return has;
+}
+
+std::optional<TcpMssOption> TcpHeaderView::mss() const
+{
+    auto [has, pos] = has_option_inner(TcpOptionKind::MSS);
+    if (!has) { return std::nullopt; }
+
+    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
+    const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
+                                                    options_size };
+
+    const auto subsp = options_bytes.subspan(pos);
+    if (subsp.size() < sizeof(details::TcpMssOptionInner)) { throw std::runtime_error("Tcp options is ill-formed"); }
+
+    details::TcpMssOptionInner mss{};
+    std::memcpy(&mss, subsp.data(), sizeof(details::TcpMssOptionInner));
+
+    std::optional<TcpMssOption> res;
+    res.emplace(mss.kind, mss.size, ntohs(mss.mss));
+    return res;
+}
+
+std::optional<TcpSackPermOption> TcpHeaderView::sack() const
+{
+    auto [has, pos] = has_option_inner(TcpOptionKind::SACK_PERM);
+    if (!has) { return std::nullopt; }
+
+    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
+    const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
+                                                    options_size };
+
+    const auto subsp = options_bytes.subspan(pos);
+    if (subsp.size() < sizeof(details::TcpSackPermOptionInner)) {
+        throw std::runtime_error("Tcp options is ill-formed");
+    }
+
+    details::TcpSackPermOptionInner sack{};
+    std::memcpy(&sack, subsp.data(), sizeof(details::TcpSackPermOptionInner));
+
+    std::optional<TcpSackPermOption> res;
+    res.emplace(sack.kind, sack.size);
+    return res;
+}
+
+std::optional<TcpTimestampOption> TcpHeaderView::timestamp() const
+{
+    auto [has, pos] = has_option_inner(TcpOptionKind::TIMESTAMP);
+    if (!has) { return std::nullopt; }
+
+    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
+    const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
+                                                    options_size };
+
+    const auto subsp = options_bytes.subspan(pos);
+    if (subsp.size() < sizeof(details::TcpTimestampOptionInner)) {
+        throw std::runtime_error("Tcp options is ill-formed");
+    }
+
+    details::TcpTimestampOptionInner ts{};
+    std::memcpy(&ts, subsp.data(), sizeof(details::TcpTimestampOptionInner));
+
+    std::optional<TcpTimestampOption> res;
+    res.emplace(ts.kind, ts.size, ntohl(ts.tv), ntohl(ts.tr));
+    return res;
+}
+
+std::optional<TcpWinScaleOption> TcpHeaderView::win_scale() const
+{
+    auto [has, pos] = has_option_inner(TcpOptionKind::WIN_SCALE);
+    if (!has) { return std::nullopt; }
+
+    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
+    const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
+                                                    options_size };
+
+    const auto subsp = options_bytes.subspan(pos);
+    if (subsp.size() < sizeof(details::TcpWinScaleOptionInner)) {
+        throw std::runtime_error("Tcp options is ill-formed");
+    }
+
+    details::TcpWinScaleOptionInner wnscl{};
+    std::memcpy(&wnscl, subsp.data(), sizeof(details::TcpWinScaleOptionInner));
+
+    std::optional<TcpWinScaleOption> res;
+    res.emplace(wnscl.kind, wnscl.size, wnscl.shift_cnt);
+    return res;
+}
+
+std::pair<bool, std::size_t> TcpHeaderView::has_option_inner(const TcpOptionKind kind) const
+{
     // iterate each kind and see if its there
     const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
     const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
-        options_size };
+                                                    options_size };
 
     std::size_t offset = 0;
     while (offset < options_bytes.size()) {
         auto kind_byte = options_bytes[offset];
-        if (static_cast<TcpOptionKind>(kind_byte) == kind) {
-            return true;
-        }
+        if (static_cast<TcpOptionKind>(kind_byte) == kind) { return { true, offset }; }
 
-        if (static_cast<int>(kind_byte) == 0 || static_cast<int>(kind_byte) == 1) {
+        if (static_cast<int>(kind_byte) == 0 || static_cast<int>(kind_byte) == 1) { offset += 1; } else {
             offset += 1;
-        } else {
-            offset += 1;
-            if (offset >= options_bytes.size()) {
-                break;
-            }
+            if (offset >= options_bytes.size()) { break; }
             std::uint8_t size{};
-            std::memcpy(&size, std::next(options_bytes.data(), i), sizeof(size));
+            std::memcpy(&size, std::next(options_bytes.data(), static_cast<std::ptrdiff_t>(offset)), sizeof(size));
             offset += sizeof(size) + (size - sizeof(kind_byte) - sizeof(size));
         }
     }
-    return false;
+    return { false, 0 };
+}
+
+TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
+{
+    std::size_t offset = 0;
+    while (offset < options_bytes.size()) {
+        auto kind_byte = options_bytes[offset];
+        switch (kind_byte) {
+        case static_cast<std::byte>(TcpOptionKind::MSS): {
+            const auto subsp = options_bytes.subspan(offset);
+            details::TcpMssOptionInner mss{};
+            if (subsp.size() < sizeof(mss)) {
+                throw std::runtime_error("Tcp options is ill-formed");
+            }
+            std::memcpy(&mss, subsp.data(), sizeof(mss));
+            mss_option_.emplace(mss.kind, mss.size, ntohs(mss.mss));
+            offset += sizeof(mss);
+            break;
+        }
+        case static_cast<std::byte>(TcpOptionKind::NO_OP): {
+            offset += sizeof(kind_byte);
+            break;
+        }
+        case static_cast<std::byte>(TcpOptionKind::SACK_PERM): {
+            const auto subsp = options_bytes.subspan(offset);
+            details::TcpSackPermOptionInner sack{};
+            if (subsp.size() < sizeof(sack)) {
+                throw std::runtime_error("Tcp options is ill-formed");
+            }
+            std::memcpy(&sack, subsp.data(), sizeof(sack));
+            sack_option_.emplace(sack.kind, sack.size);
+            offset += sizeof(sack);
+            break;
+        }
+        case static_cast<std::byte>(TcpOptionKind::TIMESTAMP): {
+            const auto subsp = options_bytes.subspan(offset);
+            details::TcpTimestampOptionInner ts{};
+            if (subsp.size() < sizeof(ts)) {
+                throw std::runtime_error("Tcp options is ill-formed");
+            }
+            std::memcpy(&ts, subsp.data(), sizeof(ts));
+            timestamp_option_.emplace(ts.kind, ts.size, ntohl(ts.tv), ntohl(ts.tr));
+            offset += sizeof(ts);
+            break;
+        }
+        case static_cast<std::byte>(TcpOptionKind::END_OF_LIST): {
+            // Stop parsing
+            break;
+        }
+        }
+    }
 }
 
 TcpHeader::TcpHeader(const TcpHeaderView &tcph)
 {
     const auto data = tcph.data();
     assert(sizeof(hdr_) >= data.size());
-    std::memcpy(&hdr_, data.data(), sizeof(hdr_));
+    std::memcpy(&hdr_, data.data(), TCPH_MIN_SIZE);
+
+    auto options_size = data_off() * 4 - TCPH_MIN_SIZE;
+    const auto options_data = data.subspan(TCPH_MIN_SIZE, options_size);
+    if (!options_data.empty()) {
+        options_ = std::make_unique<TcpOptions>(options_data);
+    }
 }
 
 std::uint16_t TcpHeader::source_port() const { return ntohs(hdr_.source); }
