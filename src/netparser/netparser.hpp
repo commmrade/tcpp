@@ -3,16 +3,60 @@
 //
 #ifndef TCPP_NETPARSER_H
 #define TCPP_NETPARSER_H
+#include "../../out/build/unixlike-clang-debug/_deps/spdlog-src/include/spdlog/spdlog.h"
+
+#include <any>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
-#include <vector>
+#include <memory>
+#include <optional>
 #include <linux/ip.h>
 #include <linux/tcp.h>
 #include <span>
-#include <cstdint>
-#include <cstddef>
+#include <unordered_map>
+#include <variant>
+#include <vector>
+#include <netinet/in.h>
 
 
 namespace netparser {
+
+namespace details {
+
+#pragma pack(push, 1)
+    struct TcpMssOptionInner
+    {
+        std::uint8_t kind;
+        std::uint8_t size;
+        std::uint16_t mss;
+    };
+
+    struct TcpSackPermOptionInner
+    {
+        std::uint8_t kind;
+        std::uint8_t size;
+    };
+
+    struct TcpTimestampOptionInner
+    {
+        std::uint8_t kind;
+        std::uint8_t size;
+        std::uint32_t tv;
+        std::uint32_t tr;
+    };
+
+    struct TcpWinScaleOptionInner
+    {
+        std::uint8_t kind;
+        std::uint8_t size;
+        std::uint8_t shift_cnt;
+    };
+#pragma pack(pop)
+}
+
+
 static constexpr std::size_t IPV4H_MIN_SIZE = 20;
 static constexpr std::size_t IPV4H_PROTO_OFFSET = 9;
 static constexpr std::size_t IPV4H_SRC_ADDR_OFFSET = 12;
@@ -33,6 +77,7 @@ class IpHeaderView
 {
 private:
     std::span<const std::byte> bytes_;
+
 public:
     explicit IpHeaderView(const std::span<const std::byte> bytes);
     // TOOD: all constructors/desctructors
@@ -64,9 +109,10 @@ class IpHeader
 {
 private:
     iphdr hdr_{};
+
 public:
     IpHeader() = default;
-    explicit IpHeader(const IpHeaderView& iph);
+    explicit IpHeader(const IpHeaderView &iph);
 
     [[nodiscard]] std::uint8_t version() const;
     void version(const std::uint8_t ver);
@@ -119,7 +165,9 @@ public:
 };
 
 
-static constexpr std::size_t TCPH_MIN_SIZE = 20;
+// Specifies the size of the TCP header in 32-bit words. The minimum size header is 5 words and the maximum is 15 words thus giving the minimum size of 20 bytes and maximum of 60 bytes
+static constexpr std::size_t TCPH_MIN_SIZE = sizeof(tcphdr);
+static constexpr std::size_t TCPH_MAX_SIZE = 60;
 static constexpr std::size_t TCPH_SRC_PORT_OFFSET = 0;
 static constexpr std::size_t TCPH_DEST_PORT_OFFSET = 2;
 static constexpr std::size_t TCPH_SEQN_OFFSET = 4;
@@ -129,6 +177,53 @@ static constexpr std::size_t TCPH_FLAGS_OFFSET = 13;
 static constexpr std::size_t TCPH_WIN_OFFSET = 14;
 static constexpr std::size_t TCPH_CKSUM_OFFSET = 16;
 static constexpr std::size_t TCPH_URGPTR_OFFSET = 18;
+
+enum class TcpOptionKind
+{
+    END_OF_LIST = 0,
+    NO_OP = 1,
+    MSS = 2,
+    WIN_SCALE = 3,
+    SACK_PERM = 4,
+    TIMESTAMP = 8,
+};
+
+struct TcpMssOption
+{
+    TcpMssOption() = default;
+    explicit TcpMssOption(const details::TcpMssOptionInner inner) : kind(inner.kind), size(inner.size), mss(ntohs(inner.mss)) {}
+    std::uint8_t kind;
+    std::uint8_t size;
+    std::uint16_t mss;
+};
+
+
+struct TcpSackPermOption
+{
+    TcpSackPermOption() = default;
+    explicit TcpSackPermOption(const details::TcpSackPermOptionInner inner) : kind(inner.kind), size(inner.size) {}
+    std::uint8_t kind;
+    std::uint8_t size;
+};
+
+struct TcpTimestampOption
+{
+    TcpTimestampOption() = default;
+    explicit TcpTimestampOption(const details::TcpTimestampOptionInner inner) : kind(inner.kind), size(inner.size), tv(ntohl(inner.tv)), tr(ntohl(inner.tr)) {}
+    std::uint8_t kind;
+    std::uint8_t size;
+    std::uint32_t tv;
+    std::uint32_t tr;
+};
+
+struct TcpWinScaleOption
+{
+    TcpWinScaleOption() = default;
+    explicit TcpWinScaleOption(const details::TcpWinScaleOptionInner inner) : kind(inner.kind), size(inner.size), shift_cnt(inner.shift_cnt) {}
+    std::uint8_t kind;
+    std::uint8_t size;
+    std::uint8_t shift_cnt;
+};
 
 class TcpHeaderView
 {
@@ -159,20 +254,113 @@ public:
     [[nodiscard]] std::uint16_t checksum() const;
     [[nodiscard]] std::uint16_t urg_ptr() const;
 
-    [[nodiscard]] std::span<const std::byte> data() const
+    [[nodiscard]] std::span<const std::byte> data() const { return bytes_; }
+
+    bool has_option(const TcpOptionKind kind) const;
+    std::optional<TcpMssOption> mss() const;
+    std::optional<TcpSackPermOption> sack_perm() const;
+    std::optional<TcpTimestampOption> timestamp() const;
+    std::optional<TcpWinScaleOption> win_scale() const;
+private:
+    std::pair<bool, std::size_t> has_option_inner(const TcpOptionKind kind) const;
+
+    template<typename T, typename T_INNER, TcpOptionKind KIND> requires std::constructible_from<T, T_INNER>
+    std::optional<T> option() const
     {
-        return bytes_;
+        auto [has, pos] = has_option_inner(KIND);
+        if (!has) { return std::nullopt; }
+
+        const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
+        const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
+                                                        options_size };
+
+        const auto subsp = options_bytes.subspan(pos);
+        if (subsp.size() < sizeof(T_INNER)) {
+            spdlog::warn("{} TCP option is ill-formed", static_cast<int>(KIND));
+            return std::nullopt;
+        }
+
+        T_INNER opt{};
+        std::memcpy(&opt, subsp.data(), sizeof(T_INNER));
+
+        std::optional<T> res;
+        res.emplace(opt);
+        return res;
     }
-    // TODO: Options
+};
+
+class TcpOptions
+{
+private:
+    std::optional<TcpMssOption> mss_option_;
+    std::optional<TcpWinScaleOption> win_scale_option_;
+    std::optional<TcpSackPermOption> sack_perm_option_;
+    std::optional<TcpTimestampOption> timestamp_option_;
+public:
+    bool has_option(const TcpOptionKind kind) const
+    {
+        switch (kind) {
+        case TcpOptionKind::WIN_SCALE: {
+            return win_scale_option_.has_value();
+        }
+        case TcpOptionKind::MSS: {
+            return mss_option_.has_value();
+        }
+        case TcpOptionKind::TIMESTAMP: {
+            return timestamp_option_.has_value();
+        }
+        case TcpOptionKind::SACK_PERM: {
+            return sack_perm_option_.has_value();
+        }
+        default:
+            assert(false && "Why would you even get here?");
+        }
+    }
+
+    std::optional<TcpWinScaleOption> win_scale() const
+    {
+        return win_scale_option_;
+    }
+    void win_scale(TcpWinScaleOption win_scale)
+    {
+        win_scale_option_ = std::move(win_scale);
+    }
+
+    std::optional<TcpMssOption> mss() const
+    {
+        return mss_option_;
+    }
+    void mss(TcpMssOption mss)
+    {
+        mss_option_ = std::move(mss);
+    }
+    std::optional<TcpSackPermOption> sack_perm() const
+    {
+        return sack_perm_option_;
+    }
+    void sack_perm(TcpSackPermOption sack_p)
+    {
+        sack_perm_option_ = std::move(sack_p);
+    }
+    std::optional<TcpTimestampOption> timestamp() const
+    {
+        return timestamp_option_;
+    }
+    void timestamp(TcpTimestampOption ts)
+    {
+        timestamp_option_ = std::move(ts);
+    }
+    explicit TcpOptions(const std::span<const std::byte> options_bytes);
 };
 
 class TcpHeader
 {
 private:
     tcphdr hdr_{};
+    std::unique_ptr<TcpOptions> options_;
 public:
     TcpHeader() = default;
-    explicit TcpHeader(const TcpHeaderView& tcph);
+    explicit TcpHeader(const TcpHeaderView &tcph);
 
     /// Everything is set/returned in Host Byte Order
     [[nodiscard]] std::uint16_t source_port() const;
@@ -221,16 +409,28 @@ public:
     [[nodiscard]] std::uint16_t checksum() const;
     void checksum(const std::uint16_t cksum);
 
-    void calculate_checksum(const netparser::IpHeader& iph, std::span<const std::byte> payload);
+    void calculate_checksum(const netparser::IpHeader &iph, std::span<const std::byte> payload);
 
     [[nodiscard]] std::uint16_t urg_ptr() const;
     void urg_ptr(const std::uint16_t ptr);
 
     std::vector<std::byte> serialize() const;
 
-    // TODO: options
+    bool has_options() const
+    {
+        return options_ != nullptr;
+    }
+    TcpOptions& options()
+    {
+        assert(options_);
+        return *options_;
+    }
+    const TcpOptions& options() const
+    {
+        assert(options_);
+        return *options_;
+    }
 };
-
-} // namespace netparser
+}// namespace netparser
 
 #endif //TCPP_NETPARSER_H

@@ -1,8 +1,9 @@
-#include <print>
 #include "netparser.hpp"
-
-#include <assert.h>
+#include <print>
+#include <iterator>
 #include <arpa/inet.h>
+#include <cassert>
+#include <stdexcept>
 //
 // Created by klewy on 3/6/26.
 //
@@ -341,11 +342,155 @@ std::uint16_t TcpHeaderView::urg_ptr() const
     return ntohs(urgptr);
 }
 
+bool TcpHeaderView::has_option(const TcpOptionKind kind) const
+{
+    auto [has, _] = has_option_inner(kind);
+    return has;
+}
+
+std::optional<TcpMssOption> TcpHeaderView::mss() const
+{
+    return option<TcpMssOption, details::TcpMssOptionInner, TcpOptionKind::MSS>();
+}
+
+std::optional<TcpSackPermOption> TcpHeaderView::sack_perm() const
+{
+    return option<TcpSackPermOption, details::TcpSackPermOptionInner, TcpOptionKind::SACK_PERM>();
+}
+
+std::optional<TcpTimestampOption> TcpHeaderView::timestamp() const
+{
+    return option<TcpTimestampOption, details::TcpTimestampOptionInner, TcpOptionKind::TIMESTAMP>();
+}
+
+std::optional<TcpWinScaleOption> TcpHeaderView::win_scale() const
+{
+    return option<TcpWinScaleOption, details::TcpWinScaleOptionInner, TcpOptionKind::WIN_SCALE>();
+}
+
+std::pair<bool, std::size_t> TcpHeaderView::has_option_inner(const TcpOptionKind kind) const
+{
+    // iterate each kind and see if its there
+    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
+    const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
+                                                    options_size };
+
+    std::size_t offset = 0;
+    while (offset < options_bytes.size()) {
+        auto kind_byte = options_bytes[offset];
+        if (static_cast<TcpOptionKind>(kind_byte) == kind) { return { true, offset }; }
+
+        if (static_cast<int>(kind_byte) == 0 || static_cast<int>(kind_byte) == 1) { offset += 1; } else {
+            offset += 1;
+            if (offset >= options_bytes.size()) { break; }
+            std::uint8_t size{};
+            std::memcpy(&size, std::next(options_bytes.data(), static_cast<std::ptrdiff_t>(offset)), sizeof(size));
+            offset += sizeof(size) + (size - sizeof(kind_byte) - sizeof(size));
+        }
+    }
+    return { false, 0 };
+}
+
+TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
+{
+    std::size_t offset = 0;
+    while (offset < options_bytes.size()) {
+        auto kind_byte = options_bytes[offset];
+        switch (kind_byte) {
+        case static_cast<std::byte>(TcpOptionKind::WIN_SCALE): {
+            const auto subp = options_bytes.subspan(offset);
+            details::TcpWinScaleOptionInner wnscl{};
+            if (subp.size() < sizeof(wnscl)) {
+                throw std::runtime_error("Tcp options is ill-formed");
+            }
+            std::memcpy(&wnscl, subp.data(), sizeof(wnscl));
+
+            win_scale_option_.emplace();
+            auto& temp_win_scale = win_scale_option_.value();
+            temp_win_scale.kind = wnscl.kind;
+            temp_win_scale.size = wnscl.size;
+            temp_win_scale.shift_cnt = wnscl.shift_cnt;
+
+            offset += sizeof(wnscl);
+            break;
+        }
+        case static_cast<std::byte>(TcpOptionKind::MSS): {
+            const auto subsp = options_bytes.subspan(offset);
+            details::TcpMssOptionInner mss{};
+            if (subsp.size() < sizeof(mss)) {
+                throw std::runtime_error("Tcp options is ill-formed");
+            }
+            std::memcpy(&mss, subsp.data(), sizeof(mss));
+
+            mss_option_.emplace();
+            auto& temp_mss = mss_option_.value();
+            temp_mss.kind = mss.kind;
+            temp_mss.size = mss.size;
+            temp_mss.mss = ntohs(mss.mss);
+
+            offset += sizeof(mss);
+            break;
+        }
+        case static_cast<std::byte>(TcpOptionKind::NO_OP): {
+            offset += sizeof(kind_byte);
+            break;
+        }
+        case static_cast<std::byte>(TcpOptionKind::SACK_PERM): {
+            const auto subsp = options_bytes.subspan(offset);
+            details::TcpSackPermOptionInner sack{};
+            if (subsp.size() < sizeof(sack)) {
+                throw std::runtime_error("Tcp options is ill-formed");
+            }
+            std::memcpy(&sack, subsp.data(), sizeof(sack));
+
+            sack_perm_option_.emplace();
+            auto& temp_s = sack_perm_option_.value();
+            temp_s.size = sack.size;
+            temp_s.kind = sack.kind;
+
+            offset += sizeof(sack);
+            break;
+        }
+        case static_cast<std::byte>(TcpOptionKind::TIMESTAMP): {
+            const auto subsp = options_bytes.subspan(offset);
+            details::TcpTimestampOptionInner ts{};
+            if (subsp.size() < sizeof(ts)) {
+                throw std::runtime_error("Tcp options is ill-formed");
+            }
+            std::memcpy(&ts, subsp.data(), sizeof(ts));
+
+            timestamp_option_.emplace();
+            auto& temp_ts = timestamp_option_.value();
+            temp_ts.kind = ts.kind;
+            temp_ts.size = ts.size;
+            temp_ts.tv = ntohl(ts.tv);
+            temp_ts.tr = ntohl(ts.tr);
+
+            offset += sizeof(ts);
+            break;
+        }
+        case static_cast<std::byte>(TcpOptionKind::END_OF_LIST): {
+            // Stop parsing
+            break;
+        }
+        default: {
+            throw std::runtime_error("Not impl option. idk what to do");
+        }
+        }
+    }
+}
+
 TcpHeader::TcpHeader(const TcpHeaderView &tcph)
 {
     const auto data = tcph.data();
-    assert(sizeof(hdr_) >= data.size());
-    std::memcpy(&hdr_, data.data(), sizeof(hdr_));
+    assert(!data.empty());
+    std::memcpy(&hdr_, data.data(), TCPH_MIN_SIZE);
+
+    auto options_size = data_off() * 4 - TCPH_MIN_SIZE;
+    const auto options_data = data.subspan(TCPH_MIN_SIZE, options_size);
+    if (!options_data.empty()) {
+        options_ = std::make_unique<TcpOptions>(options_data);
+    }
 }
 
 std::uint16_t TcpHeader::source_port() const { return ntohs(hdr_.source); }
@@ -408,7 +553,7 @@ std::uint16_t TcpHeader::checksum() const { return ntohs(hdr_.check); }
 
 void TcpHeader::checksum(const std::uint16_t cksum) { hdr_.check = htons(cksum); }
 
-void TcpHeader::calculate_checksum(const netparser::IpHeader& iph, std::span<const std::byte> payload)
+void TcpHeader::calculate_checksum(const netparser::IpHeader &iph, std::span<const std::byte> payload)
 {
     // Zero out existing checksum before calculating
     hdr_.check = 0;
@@ -418,46 +563,38 @@ void TcpHeader::calculate_checksum(const netparser::IpHeader& iph, std::span<con
     {
         std::uint32_t src_addr;
         std::uint32_t dst_addr;
-        std::uint8_t  zero;
-        std::uint8_t  protocol;
+        std::uint8_t zero;
+        std::uint8_t protocol;
         std::uint16_t tcp_length;
     } pseudo{};
 
-    pseudo.src_addr   = iph.source_addr();
-    pseudo.dst_addr   = iph.dest_addr();
-    pseudo.zero       = 0;
-    pseudo.protocol   = iph.protocol();
-    pseudo.tcp_length = htons(sizeof(tcphdr) + static_cast<std::uint16_t>(payload.size())); // NOLINT
+    pseudo.src_addr = iph.source_addr();
+    pseudo.dst_addr = iph.dest_addr();
+    pseudo.zero = 0;
+    pseudo.protocol = iph.protocol();
+    pseudo.tcp_length = htons(sizeof(tcphdr) + static_cast<std::uint16_t>(payload.size()));// NOLINT
 
     uint32_t sum = 0;
 
     // Helper: accumulate 16-bit words from a raw buffer
-    auto accumulate = [&sum](const void* data, std::size_t length)
-    {
-        const auto* ptr = static_cast<const uint16_t*>(data);
+    auto accumulate = [&sum](const void *data, std::size_t length) {
+        const auto *ptr = static_cast<const uint16_t *>(data);
 
-        while (length > 1)
-        {
+        while (length > 1) {
             sum += *ptr++;
             length -= 2;
         }
 
         // Odd trailing byte — pad with zero
-        if (length == 1)
-        {
-            sum += *reinterpret_cast<const uint8_t*>(ptr);
-        }
+        if (length == 1) { sum += *reinterpret_cast<const uint8_t *>(ptr); }
     };
 
-    accumulate(&pseudo,  sizeof(pseudo));
-    accumulate(&hdr_,    sizeof(tcphdr));
+    accumulate(&pseudo, sizeof(pseudo));
+    accumulate(&hdr_, sizeof(tcphdr));
     accumulate(payload.data(), payload.size());
 
     // Fold carries
-    while (sum >> 16)
-    {
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    }
+    while (sum >> 16) { sum = (sum & 0xFFFF) + (sum >> 16); }
 
     // One's complement
     hdr_.check = static_cast<uint16_t>(~sum);

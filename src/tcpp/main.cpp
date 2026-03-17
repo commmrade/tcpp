@@ -154,8 +154,8 @@ public:
 std::jthread run_underlying_stuff()
 {
     auto& ctx = Context::instance();
-    ctx.tun.set_addr("172.16.0.0");
-    ctx.tun.set_mask("255.240.0.0");
+    ctx.tun.set_addr("10.0.0.1");
+    ctx.tun.set_mask("255.255.255.0");
     ctx.tun.set_flags(IFF_UP | IFF_RUNNING);
     std::jthread tcp_thread{ [] {
             while (true) {// NOLINT

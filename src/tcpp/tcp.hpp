@@ -659,23 +659,26 @@ struct Tcp
         }
 
         const ssize_t rd_bytes = tun.read(buf);
+        std::size_t rd_offset = 0;
         assert(rd_bytes);
 
         const netparser::IpHeaderView iph{
-            std::span<const std::byte, netparser::IPV4H_MIN_SIZE>{ buf.data(), netparser::IPV4H_MIN_SIZE } };
+            std::span<const std::byte>{ buf.data(), static_cast<std::size_t>(rd_bytes) - rd_offset } };
+        rd_offset += iph.ihl() * 4UL;
         if (iph.protocol() == 6) {// NOLINT
             // TODO: calculate ipv4h and tcph proper
+
             const netparser::TcpHeaderView tcph{
-                std::span<const std::byte, netparser::TCPH_MIN_SIZE>{ buf.data() + netparser::IPV4H_MIN_SIZE,
-                                                                      netparser::TCPH_MIN_SIZE } };
+                std::span<const std::byte>{ std::next(buf.data(), static_cast<std::ptrdiff_t>(rd_offset)), static_cast<std::size_t>(rd_bytes) - rd_offset } };
+
+            rd_offset += tcph.data_off() * 4UL;
             const Quad quad{ .src_addr = iph.source_addr(), .src_port = tcph.source_port(), .dst_addr = iph.dest_addr(),
                              .dst_port = tcph.dest_port() };
 
             auto conn_iter = connections.find(quad);
             if (conn_iter != connections.end()) {
-                const std::size_t offset = iph.ihl() * 4 + tcph.data_off() * 4;
-                const std::span<const std::byte> payload{ buf.data() + offset, rd_bytes - offset };
-
+                const std::span<const std::byte> payload{ std::next(buf.data(), static_cast<std::ptrdiff_t>(rd_offset)), static_cast<std::size_t>(rd_bytes) - rd_offset };
+                std::println("Payload size: {} bytes", payload.size());
                 conn_iter->second->on_packet(tun, iph, tcph, payload);
                 if (conn_iter->second->state_ == TcpState::CLOSED) {
                     std::println("Delete TCB");
