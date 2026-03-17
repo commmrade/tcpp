@@ -212,7 +212,7 @@ public:
 
     bool has_option(const TcpOptionKind kind) const;
     std::optional<TcpMssOption> mss() const;
-    std::optional<TcpSackPermOption> sack() const;
+    std::optional<TcpSackPermOption> sack_perm() const;
     std::optional<TcpTimestampOption> timestamp() const;
     std::optional<TcpWinScaleOption> win_scale() const;
 private:
@@ -224,7 +224,7 @@ class TcpOptions
 private:
     std::optional<TcpMssOption> mss_option_;
     std::optional<TcpWinScaleOption> win_scale_option_;
-    std::optional<TcpSackPermOption> sack_option_;
+    std::optional<TcpSackPermOption> sack_perm_option_;
     std::optional<TcpTimestampOption> timestamp_option_;
 public:
     bool has_option(const TcpOptionKind kind) const
@@ -240,7 +240,7 @@ public:
             return timestamp_option_.has_value();
         }
         case TcpOptionKind::SACK_PERM: {
-            return sack_option_.has_value();
+            return sack_perm_option_.has_value();
         }
         default:
             assert(false && "Why would you even get here?");
@@ -255,9 +255,9 @@ public:
     {
         return mss_option_;
     }
-    std::optional<TcpSackPermOption> sack() const
+    std::optional<TcpSackPermOption> sack_perm() const
     {
-        return sack_option_;
+        return sack_perm_option_;
     }
     std::optional<TcpTimestampOption> timestamp() const
     {

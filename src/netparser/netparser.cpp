@@ -1,8 +1,8 @@
 #include "netparser.hpp"
 #include <print>
-
+#include <iterator>
 #include <arpa/inet.h>
-#include <assert.h>
+#include <cassert>
 #include <stdexcept>
 //
 // Created by klewy on 3/6/26.
@@ -229,8 +229,6 @@ TcpHeaderView::TcpHeaderView(const std::span<const std::byte> bytes)
     : bytes_(bytes)
 {
     if (bytes_.size() < TCPH_MIN_SIZE) { throw std::runtime_error("Bytes is too small for a tcp header"); }
-
-    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
 }
 
 std::uint16_t TcpHeaderView::source_port() const
@@ -370,7 +368,7 @@ std::optional<TcpMssOption> TcpHeaderView::mss() const
     return res;
 }
 
-std::optional<TcpSackPermOption> TcpHeaderView::sack() const
+std::optional<TcpSackPermOption> TcpHeaderView::sack_perm() const
 {
     auto [has, pos] = has_option_inner(TcpOptionKind::SACK_PERM);
     if (!has) { return std::nullopt; }
@@ -465,6 +463,17 @@ TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
     while (offset < options_bytes.size()) {
         auto kind_byte = options_bytes[offset];
         switch (kind_byte) {
+        case static_cast<std::byte>(TcpOptionKind::WIN_SCALE): {
+            const auto subp = options_bytes.subspan(offset);
+            details::TcpWinScaleOptionInner wnscl{};
+            if (subp.size() < sizeof(wnscl)) {
+                throw std::runtime_error("Tcp options is ill-formed");
+            }
+            std::memcpy(&wnscl, subp.data(), sizeof(wnscl));
+            win_scale_option_.emplace(wnscl.kind, wnscl.size, wnscl.shift_cnt);
+            offset += sizeof(wnscl);
+            break;
+        }
         case static_cast<std::byte>(TcpOptionKind::MSS): {
             const auto subsp = options_bytes.subspan(offset);
             details::TcpMssOptionInner mss{};
@@ -487,7 +496,7 @@ TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
                 throw std::runtime_error("Tcp options is ill-formed");
             }
             std::memcpy(&sack, subsp.data(), sizeof(sack));
-            sack_option_.emplace(sack.kind, sack.size);
+            sack_perm_option_.emplace(sack.kind, sack.size);
             offset += sizeof(sack);
             break;
         }
@@ -506,6 +515,9 @@ TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
             // Stop parsing
             break;
         }
+        default: {
+            throw std::runtime_error("Not impl option. idk what to do");
+        }
         }
     }
 }
@@ -513,7 +525,7 @@ TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
 TcpHeader::TcpHeader(const TcpHeaderView &tcph)
 {
     const auto data = tcph.data();
-    assert(sizeof(hdr_) >= data.size());
+    assert(data.size());
     std::memcpy(&hdr_, data.data(), TCPH_MIN_SIZE);
 
     auto options_size = data_off() * 4 - TCPH_MIN_SIZE;
