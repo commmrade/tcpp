@@ -3,6 +3,8 @@
 //
 #ifndef TCPP_NETPARSER_H
 #define TCPP_NETPARSER_H
+#include "../../out/build/unixlike-clang-debug/_deps/spdlog-src/include/spdlog/spdlog.h"
+
 #include <any>
 #include <cassert>
 #include <cstddef>
@@ -274,7 +276,8 @@ private:
 
         const auto subsp = options_bytes.subspan(pos);
         if (subsp.size() < sizeof(T_INNER)) {
-            throw std::runtime_error("Tcp options is ill-formed");
+            spdlog::warn("{} TCP option is ill-formed", static_cast<int>(KIND));
+            return std::nullopt;
         }
 
         T_INNER opt{};
