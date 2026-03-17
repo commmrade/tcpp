@@ -16,9 +16,45 @@
 #include <unordered_map>
 #include <variant>
 #include <vector>
+#include <netinet/in.h>
 
 
 namespace netparser {
+
+namespace details {
+
+#pragma pack(push, 1)
+    struct TcpMssOptionInner
+    {
+        std::uint8_t kind;
+        std::uint8_t size;
+        std::uint16_t mss;
+    };
+
+    struct TcpSackPermOptionInner
+    {
+        std::uint8_t kind;
+        std::uint8_t size;
+    };
+
+    struct TcpTimestampOptionInner
+    {
+        std::uint8_t kind;
+        std::uint8_t size;
+        std::uint32_t tv;
+        std::uint32_t tr;
+    };
+
+    struct TcpWinScaleOptionInner
+    {
+        std::uint8_t kind;
+        std::uint8_t size;
+        std::uint8_t shift_cnt;
+    };
+#pragma pack(pop)
+}
+
+
 static constexpr std::size_t IPV4H_MIN_SIZE = 20;
 static constexpr std::size_t IPV4H_PROTO_OFFSET = 9;
 static constexpr std::size_t IPV4H_SRC_ADDR_OFFSET = 12;
@@ -152,6 +188,8 @@ enum class TcpOptionKind
 
 struct TcpMssOption
 {
+    TcpMssOption() = default;
+    explicit TcpMssOption(const details::TcpMssOptionInner inner) : kind(inner.kind), size(inner.size), mss(ntohs(inner.mss)) {}
     std::uint8_t kind;
     std::uint8_t size;
     std::uint16_t mss;
@@ -160,12 +198,16 @@ struct TcpMssOption
 
 struct TcpSackPermOption
 {
+    TcpSackPermOption() = default;
+    explicit TcpSackPermOption(const details::TcpSackPermOptionInner inner) : kind(inner.kind), size(inner.size) {}
     std::uint8_t kind;
     std::uint8_t size;
 };
 
 struct TcpTimestampOption
 {
+    TcpTimestampOption() = default;
+    explicit TcpTimestampOption(const details::TcpTimestampOptionInner inner) : kind(inner.kind), size(inner.size), tv(ntohl(inner.tv)), tr(ntohl(inner.tr)) {}
     std::uint8_t kind;
     std::uint8_t size;
     std::uint32_t tv;
@@ -174,6 +216,8 @@ struct TcpTimestampOption
 
 struct TcpWinScaleOption
 {
+    TcpWinScaleOption() = default;
+    explicit TcpWinScaleOption(const details::TcpWinScaleOptionInner inner) : kind(inner.kind), size(inner.size), shift_cnt(inner.shift_cnt) {}
     std::uint8_t kind;
     std::uint8_t size;
     std::uint8_t shift_cnt;
@@ -217,6 +261,29 @@ public:
     std::optional<TcpWinScaleOption> win_scale() const;
 private:
     std::pair<bool, std::size_t> has_option_inner(const TcpOptionKind kind) const;
+
+    template<typename T, typename T_INNER, TcpOptionKind KIND> requires std::constructible_from<T, T_INNER>
+    std::optional<T> option() const
+    {
+        auto [has, pos] = has_option_inner(KIND);
+        if (!has) { return std::nullopt; }
+
+        const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
+        const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
+                                                        options_size };
+
+        const auto subsp = options_bytes.subspan(pos);
+        if (subsp.size() < sizeof(T_INNER)) {
+            throw std::runtime_error("Tcp options is ill-formed");
+        }
+
+        T_INNER opt{};
+        std::memcpy(&opt, subsp.data(), sizeof(T_INNER));
+
+        std::optional<T> res;
+        res.emplace(opt);
+        return res;
+    }
 };
 
 class TcpOptions
@@ -251,17 +318,34 @@ public:
     {
         return win_scale_option_;
     }
+    void win_scale(TcpWinScaleOption win_scale)
+    {
+        win_scale_option_ = std::move(win_scale);
+    }
+
     std::optional<TcpMssOption> mss() const
     {
         return mss_option_;
+    }
+    void mss(TcpMssOption mss)
+    {
+        mss_option_ = std::move(mss);
     }
     std::optional<TcpSackPermOption> sack_perm() const
     {
         return sack_perm_option_;
     }
+    void sack_perm(TcpSackPermOption sack_p)
+    {
+        sack_perm_option_ = std::move(sack_p);
+    }
     std::optional<TcpTimestampOption> timestamp() const
     {
         return timestamp_option_;
+    }
+    void timestamp(TcpTimestampOption ts)
+    {
+        timestamp_option_ = std::move(ts);
     }
     explicit TcpOptions(const std::span<const std::byte> options_bytes);
 };
@@ -333,46 +417,17 @@ public:
     {
         return options_ != nullptr;
     }
-    TcpOptions& options() const
+    TcpOptions& options()
+    {
+        assert(options_);
+        return *options_;
+    }
+    const TcpOptions& options() const
     {
         assert(options_);
         return *options_;
     }
 };
-
-namespace details {
-
-#pragma pack(push, 1)
-struct TcpMssOptionInner
-{
-    std::uint8_t kind;
-    std::uint8_t size;
-    std::uint16_t mss;
-};
-
-struct TcpSackPermOptionInner
-{
-    std::uint8_t kind;
-    std::uint8_t size;
-};
-
-struct TcpTimestampOptionInner
-{
-    std::uint8_t kind;
-    std::uint8_t size;
-    std::uint32_t tv;
-    std::uint32_t tr;
-};
-
-struct TcpWinScaleOptionInner
-{
-    std::uint8_t kind;
-    std::uint8_t size;
-    std::uint8_t shift_cnt;
-};
-#pragma pack(pop)
-}
-
 }// namespace netparser
 
 #endif //TCPP_NETPARSER_H

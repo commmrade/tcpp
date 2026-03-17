@@ -350,88 +350,22 @@ bool TcpHeaderView::has_option(const TcpOptionKind kind) const
 
 std::optional<TcpMssOption> TcpHeaderView::mss() const
 {
-    auto [has, pos] = has_option_inner(TcpOptionKind::MSS);
-    if (!has) { return std::nullopt; }
-
-    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
-    const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
-                                                    options_size };
-
-    const auto subsp = options_bytes.subspan(pos);
-    if (subsp.size() < sizeof(details::TcpMssOptionInner)) { throw std::runtime_error("Tcp options is ill-formed"); }
-
-    details::TcpMssOptionInner mss{};
-    std::memcpy(&mss, subsp.data(), sizeof(details::TcpMssOptionInner));
-
-    std::optional<TcpMssOption> res;
-    res.emplace(mss.kind, mss.size, ntohs(mss.mss));
-    return res;
+    return option<TcpMssOption, details::TcpMssOptionInner, TcpOptionKind::MSS>();
 }
 
 std::optional<TcpSackPermOption> TcpHeaderView::sack_perm() const
 {
-    auto [has, pos] = has_option_inner(TcpOptionKind::SACK_PERM);
-    if (!has) { return std::nullopt; }
-
-    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
-    const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
-                                                    options_size };
-
-    const auto subsp = options_bytes.subspan(pos);
-    if (subsp.size() < sizeof(details::TcpSackPermOptionInner)) {
-        throw std::runtime_error("Tcp options is ill-formed");
-    }
-
-    details::TcpSackPermOptionInner sack{};
-    std::memcpy(&sack, subsp.data(), sizeof(details::TcpSackPermOptionInner));
-
-    std::optional<TcpSackPermOption> res;
-    res.emplace(sack.kind, sack.size);
-    return res;
+    return option<TcpSackPermOption, details::TcpSackPermOptionInner, TcpOptionKind::SACK_PERM>();
 }
 
 std::optional<TcpTimestampOption> TcpHeaderView::timestamp() const
 {
-    auto [has, pos] = has_option_inner(TcpOptionKind::TIMESTAMP);
-    if (!has) { return std::nullopt; }
-
-    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
-    const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
-                                                    options_size };
-
-    const auto subsp = options_bytes.subspan(pos);
-    if (subsp.size() < sizeof(details::TcpTimestampOptionInner)) {
-        throw std::runtime_error("Tcp options is ill-formed");
-    }
-
-    details::TcpTimestampOptionInner ts{};
-    std::memcpy(&ts, subsp.data(), sizeof(details::TcpTimestampOptionInner));
-
-    std::optional<TcpTimestampOption> res;
-    res.emplace(ts.kind, ts.size, ntohl(ts.tv), ntohl(ts.tr));
-    return res;
+    return option<TcpTimestampOption, details::TcpTimestampOptionInner, TcpOptionKind::TIMESTAMP>();
 }
 
 std::optional<TcpWinScaleOption> TcpHeaderView::win_scale() const
 {
-    auto [has, pos] = has_option_inner(TcpOptionKind::WIN_SCALE);
-    if (!has) { return std::nullopt; }
-
-    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
-    const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
-                                                    options_size };
-
-    const auto subsp = options_bytes.subspan(pos);
-    if (subsp.size() < sizeof(details::TcpWinScaleOptionInner)) {
-        throw std::runtime_error("Tcp options is ill-formed");
-    }
-
-    details::TcpWinScaleOptionInner wnscl{};
-    std::memcpy(&wnscl, subsp.data(), sizeof(details::TcpWinScaleOptionInner));
-
-    std::optional<TcpWinScaleOption> res;
-    res.emplace(wnscl.kind, wnscl.size, wnscl.shift_cnt);
-    return res;
+    return option<TcpWinScaleOption, details::TcpWinScaleOptionInner, TcpOptionKind::WIN_SCALE>();
 }
 
 std::pair<bool, std::size_t> TcpHeaderView::has_option_inner(const TcpOptionKind kind) const
@@ -470,7 +404,13 @@ TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
                 throw std::runtime_error("Tcp options is ill-formed");
             }
             std::memcpy(&wnscl, subp.data(), sizeof(wnscl));
-            win_scale_option_.emplace(wnscl.kind, wnscl.size, wnscl.shift_cnt);
+
+            win_scale_option_.emplace();
+            auto& temp_win_scale = win_scale_option_.value();
+            temp_win_scale.kind = wnscl.kind;
+            temp_win_scale.size = wnscl.size;
+            temp_win_scale.shift_cnt = wnscl.shift_cnt;
+
             offset += sizeof(wnscl);
             break;
         }
@@ -481,7 +421,13 @@ TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
                 throw std::runtime_error("Tcp options is ill-formed");
             }
             std::memcpy(&mss, subsp.data(), sizeof(mss));
-            mss_option_.emplace(mss.kind, mss.size, ntohs(mss.mss));
+
+            mss_option_.emplace();
+            auto& temp_mss = mss_option_.value();
+            temp_mss.kind = mss.kind;
+            temp_mss.size = mss.size;
+            temp_mss.mss = ntohs(mss.mss);
+
             offset += sizeof(mss);
             break;
         }
@@ -496,7 +442,12 @@ TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
                 throw std::runtime_error("Tcp options is ill-formed");
             }
             std::memcpy(&sack, subsp.data(), sizeof(sack));
-            sack_perm_option_.emplace(sack.kind, sack.size);
+
+            sack_perm_option_.emplace();
+            auto& temp_s = sack_perm_option_.value();
+            temp_s.size = sack.size;
+            temp_s.kind = sack.kind;
+
             offset += sizeof(sack);
             break;
         }
@@ -507,7 +458,14 @@ TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
                 throw std::runtime_error("Tcp options is ill-formed");
             }
             std::memcpy(&ts, subsp.data(), sizeof(ts));
-            timestamp_option_.emplace(ts.kind, ts.size, ntohl(ts.tv), ntohl(ts.tr));
+
+            timestamp_option_.emplace();
+            auto& temp_ts = timestamp_option_.value();
+            temp_ts.kind = ts.kind;
+            temp_ts.size = ts.size;
+            temp_ts.tv = ntohl(ts.tv);
+            temp_ts.tr = ntohl(ts.tr);
+
             offset += sizeof(ts);
             break;
         }
@@ -525,7 +483,7 @@ TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
 TcpHeader::TcpHeader(const TcpHeaderView &tcph)
 {
     const auto data = tcph.data();
-    assert(data.size());
+    assert(!data.empty());
     std::memcpy(&hdr_, data.data(), TCPH_MIN_SIZE);
 
     auto options_size = data_off() * 4 - TCPH_MIN_SIZE;
