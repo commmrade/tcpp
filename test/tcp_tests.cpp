@@ -168,3 +168,74 @@ TEST_CASE("Check options in owned", "[TcpHeader]")
     REQUIRE(wscl_opt.has_value());
     REQUIRE(wscl_opt.value().shift_cnt == 10);
 }
+
+TEST_CASE("Options not present return nullopt", "[TcpHeaderView]")
+{
+    // Minimal TCP header with no options (data offset = 5, no options region)
+    constexpr std::array<std::byte, 20> plain_tcp_header{
+        std::byte{0x00}, std::byte{0x50}, // Source port = 80
+        std::byte{0x1F}, std::byte{0x90}, // Destination port = 8080
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x01}, // Sequence number
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x02}, // ACK number
+        std::byte{0x50},                  // Data offset = 5 (no options)
+        std::byte{0x02},                  // Flags = SYN
+        std::byte{0xFF}, std::byte{0xFF}, // Window size
+        std::byte{0x00}, std::byte{0x00}, // Checksum
+        std::byte{0x00}, std::byte{0x00}  // Urgent pointer
+    };
+
+    const netparser::TcpHeaderView tcph{plain_tcp_header};
+
+    REQUIRE_FALSE(tcph.has_option(netparser::TcpOptionKind::MSS));
+    REQUIRE_FALSE(tcph.has_option(netparser::TcpOptionKind::SACK_PERM));
+    REQUIRE_FALSE(tcph.has_option(netparser::TcpOptionKind::TIMESTAMP));
+    REQUIRE_FALSE(tcph.has_option(netparser::TcpOptionKind::WIN_SCALE));
+
+    REQUIRE_FALSE(tcph.mss().has_value());
+    REQUIRE_FALSE(tcph.sack_perm().has_value());
+    REQUIRE_FALSE(tcph.timestamp().has_value());
+    REQUIRE_FALSE(tcph.win_scale().has_value());
+}
+
+TEST_CASE("Options not present return nullopt owned", "[TcpHeader]")
+{
+    constexpr std::array<std::byte, 20> plain_tcp_header{
+        std::byte{0x00}, std::byte{0x50},
+        std::byte{0x1F}, std::byte{0x90},
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x01},
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x02},
+        std::byte{0x50},
+        std::byte{0x02},
+        std::byte{0xFF}, std::byte{0xFF},
+        std::byte{0x00}, std::byte{0x00},
+        std::byte{0x00}, std::byte{0x00}
+    };
+
+    const netparser::TcpHeaderView tcph_view{plain_tcp_header};
+    const netparser::TcpHeader tcph{tcph_view};
+    REQUIRE_FALSE(tcph.has_options());
+}
+
+TEST_CASE("Malformed option length does not crash", "[TcpHeaderView]")
+{
+    // MSS option with wrong size byte (claims size=1, but MSS needs 4 bytes)
+    constexpr std::array<std::byte, 24> bad_mss_header{
+        std::byte{0x00}, std::byte{0x50},
+        std::byte{0x1F}, std::byte{0x90},
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x01},
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x02},
+        std::byte{0x60},                  // Data offset = 6 (1 option word = 4 bytes of options)
+        std::byte{0x02},
+        std::byte{0xFF}, std::byte{0xFF},
+        std::byte{0x00}, std::byte{0x00},
+        std::byte{0x00}, std::byte{0x00},
+        std::byte{0x02}, std::byte{0x01}, // MSS kind=2, but size=1 (malformed)
+        std::byte{0x00}, std::byte{0x00}  // padding
+    };
+
+    const netparser::TcpHeaderView tcph{bad_mss_header};
+
+    // Should not throw or crash — either returns nullopt or a best-effort value
+    REQUIRE_NOTHROW(tcph.has_option(netparser::TcpOptionKind::MSS));
+    REQUIRE_NOTHROW(tcph.mss());
+}
