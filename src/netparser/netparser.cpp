@@ -1,23 +1,21 @@
-#include <print>
 #include "netparser.hpp"
+#include <print>
 
-#include <assert.h>
 #include <arpa/inet.h>
+#include <assert.h>
+#include <stdexcept>
 //
 // Created by klewy on 3/6/26.
 //
 namespace netparser {
 
-IpHeaderView::IpHeaderView(const std::span<const std::byte> bytes)
-    : bytes_(bytes)
+IpHeaderView::IpHeaderView(const std::span<const std::byte> bytes) : bytes_(bytes)
 {
     if (bytes.size() < IPV4H_MIN_SIZE) { throw std::logic_error{ "Array must be 20 bytes> for IP header" }; }
 }
 
 [[nodiscard]] std::uint8_t IpHeaderView::version() const
-{
-    return std::to_integer<std::uint8_t>(bytes_[IPV4H_VER_OFFSET] >> 4);
-}
+{ return std::to_integer<std::uint8_t>(bytes_[IPV4H_VER_OFFSET] >> 4); }
 
 [[nodiscard]] std::uint8_t IpHeaderView::ihl() const
 {
@@ -26,9 +24,7 @@ IpHeaderView::IpHeaderView(const std::span<const std::byte> bytes)
 
 // TODO: Make it work propely
 std::uint8_t IpHeaderView::type_of_service() const
-{
-    return std::to_integer<std::uint8_t>(bytes_[IPV4H_TYPE_OF_SERVICE_OFFSET]);
-}
+{ return std::to_integer<std::uint8_t>(bytes_[IPV4H_TYPE_OF_SERVICE_OFFSET]); }
 
 std::uint16_t IpHeaderView::total_len() const
 {
@@ -79,9 +75,7 @@ std::uint16_t IpHeaderView::checksum() const
 }
 
 [[nodiscard]] std::uint8_t IpHeaderView::protocol() const
-{
-    return std::to_integer<std::uint8_t>(bytes_[IPV4H_PROTO_OFFSET]);
-}
+{ return std::to_integer<std::uint8_t>(bytes_[IPV4H_PROTO_OFFSET]); }
 
 [[nodiscard]] std::uint32_t IpHeaderView::source_addr() const
 {
@@ -122,7 +116,9 @@ void IpHeader::dont_fragment(bool val)
 {
     constexpr std::uint16_t DF_BIT = (1U << 14U);
     std::uint16_t frag_off = ntohs(hdr_.frag_off);
-    if (val) { frag_off |= DF_BIT; } else {
+    if (val) {
+        frag_off |= DF_BIT;
+    } else {
         frag_off &= ~DF_BIT;// NOLINT
     }
     hdr_.frag_off = htons(frag_off);// NOLINT
@@ -132,7 +128,9 @@ void IpHeader::more_fragments(bool val)
 {
     constexpr std::uint16_t MF_BIT = (1U << 13U);
     std::uint16_t frag_off = ntohs(hdr_.frag_off);
-    if (val) { frag_off |= MF_BIT; } else {
+    if (val) {
+        frag_off |= MF_BIT;
+    } else {
         frag_off &= ~MF_BIT;// NOLINT
     }
     hdr_.frag_off = htons(frag_off);// NOLINT
@@ -224,10 +222,11 @@ std::uint32_t IpHeader::source_addr() const { return hdr_.saddr; }
 
 std::uint32_t IpHeader::dest_addr() const { return hdr_.daddr; }
 
-TcpHeaderView::TcpHeaderView(const std::span<const std::byte> bytes)
-    : bytes_(bytes)
+TcpHeaderView::TcpHeaderView(const std::span<const std::byte> bytes) : bytes_(bytes)
 {
     if (bytes_.size() < TCPH_MIN_SIZE) { throw std::runtime_error("Bytes is too small for a tcp header"); }
+
+    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
 }
 
 std::uint16_t TcpHeaderView::source_port() const
@@ -341,6 +340,35 @@ std::uint16_t TcpHeaderView::urg_ptr() const
     return ntohs(urgptr);
 }
 
+bool TcpHeaderView::has_option(const TcpOptionKind kind) const
+{
+    // iterate each kind and see if its there
+    const auto options_size = bytes_.size() - TCPH_MIN_SIZE;
+    const std::span<const std::byte> options_bytes{ std::next(bytes_.data(), TCPH_MIN_SIZE),
+        options_size };
+
+    std::size_t offset = 0;
+    while (offset < options_bytes.size()) {
+        auto kind_byte = options_bytes[offset];
+        if (static_cast<TcpOptionKind>(kind_byte) == kind) {
+            return true;
+        }
+
+        if (static_cast<int>(kind_byte) == 0 || static_cast<int>(kind_byte) == 1) {
+            offset += 1;
+        } else {
+            offset += 1;
+            if (offset >= options_bytes.size()) {
+                break;
+            }
+            std::uint8_t size{};
+            std::memcpy(&size, std::next(options_bytes.data(), i), sizeof(size));
+            offset += sizeof(size) + (size - sizeof(kind_byte) - sizeof(size));
+        }
+    }
+    return false;
+}
+
 TcpHeader::TcpHeader(const TcpHeaderView &tcph)
 {
     const auto data = tcph.data();
@@ -408,7 +436,7 @@ std::uint16_t TcpHeader::checksum() const { return ntohs(hdr_.check); }
 
 void TcpHeader::checksum(const std::uint16_t cksum) { hdr_.check = htons(cksum); }
 
-void TcpHeader::calculate_checksum(const netparser::IpHeader& iph, std::span<const std::byte> payload)
+void TcpHeader::calculate_checksum(const netparser::IpHeader &iph, std::span<const std::byte> payload)
 {
     // Zero out existing checksum before calculating
     hdr_.check = 0;
@@ -418,46 +446,38 @@ void TcpHeader::calculate_checksum(const netparser::IpHeader& iph, std::span<con
     {
         std::uint32_t src_addr;
         std::uint32_t dst_addr;
-        std::uint8_t  zero;
-        std::uint8_t  protocol;
+        std::uint8_t zero;
+        std::uint8_t protocol;
         std::uint16_t tcp_length;
     } pseudo{};
 
-    pseudo.src_addr   = iph.source_addr();
-    pseudo.dst_addr   = iph.dest_addr();
-    pseudo.zero       = 0;
-    pseudo.protocol   = iph.protocol();
-    pseudo.tcp_length = htons(sizeof(tcphdr) + static_cast<std::uint16_t>(payload.size())); // NOLINT
+    pseudo.src_addr = iph.source_addr();
+    pseudo.dst_addr = iph.dest_addr();
+    pseudo.zero = 0;
+    pseudo.protocol = iph.protocol();
+    pseudo.tcp_length = htons(sizeof(tcphdr) + static_cast<std::uint16_t>(payload.size()));// NOLINT
 
     uint32_t sum = 0;
 
     // Helper: accumulate 16-bit words from a raw buffer
-    auto accumulate = [&sum](const void* data, std::size_t length)
-    {
-        const auto* ptr = static_cast<const uint16_t*>(data);
+    auto accumulate = [&sum](const void *data, std::size_t length) {
+        const auto *ptr = static_cast<const uint16_t *>(data);
 
-        while (length > 1)
-        {
+        while (length > 1) {
             sum += *ptr++;
             length -= 2;
         }
 
         // Odd trailing byte — pad with zero
-        if (length == 1)
-        {
-            sum += *reinterpret_cast<const uint8_t*>(ptr);
-        }
+        if (length == 1) { sum += *reinterpret_cast<const uint8_t *>(ptr); }
     };
 
-    accumulate(&pseudo,  sizeof(pseudo));
-    accumulate(&hdr_,    sizeof(tcphdr));
+    accumulate(&pseudo, sizeof(pseudo));
+    accumulate(&hdr_, sizeof(tcphdr));
     accumulate(payload.data(), payload.size());
 
     // Fold carries
-    while (sum >> 16)
-    {
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    }
+    while (sum >> 16) { sum = (sum & 0xFFFF) + (sum >> 16); }
 
     // One's complement
     hdr_.check = static_cast<uint16_t>(~sum);

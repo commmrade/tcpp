@@ -3,13 +3,16 @@
 //
 #ifndef TCPP_NETPARSER_H
 #define TCPP_NETPARSER_H
+#include <any>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
-#include <vector>
 #include <linux/ip.h>
 #include <linux/tcp.h>
 #include <span>
-#include <cstdint>
-#include <cstddef>
+#include <unordered_map>
+#include <variant>
+#include <vector>
 
 
 namespace netparser {
@@ -130,6 +133,41 @@ static constexpr std::size_t TCPH_WIN_OFFSET = 14;
 static constexpr std::size_t TCPH_CKSUM_OFFSET = 16;
 static constexpr std::size_t TCPH_URGPTR_OFFSET = 18;
 
+enum class TcpOptionKind
+{
+    END_OF_LIST = 0,
+    NO_OP = 1,
+    MSS = 2,
+    SACK_PERM = 4,
+    TIMESTAMP = 8,
+};
+
+struct TcpMssOption
+{
+    std::uint8_t kind;
+    std::uint8_t size;
+    std::uint16_t mss;
+};
+
+struct TcpNoOpOption
+{
+    std::uint8_t kind;
+};
+
+struct TcpSackPermOption
+{
+    std::uint8_t kind;
+    std::uint8_t size;
+};
+
+struct TcpTimestampOption
+{
+    std::uint8_t kind;
+    std::uint8_t size;
+    std::uint32_t tv;
+    std::uint32_t tr;
+};
+
 class TcpHeaderView
 {
     const std::span<const std::byte> bytes_;
@@ -163,7 +201,77 @@ public:
     {
         return bytes_;
     }
+
+    bool has_option(const TcpOptionKind kind) const;
     // TODO: Options
+};
+
+class TcpOptions
+{
+private:
+    std::unordered_map<TcpOptionKind, std::any> options_;
+public:
+    explicit TcpOptions(const std::span<const std::byte> options_bytes)
+    {
+        std::size_t offset = 0;
+        while (offset < options_bytes.size()) {
+            auto kind_byte = options_bytes[offset];
+            switch (kind_byte) {
+            case static_cast<std::byte>(TcpOptionKind::MSS): {
+                if (offset + 1 >= options_bytes.size()) {
+                    break;
+                }
+                const auto kind = static_cast<std::uint8_t>(kind_byte);
+                std::uint8_t size{};
+                std::memcpy(&size, std::next(options_bytes.data(), static_cast<std::ptrdiff_t>(offset + 1)), sizeof(size));
+                options_.emplace(TcpOptionKind::MSS, std::make_any<TcpMssOption>(kind, size));
+
+                offset += sizeof(kind) + sizeof(size);
+                break;
+            }
+            case static_cast<std::byte>(TcpOptionKind::NO_OP): {
+                const auto kind = static_cast<std::uint8_t>(kind_byte);
+                options_.emplace(TcpOptionKind::NO_OP, std::make_any<TcpNoOpOption>(kind));
+
+                offset += sizeof(kind);
+                break;
+            }
+            case static_cast<std::byte>(TcpOptionKind::SACK_PERM): {
+                if (offset + 1 >= options_bytes.size()) {
+                    break;
+                }
+                const auto kind = static_cast<std::uint8_t>(kind_byte);
+                std::uint8_t size{};
+                std::memcpy(&size, std::next(options_bytes.data(), static_cast<std::ptrdiff_t>(offset + 1)), sizeof(size));
+                options_.emplace(TcpOptionKind::SACK_PERM, std::make_any<TcpSackPerm>(kind, size));
+
+                offset += sizeof(kind) + sizeof(size);
+                break;
+            }
+            case static_cast<std::byte>(TcpOptionKind::TIMESTAMP): {
+                if (offset + 1 + 4 + 4 >= options_bytes.size()) {
+                    break;
+                }
+
+                const auto kind = static_cast<std::uint8_t>(kind_byte);
+                std::uint8_t size{};
+                std::uint32_t tv{};
+                std::uint32_t tr{};
+
+                // TODO: finish parsing this, default
+                // 2. Write methods to get options in TcpView
+
+                std::memcpy(&size, std::next(options_bytes.data(), offset), sizeof(size));
+
+                break;
+            }
+            case static_cast<std::byte>(TcpOptionKind::END_OF_LIST): {
+                // Stop parsing
+                break;
+            }
+            }
+        }
+    }
 };
 
 class TcpHeader
