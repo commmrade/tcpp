@@ -90,7 +90,7 @@ struct SendSequence
 {
     std::uint32_t una;// send unack'ed
     std::uint32_t nxt;// send next
-    std::uint16_t wnd;// send window size
+    std::uint32_t wnd;// send window size. It is recommended to use 32 bit int for WND
     std::uint16_t up;// urgent pointer
     std::uint32_t wl1;// segment sequence number used for last window update
     std::uint32_t wl2;// segment acknowledgment number used for last window update
@@ -100,10 +100,12 @@ struct SendSequence
 struct ReceiveSequence
 {
     std::uint32_t nxt;// next to receive, which is +1 byte. so this equals to the next seqn that is expected
-    std::uint16_t wnd;// receiver window size
+    std::uint32_t wnd;// receiver window size. It is recommended to use 32 bit int for WND
     std::uint16_t up;// urgent pointer
     std::uint32_t irs;// initial receiver seq n
 };
+
+using Buffer = std::vector<std::byte>;
 
 struct TcpConnection
 {
@@ -120,7 +122,13 @@ struct TcpConnection
     // Tcp protocol stuff
     SendSequence send_;
     ReceiveSequence recv_;
+    Buffer recv_buf_; // First element is SND.UNA, last is SND.UNA + SND.WND
     TcpState state_;
+
+    // My MSS (what this host can send)
+    std::uint16_t send_mss_{536};
+    // Their MSS (what that host can send
+    std::uint32_t recv_mss_{536};
 
     // Buffers and stuff
     bool should_send_fin{ false };// TODO: Get rid of this. This should be sent after all data in buffers is sent
@@ -216,7 +224,9 @@ struct TcpConnection
             // TODO: Don't forget to send all the data before sending a FIN
             break;
         }
-        case TcpState::ESTAB: { break; }
+        case TcpState::ESTAB: {
+            break;
+        }
         case TcpState::LAST_ACK: {
             // The only thing that can arrive in this state is an acknowledgment of our FIN
             state_ = TcpState::CLOSED;
@@ -237,6 +247,36 @@ struct TcpConnection
 
     bool handle_seg_text(Tun& tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
+        switch (state_) {
+        case TcpState::ESTAB:
+        case TcpState::FIN_WAIT_1:
+        case TcpState::FIN_WAIT_2: {
+            // A TCP implementation MAY send an ACK segment acknowledging RCV.NXT
+            // when a valid segment arrives that is in the window but not at the left window edge
+            if (tcph.seqn() != recv_.nxt) {
+                tcph_.ack(true);
+                write(tun, send_.nxt, 0);
+                return true;
+            }
+
+            recv_buf_.append_range(payload); // append new data
+            recv_.nxt += payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
+            recv_.wnd = tcph.window();
+            tcph_.ack(true);
+            write(tun, send_.nxt, 0); // TODO: piggyback this
+            // TODO: tell userland that we have received data
+            break;
+        }
+        case TcpState::CLOSE_WAIT:
+        case TcpState::CLOSING:
+        case TcpState::LAST_ACK:
+        case TcpState::TIME_WAIT: {
+            // This should not occur, just ignore the segment text
+            break;
+        }
+        default:
+            assert(0 && "This should not happen");
+        }
         return true;
     }
 
@@ -507,7 +547,7 @@ struct TcpConnection
             recv_.irs = tcph.seqn();
 
             recv_.wnd = tcph.window();// I think this is correct? TODO: MAKE SURE
-            send_.wnd = 4380;
+            send_.wnd = send_mss_;
 
             // SEt ISS
             // TODO: use a better mechanism, just 10 for now
