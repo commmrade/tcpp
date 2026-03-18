@@ -121,6 +121,7 @@ struct TcpConnection
 
     // Tcp protocol stuff
     SendSequence send_;
+    Buffer send_buf_;
     ReceiveSequence recv_;
     Buffer recv_buf_; // First element is SND.UNA, last is SND.UNA + SND.WND
     TcpState state_;
@@ -213,18 +214,34 @@ struct TcpConnection
             send_.wnd = tcph.window();
             send_.wl1 = tcph.seqn();
             send_.wl2 = tcph.ackn();
-
-            // TODO: for now, lets do an active close right after switching to estab
-            // THIS IS the only place in state machine where passive/active close interwine
-            // Note: Uncomment for active close
-            // tcph_.ack(true);
-            // tcph_.fin(true);
-            // write(tun, send_.nxt, 0);
-            // state_ = TcpState::FIN_WAIT_1;
-            // TODO: Don't forget to send all the data before sending a FIN
             break;
         }
         case TcpState::ESTAB: {
+            std::println("handle ack for estab");
+
+            // TODO: HANDLE ACK FOR SYn/FIN
+
+            if (is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
+                const auto acked_bytes_n = tcph.ackn() - send_.una;
+                if (!send_buf_.empty()) { // if empty, probably means that SYN/FIN was ACKed
+                    send_buf_.erase(send_buf_.begin(), send_buf_.begin() + acked_bytes_n);
+                }
+                send_.una = tcph.ackn();
+            } else if (wrapping_lt(tcph.ackn(), send_.una + 1)) { // duplicate ACK
+                // Ignore
+            } else if (wrapping_gt(tcph.ackn(), send_.nxt)) {
+                tcph_.ack(true);
+                write(tun, send_.nxt, 0);
+                return false; // Drop the segment and return
+            }
+
+            if (is_between_wrapped(send_.una - 1, tcph.ackn(), send_.nxt + 1)) { // Update window
+                if (wrapping_lt(send_.wl1, tcph.seqn()) || (send_.wl1 == tcph.seqn() && wrapping_lt(send_.wl2, tcph.ackn() + 1))) {
+                    send_.wnd = tcph.window();
+                    send_.wl1 = tcph.seqn();
+                    send_.wl2 = tcph.ackn();
+                }
+            }
             break;
         }
         case TcpState::LAST_ACK: {
@@ -235,6 +252,10 @@ struct TcpConnection
         case TcpState::FIN_WAIT_1: {
             // Probably got an ACK of our FIN. TODO: Make sure
             state_ = TcpState::FIN_WAIT_2;
+            break;
+        }
+        case TcpState::FIN_WAIT_2: {
+            // User close can be ACKed now
             break;
         }
         default:
@@ -286,13 +307,10 @@ struct TcpConnection
     bool handle_fin(Tun& tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
     {
         is_finished = true;
+
         recv_var_.notify_all();// Notify socekts about a read, now they should check is_finished
-
         recv_.nxt += 1;// Advance over FIN bit
-        // TODO: SEND FINACK AND SHIT
-        std::println("Connection is closing");
 
-        // TODO: Send all buffered segments
         tcph_.ack(true);
         write(tun, send_.nxt, 0);
 
@@ -422,7 +440,6 @@ struct TcpConnection
             // TODO: Check URG bit
             if (tcph.urg()) { if (!handle_urg(tun, tcph, payload)) { return; } }// NOLINT
 
-            // TODO: Process segment text
             if (!payload.empty()) { if (!handle_seg_text(tun, tcph, payload)) { return; } }// NOLINT
 
             // TODO: Check FIN bit
@@ -436,24 +453,30 @@ struct TcpConnection
 
     bool handle_send(Tun& tun)
     {
-        // TODO: We can piggyback FIN on last segment of data
+        // TODO: cong. control things. basically calculate how many bytes to send
+        if (!send_buf_.empty()) {
+            const auto in_flight_n = send_.nxt - send_.una;
+            const auto bytes_to_send = std::min(static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n);
+            if (bytes_to_send) {
+                tcph_.ack(true);
+                write(tun, send_.nxt, bytes_to_send);
+                // TODO: We can piggyback FIN on last segment of data
+            }
+        }
         return true;
     }
 
     bool handle_close(Tun& tun)
     {
-        // If piggybacking FIN wasn't possible, just send a raw FIN here
-        if (should_send_fin /* && send_buffer.empty() */) {
+        // TODO: If piggybacking FIN wasn't possible, just send a raw FIN here
+        if (should_send_fin && send_buf_.empty()) {
             tcph_.fin(true);
             tcph_.ack(true);
-            // TODO: use actual SEQ num of FIN
             write(tun, send_.nxt, 0);
 
             // TODO: make sure it is retransmitted
             state_ = TcpState::FIN_WAIT_1;
             should_send_fin = false;
-        } else {
-            // TODO: not impl yet
         }
         return true;
     }
@@ -477,27 +500,39 @@ struct TcpConnection
     /// @param max_size how many bytes of payload it is allowed to send at most.
     ssize_t write(Tun& tun, const std::uint32_t seqn_from, [[maybe_unused]] const std::size_t max_size)
     {
+        const std::span<const std::byte> payload{send_buf_.data(), max_size};
+
+        iph_.total_len(static_cast<std::uint16_t>(iph_.ihl() * 4 + tcph_.data_off() * 4 + payload.size()));
+        iph_.calculate_checksum();
+
         tcph_.seqn(seqn_from);
         tcph_.ackn(recv_.nxt);
-        tcph_.calculate_checksum(iph_, {});
+        tcph_.calculate_checksum(iph_, payload);
 
-        std::vector<std::byte> buf{};
-        buf.resize(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE);
         const auto ip_data = iph_.serialize();
         const auto tcp_data = tcph_.serialize();
+
+        std::vector<std::byte> buf{};
+        buf.resize(iph_.ihl() * 4 + tcph_.data_off() * 4 + payload.size());
+
         std::size_t offset = 0;
         std::memcpy(buf.data() + offset, ip_data.data(), ip_data.size());// NOLINT
         offset += ip_data.size();
         std::memcpy(buf.data() + offset, tcp_data.data(), tcp_data.size());// NOLINT
         offset += tcp_data.size();
+        if (!payload.empty()) {
+            std::memcpy(buf.data() + offset, payload.data(), payload.size());
+            offset += payload.size();
+        }
 
         const auto written = tun.write(buf.data(), offset);
         if (written < 0) {
             throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno)));// NOLINT
         }
+        assert(static_cast<std::size_t>(written) == offset); // i think it should be ok, if fails, then i have to rewrite "snd.nxt +" logic
 
-        const std::size_t payload_bytes_sent = 0;// mock variable
-        send_.nxt += payload_bytes_sent + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
+        send_.nxt += payload.size() + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
+        std::println("send.nxt is now {}", send_.nxt);
 
         tcph_.syn(false);
         tcph_.ack(false);
@@ -584,7 +619,7 @@ struct TcpConnection
             std::numeric_limits<std::uint32_t>::max());
 
         const auto iss = dis(gen);
-        const auto init_window = 4380;
+        const auto init_window = send_mss_;
 
         iph_.version(4);
         iph_.ihl(5);// 5 * 4 = 20 bytes (no options)
@@ -648,6 +683,29 @@ struct TcpConnection
         std::memcpy(buf, recv_buf_.data(), bytes_copy);
         recv_buf_.erase(recv_buf_.begin(), recv_buf_.begin() + bytes_copy);
         return static_cast<ssize_t>(bytes_copy);
+    }
+    ssize_t write(const void* buf, const std::size_t buf_size)
+    {
+        const auto in_flight_n = static_cast<std::int64_t>(send_.nxt) - send_.una;
+        assert(in_flight_n >= 0); // Well actually TCP allows window shrinks i think but it is highly discouraged
+        const auto insert_bytes_n = std::min(buf_size, static_cast<std::size_t>(send_.wnd - in_flight_n)); // Can't have more bytes, than the window allows
+        if (insert_bytes_n == 0) {
+            throw std::runtime_error("error: insufficient resources");
+        }
+
+        switch (state_) {
+        case TcpState::SYN_SENT:
+        case TcpState::SYN_RCVD:
+        case TcpState::ESTAB:
+        case TcpState::CLOSE_WAIT: {
+            send_buf_.append_range(std::span<const std::byte>{static_cast<const std::byte*>(buf), insert_bytes_n});
+            break;
+        }
+        default:
+            throw std::runtime_error("error: connection is closing");
+        }
+
+        return static_cast<ssize_t>(insert_bytes_n);
     }
 };
 

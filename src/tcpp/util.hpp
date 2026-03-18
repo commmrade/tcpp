@@ -41,6 +41,11 @@ inline bool wrapping_lt(std::uint32_t lhs, std::uint32_t rhs) {
     return (lhs - rhs) > (1U << 31U);
 }
 
+inline bool wrapping_gt(std::uint32_t lhs, std::uint32_t rhs)
+{
+    return wrapping_lt(rhs, lhs);
+}
+
 inline bool is_between_wrapped(std::uint32_t start, std::uint32_t x, std::uint32_t end) {
     return wrapping_lt(start, x) && wrapping_lt(x, end);
 }

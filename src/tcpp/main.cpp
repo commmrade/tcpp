@@ -63,8 +63,11 @@ struct TcpSocket
 
     ssize_t write(const void *buf, const std::size_t buf_sz)
     {
-        // NOT IMPLEMENTED
-        throw std::runtime_error("not implemented");
+        auto& ctx = Context::instance();
+        std::unique_lock ctx_lock{ctx.mx};
+        std::println("user: take lock to write");
+        auto& conn = ctx.tcp.connections[quad_];
+        return conn->write(buf, buf_sz);
     }
 
     // This will initiase a one-side close (send FIN)
@@ -193,11 +196,17 @@ int main()
     while (true) {
         std::array<char, 512> buf{};
         auto rd = sock.read(buf.data(), buf.size());
+        if (strncmp(buf.data(), "exit", 4) == 0) {
+            sock.close();
+            break;
+        }
         if (rd == 0) {
             std::println("user: DATA FINISHED, CLOSING...");
             break;
         } else {
-            std::println("user: got data - '{}'", std::string_view{buf.data(), static_cast<std::size_t>(rd)});
+            std::println("user: got data {} bytes - '{}'", rd, std::string_view{buf.data(), static_cast<std::size_t>(rd)});
+            auto wr = sock.write(buf.data(), static_cast<std::size_t>(rd));
+            std::println("user: wrote {} bytes", wr);
         }
     }
 
