@@ -57,15 +57,8 @@ struct TcpSocket
         std::unique_lock recv_lock{ ctx_.mx };
         std::println("USER: TAKE THE READ LOCK");
         auto &conn = ctx_.tcp.connections[quad_];
-        conn->recv_var_.wait(recv_lock);
-
-        assert(ctx_.tcp.connections.contains(quad_));
-        // We got notified
-        if (conn->is_finished) {
-            return 0;// EOF
-        }
-
-        return 148;
+        conn->recv_var_.wait(recv_lock, [&conn] { return !conn->recv_buf_.empty() || conn->is_finished; });
+        return conn->read(buf, buf_sz);
     }
 
     ssize_t write(const void *buf, const std::size_t buf_sz)
@@ -203,6 +196,8 @@ int main()
         if (rd == 0) {
             std::println("user: DATA FINISHED, CLOSING...");
             break;
+        } else {
+            std::println("user: got data - '{}'", std::string_view{buf.data(), static_cast<std::size_t>(rd)});
         }
     }
 
@@ -217,7 +212,7 @@ int main()
     // sock.shutdown(ShutdownType::WRITE);
     //
 
-    sleep(3); // Wait for py test thing to start
+    // sleep(3); // Wait for py test thing to start
     // TcpSocket sock{};
     // sock.connect("10.0.0.1", 8090);
     //
@@ -232,7 +227,6 @@ int main()
     // }
 
     sleep(2);
-
     net_thread.join();
     return 0;
 }

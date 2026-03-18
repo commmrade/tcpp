@@ -261,10 +261,13 @@ struct TcpConnection
 
             recv_buf_.append_range(payload); // append new data
             recv_.nxt += payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
-            recv_.wnd = tcph.window();
+            recv_.wnd = recv_mss_; //TODO: CALC PROEPRLY
+            // Make sure RCV.WND right edge doesn't shift left
+            tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
             tcph_.ack(true);
             write(tun, send_.nxt, 0); // TODO: piggyback this
-            // TODO: tell userland that we have received data
+
+            recv_var_.notify_all();
             break;
         }
         case TcpState::CLOSE_WAIT:
@@ -472,7 +475,7 @@ struct TcpConnection
 
     /// @param seqn_from first sequence number to send
     /// @param max_size how many bytes of payload it is allowed to send at most.
-    ssize_t write(Tun& tun, const std::uint32_t seqn_from, const std::size_t max_size)
+    ssize_t write(Tun& tun, const std::uint32_t seqn_from, [[maybe_unused]] const std::size_t max_size)
     {
         tcph_.seqn(seqn_from);
         tcph_.ackn(recv_.nxt);
@@ -557,7 +560,7 @@ struct TcpConnection
                 std::numeric_limits<std::uint32_t>::max());
             auto iss = dis(gen);
             // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
-            tcph_.window(send_.wnd);
+            tcph_.window(static_cast<std::uint16_t>(send_.wnd));
             tcph_.syn(true);
             tcph_.ack(true);
             write(tun, iss, 0);
@@ -617,7 +620,7 @@ struct TcpConnection
         state_ = TcpState::SYN_SENT;
     }
 
-    // "Userspace" kinda functions
+    // "Userspace" kinda functions -------------------------------------
     void shutdown(ShutdownType sht)
     {
         // TODO: It should buffer FIN at the end of send buffer
@@ -632,6 +635,19 @@ struct TcpConnection
     {
         // TODO: it should buffer FIN
         should_send_fin = true;
+    }
+
+    ssize_t read(void* buf, const std::size_t buf_size)
+    {
+        // If user hasn't read everything yet, delay signaling FIN
+        if (is_finished && !recv_buf_.empty()) {
+            return 0;
+        }
+
+        const auto bytes_copy = std::min(buf_size, recv_buf_.size());
+        std::memcpy(buf, recv_buf_.data(), bytes_copy);
+        recv_buf_.erase(recv_buf_.begin(), recv_buf_.begin() + bytes_copy);
+        return static_cast<ssize_t>(bytes_copy);
     }
 };
 
