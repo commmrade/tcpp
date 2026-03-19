@@ -37,6 +37,8 @@ private:
     // Accept a SYN packet
     void accept(Tun &tun, const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph);
 
+    void dispatch_packet(Tun& tun, const std::span<const std::byte> buf);
+
     using PortType = std::uint16_t;
     std::unordered_map<Quad, std::unique_ptr<TcpConnection>> connections;
     // Sockets that are ready to be accepted. When they are accepted, they are removed from this queue.

@@ -14,40 +14,18 @@ void Tcp::accept(Tun &tun, const netparser::IpHeaderView &iph, const netparser::
     conn->accept(tun, iph, tcph);
 }
 
-void Tcp::process_packet(Tun &tun)
+void Tcp::dispatch_packet(Tun& tun, const std::span<const std::byte> buf)
 {
-    std::array<std::byte, 1500> buf{};// NOLINT
-
-    std::array<pollfd, 1> poll_fds;
-    auto &fd = poll_fds[0];
-    fd.fd = tun.raw_fd();
-    fd.events = POLLIN;
-    int ret = poll(poll_fds.data(), poll_fds.size(), 1);
-    if (ret < 0) {
-        perror("poll");
-        throw std::runtime_error(std::format("poll failed: {}", std::strerror(errno)));// NOLINT
-        return;
-    }
-
-    for (const auto &[quad, conn] : connections) { conn->on_tick(tun); }
-
-    if (ret == 0) {
-        return;// Nothing to read
-    }
-
-    const ssize_t rd_bytes = tun.read(buf);
-    std::size_t rd_offset = 0;
-    assert(rd_bytes);
-
+    std::ptrdiff_t rd_offset = 0;
     const netparser::IpHeaderView iph{
-        std::span<const std::byte>{ buf.data(), static_cast<std::size_t>(rd_bytes) - rd_offset } };
+        std::span<const std::byte>{ buf.data(), buf.size() - static_cast<std::size_t>(rd_offset) } };
     rd_offset += iph.ihl() * 4UL;
-    if (iph.protocol() == 6) {// NOLINT
+    if (iph.protocol() == IPPROTO_TCP) {// NOLINT
         // TODO: calculate ipv4h and tcph proper
 
         const netparser::TcpHeaderView tcph{
-            std::span<const std::byte>{ std::next(buf.data(), static_cast<std::ptrdiff_t>(rd_offset)),
-                                        static_cast<std::size_t>(rd_bytes) - rd_offset } };
+            std::span<const std::byte>{ std::next(buf.data(), rd_offset),
+                                        buf.size() - static_cast<std::size_t>(rd_offset) } };
 
         rd_offset += tcph.data_off() * 4UL;
         const Quad quad{ .src_addr = iph.source_addr(), .src_port = tcph.source_port(), .dst_addr = iph.dest_addr(),
@@ -55,10 +33,10 @@ void Tcp::process_packet(Tun &tun)
 
         auto conn_iter = connections.find(quad);
         if (conn_iter != connections.end()) {
-            const std::span<const std::byte> payload{ std::next(buf.data(), static_cast<std::ptrdiff_t>(rd_offset)),
-                                                      static_cast<std::size_t>(rd_bytes) - rd_offset };
+            const std::span<const std::byte> payload{ std::next(buf.data(), rd_offset),
+                                                      buf.size() - static_cast<std::size_t>(rd_offset) };
             conn_iter->second->on_packet(tun, iph, tcph, payload);
-            if (conn_iter->second->state_ == TcpState::CLOSED) {
+            if (conn_iter->second->get_state() == TcpState::CLOSED) {
                 std::println("Delete TCB");
                 connections.erase(conn_iter);// TODO: this may cause problems when waiting on a cond var
             }
@@ -76,6 +54,33 @@ void Tcp::process_packet(Tun &tun)
             }
         }
     }
+}
+
+void Tcp::process_packet(Tun &tun)
+{
+    std::array<std::byte, 1500> buf{};// NOLINT
+
+    std::array<pollfd, 1> poll_fds;
+    auto &fd = poll_fds[0];
+    fd.fd = tun.raw_fd();
+    fd.events = POLLIN;
+    int ret = poll(poll_fds.data(), poll_fds.size(), 1);
+    if (ret < 0) {
+        perror("poll");
+        throw std::runtime_error(std::format("poll failed: {}", std::strerror(errno)));// NOLINT
+    }
+
+    for (const auto &[quad, conn] : connections) { conn->on_tick(tun); }
+
+    if (ret == 0) {
+        return;// Nothing to read
+    }
+
+    const ssize_t rd_bytes = tun.read(buf);
+    std::size_t rd_offset = 0;
+    assert(rd_bytes);
+
+    dispatch_packet(tun, std::span<const std::byte>(buf.data(), (size_t)rd_bytes));
 }
 
 Quad Tcp::pop_pending(const std::uint16_t port)
