@@ -270,16 +270,16 @@ public:
     [[nodiscard]] std::span<const std::byte> data() const { return bytes_; }
 
     bool has_option(const TcpOptionKind kind) const;
-    std::optional<TcpMssOption> mss() const;
-    std::optional<TcpSackPermOption> sack_perm() const;
-    std::optional<TcpTimestampOption> timestamp() const;
-    std::optional<TcpWinScaleOption> win_scale() const;
+    [[nodiscard]] std::optional<TcpMssOption> mss() const;
+    [[nodiscard]] std::optional<TcpSackPermOption> sack_perm() const;
+    [[nodiscard]] std::optional<TcpTimestampOption> timestamp() const;
+    [[nodiscard]] std::optional<TcpWinScaleOption> win_scale() const;
 
 private:
-    std::pair<bool, std::size_t> has_option_inner(const TcpOptionKind kind) const;
+    [[nodiscard]] std::pair<bool, std::size_t> has_option_inner(const TcpOptionKind kind) const;
 
     template<typename T, typename T_INNER, TcpOptionKind KIND> requires std::constructible_from<T, T_INNER>
-    std::optional<T> option() const
+    [[nodiscard]] std::optional<T> option() const
     {
         auto [has, pos] = has_option_inner(KIND);
         if (!has) { return std::nullopt; }
@@ -316,9 +316,9 @@ public:
     explicit TcpOptions(const std::span<const std::byte> options_bytes);
     void parse(const std::span<const std::byte> options_bytes);
 
-    std::vector<std::byte> serialize() const;
+    [[nodiscard]] std::vector<std::byte> serialize() const;
 
-    std::size_t options_size() const;
+    [[nodiscard]] std::size_t options_size() const;
 
     void clear()
     {
@@ -328,7 +328,7 @@ public:
         timestamp_option_.reset();
     }
 
-    bool has_option(const TcpOptionKind kind) const
+    [[nodiscard]] bool has_option(const TcpOptionKind kind) const
     {
         switch (kind) {
         case TcpOptionKind::WIN_SCALE: { return win_scale_option_.has_value(); }
@@ -336,11 +336,11 @@ public:
         case TcpOptionKind::TIMESTAMP: { return timestamp_option_.has_value(); }
         case TcpOptionKind::SACK_PERM: { return sack_perm_option_.has_value(); }
         default:
-            assert(false && "Why would you even get here?");
+            return false;
         }
     }
 
-    std::optional<TcpWinScaleOption> win_scale() const { return win_scale_option_; }
+    [[nodiscard]] std::optional<TcpWinScaleOption> win_scale() const { return win_scale_option_; }
 
     void win_scale(const std::uint8_t shift)
     {
@@ -349,16 +349,16 @@ public:
         win_scale_option_ = std::move(opt);
     }
 
-    std::optional<TcpMssOption> mss() const { return mss_option_; }
+    [[nodiscard]] std::optional<TcpMssOption> mss() const { return mss_option_; }
 
     void mss(const std::uint16_t mss)
     {
         TcpMssOption opt;
-        opt.mss = htons(mss);
+        opt.mss = mss;
         mss_option_ = std::move(opt);
     }
 
-    std::optional<TcpSackPermOption> sack_perm() const { return sack_perm_option_; }
+    [[nodiscard]] std::optional<TcpSackPermOption> sack_perm() const { return sack_perm_option_; }
 
     void set_sack_perm()
     {
@@ -366,7 +366,7 @@ public:
         sack_perm_option_ = std::move(opt);
     }
 
-    std::optional<TcpTimestampOption> timestamp() const { return timestamp_option_; }
+    [[nodiscard]] std::optional<TcpTimestampOption> timestamp() const { return timestamp_option_; }
 
     void timestamp(const std::uint32_t tv, const std::uint32_t tr)
     {
@@ -438,10 +438,10 @@ public:
     [[nodiscard]] std::uint16_t urg_ptr() const;
     void urg_ptr(const std::uint16_t ptr);
 
-    std::vector<std::byte> serialize();
+    [[nodiscard]] std::vector<std::byte> serialize();
 
-    TcpOptions &options() { return options_; }
-    const TcpOptions &options() const { return options_; }
+    [[nodiscard]] TcpOptions &options() { return options_; }
+    [[nodiscard]] const TcpOptions &options() const { return options_; }
 };
 }// namespace netparser
 

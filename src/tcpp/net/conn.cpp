@@ -258,6 +258,8 @@ bool TcpConnection::handle_syn_sent(Tun &tun,
     assert((is_ack_acceptable || !tcph.ack()) && !tcph.rst());
     // This step should be reached only if the ACK is ok, or there is no ACK, and the segment did not contain a RST.
     if (tcph.syn()) {
+        // TODO: read MSS and shit setup vars
+
         recv_.nxt = tcph.seqn() + 1;
         recv_.irs = tcph.seqn();
         if (tcph.ack()) { send_.una = tcph.ackn(); }

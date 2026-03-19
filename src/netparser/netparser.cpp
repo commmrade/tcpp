@@ -211,7 +211,7 @@ bool IpHeader::more_fragments() const
 
 std::uint16_t IpHeader::frag_offset() const
 {
-    const std::uint16_t frag_off = htons(hdr_.frag_off) & 0x1FFFU;
+    const std::uint16_t frag_off = ntohs(hdr_.frag_off) & 0x1FFFU;
     return frag_off;
 }
 
@@ -465,9 +465,13 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
         }
         case static_cast<std::byte>(TcpOptionKind::END_OF_LIST): {
             // Stop parsing
+            offset = std::numeric_limits<std::size_t>::max();
             break;
         }
-        default: { throw std::runtime_error("Not impl option. idk what to do"); }
+        default: {
+            // TODO: skip this based on SIZE field
+            throw std::runtime_error("Not impl option. idk what to do");
+        }
         }
     }
 }
@@ -482,7 +486,7 @@ std::vector<std::byte> TcpOptions::serialize() const
     std::ptrdiff_t offset = 0;
     if (mss_option_.has_value()) {
         const auto &mss = mss_option_.value();
-        const details::TcpMssOptionInner inner{ mss.kind, mss.size, mss.mss };
+        const details::TcpMssOptionInner inner{ mss.kind, mss.size, htons(mss.mss) };
         std::memcpy(bytes.data(), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
@@ -500,13 +504,13 @@ std::vector<std::byte> TcpOptions::serialize() const
     }
     if (timestamp_option_.has_value()) {
         const auto &timestamp = timestamp_option_.value();
-        const details::TcpTimestampOptionInner inner{ timestamp.kind, timestamp.size, timestamp.tv, timestamp.tr };
+        const details::TcpTimestampOptionInner inner{ timestamp.kind, timestamp.size, htonl(timestamp.tv), htonl(timestamp.tr) };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
 
     if (offset % 4 != 0) {
-        const std::size_t to_fill_n = static_cast<std::size_t>(offset) % 4;
+        const std::size_t to_fill_n = 4 - (static_cast<std::size_t>(offset) % 4);
         std::memset(std::next(bytes.data(), offset), 0x01, to_fill_n);// Pad with NO-OP options
     }
 
@@ -520,7 +524,7 @@ std::size_t TcpOptions::options_size() const
     if (win_scale_option_.has_value()) { res += sizeof(details::TcpWinScaleOptionInner); }
     if (sack_perm_option_.has_value()) { res += sizeof(details::TcpSackPermOptionInner); }
     if (timestamp_option_.has_value()) { res += sizeof(details::TcpTimestampOptionInner); }
-    res += (res % 4);
+    res += 4 - (res % 4);
     return res;
 }
 
