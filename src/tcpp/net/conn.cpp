@@ -281,6 +281,9 @@ bool TcpConnection::handle_syn_sent(Tun &tun,
             send(tun, send_.iss, 0);
         }
 
+        if (auto opt = tcph.mss(); opt.has_value()) {
+            send_mss_ = opt.value().mss;
+        }
         send_.wnd = tcph.window();
         send_.wl1 = tcph.seqn();
         send_.wl2 = tcph.ackn();
@@ -467,7 +470,7 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
         if (auto opt = tcph.mss(); opt.has_value()) {
             send_mss_ = opt.value().mss;
         }
-        send_.wnd = tcph_.window();
+        send_.wnd = tcph.window();
 
         // SEt ISS
         // TODO: use a better mechanism, just 10 for now
@@ -478,7 +481,6 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
         auto iss = dis(gen);
         // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
         tcph_.options().mss(recv_mss_);
-        tcph_.options().set_sack_perm();
         tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
         tcph_.syn(true);
         tcph_.ack(true);
@@ -504,7 +506,7 @@ void TcpConnection::connect(Tun &tun,
         std::numeric_limits<std::uint32_t>::max());
 
     const auto iss = dis(gen);
-    const auto init_window = send_mss_;
+    recv_.wnd = recv_mss_ * 3;
 
     iph_.version(4);
     iph_.ihl(5);// 5 * 4 = 20 bytes (no options)
@@ -526,7 +528,7 @@ void TcpConnection::connect(Tun &tun,
     tcph_.ackn(0);// 0 on SYN
     tcph_.options().mss(recv_mss_); // data_off is set in send()
     tcph_.syn(true);
-    tcph_.window(init_window);
+    tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
     tcph_.urg_ptr(0);
     tcph_.calculate_checksum(iph_, {});// empty payload span for a bare SYN
 
@@ -535,7 +537,7 @@ void TcpConnection::connect(Tun &tun,
     send_.iss = iss;
     send_.una = send_.iss;
     send_.nxt = send_.iss + 1;
-    send_.wnd = init_window;
+    send_.wnd = send_mss_; // Update this after we get a SYNACK. Default is 536
 
     state_ = TcpState::SYN_SENT;
 }
@@ -560,8 +562,10 @@ ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
     if (is_finished_ && !recv_buf_.empty()) { return 0; }
 
     const auto bytes_copy = std::min(buf_size, recv_buf_.size());
-    std::memcpy(buf, recv_buf_.data(), bytes_copy);
-    erase_recv_data(bytes_copy);
+    if (bytes_copy) {
+        std::memcpy(buf, recv_buf_.data(), bytes_copy);
+        erase_recv_data(bytes_copy);
+    }
     return static_cast<ssize_t>(bytes_copy);
 }
 

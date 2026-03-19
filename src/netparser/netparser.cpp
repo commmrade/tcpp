@@ -350,7 +350,12 @@ bool TcpHeaderView::has_option(const TcpOptionKind kind) const
 
 std::optional<TcpMssOption> TcpHeaderView::mss() const
 {
-    return option<TcpMssOption, details::TcpMssOptionInner, TcpOptionKind::MSS>();
+    auto res = option<TcpMssOption, details::TcpMssOptionInner, TcpOptionKind::MSS>();
+    if (!res.has_value()) {
+        return std::nullopt;
+    }
+    res.value().mss = ntohs(res.value().mss);
+    return res;
 }
 
 std::optional<TcpSackPermOption> TcpHeaderView::sack_perm() const
@@ -360,7 +365,13 @@ std::optional<TcpSackPermOption> TcpHeaderView::sack_perm() const
 
 std::optional<TcpTimestampOption> TcpHeaderView::timestamp() const
 {
-    return option<TcpTimestampOption, details::TcpTimestampOptionInner, TcpOptionKind::TIMESTAMP>();
+    auto res = option<TcpTimestampOption, details::TcpTimestampOptionInner, TcpOptionKind::TIMESTAMP>();
+    if (!res.has_value()) {
+        return std::nullopt;
+    }
+    res.value().tv = ntohl(res.value().tv);
+    res.value().tr = ntohl(res.value().tr);
+    return res;
 }
 
 std::optional<TcpWinScaleOption> TcpHeaderView::win_scale() const
@@ -524,7 +535,9 @@ std::size_t TcpOptions::options_size() const
     if (win_scale_option_.has_value()) { res += sizeof(details::TcpWinScaleOptionInner); }
     if (sack_perm_option_.has_value()) { res += sizeof(details::TcpSackPermOptionInner); }
     if (timestamp_option_.has_value()) { res += sizeof(details::TcpTimestampOptionInner); }
-    res += 4 - (res % 4);
+    if (res % 4 != 0) {
+        res += 4 - (res % 4);
+    }
     return res;
 }
 
