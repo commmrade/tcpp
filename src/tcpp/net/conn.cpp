@@ -101,8 +101,9 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
         // TODO: HANDLE ACK FOR SYn/FIN
 
         if (is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
-            const auto acked_bytes_n = tcph.ackn() - send_.una;
+            const auto acked_bytes_n = tcph.ackn() - send_.una; // This wraps fine
             if (!send_buf_.empty()) {
+                assert(acked_bytes_n <= send_buf_.size()); // Just in case
                 // if empty, probably means that SYN/FIN was ACKed
                 erase_send_data(acked_bytes_n);
             }
@@ -164,7 +165,7 @@ bool TcpConnection::handle_seg_text(Tun &tun,
         }
 
         append_recv_data(payload);
-        recv_.nxt += payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
+        recv_.nxt += payload.size() + (tcph.syn() ? 1 : 0); // FIN is handled in handle_fin()
         recv_.wnd = recv_mss_ * 3; //TODO: CALC PROEPRLY
         // Make sure RCV.WND right edge doesn't shift left
         tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
@@ -380,7 +381,8 @@ void TcpConnection::on_tick(Tun &tun)
 
 ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
 {
-    const std::span<const std::byte> payload{ send_buf_.data(), max_size };
+    // TODO!!!!!!: SHOULD SEND FROM "seqn_from". but rn seqn_from equals to start of send buffer
+    const std::span<const std::byte> payload{ send_buf_.data() + (seqn_from - send_.una), max_size };
 
     iph_.total_len(static_cast<std::uint16_t>(iph_.ihl() * 4 + (netparser::TCPH_MIN_SIZE + tcph_.options().options_size()) + payload.size()));
     iph_.calculate_checksum();
@@ -485,11 +487,12 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
         tcph_.syn(true);
         tcph_.ack(true);
 
-        send(tun, iss, 0);
 
         send_.iss = iss;
         send_.una = send_.iss;
-        send_.nxt = send_.iss + 1;// 1 goes for SYN, since it uses up a SEQ number
+        send_.nxt = send_.iss; // 1 goes for SYN (in send()), since it uses up a SEQ number
+        send(tun, iss, 0);
+
         state_ = TcpState::SYN_RCVD;
     }
 }
@@ -530,14 +533,12 @@ void TcpConnection::connect(Tun &tun,
     tcph_.syn(true);
     tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
     tcph_.urg_ptr(0);
-    tcph_.calculate_checksum(iph_, {});// empty payload span for a bare SYN
-
-    send(tun, iss, 0);
 
     send_.iss = iss;
     send_.una = send_.iss;
-    send_.nxt = send_.iss + 1;
+    send_.nxt = send_.iss; // +1 is in send()
     send_.wnd = send_mss_; // Update this after we get a SYNACK. Default is 536
+    send(tun, iss, 0);
 
     state_ = TcpState::SYN_SENT;
 }
