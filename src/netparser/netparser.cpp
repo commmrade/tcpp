@@ -350,12 +350,7 @@ bool TcpHeaderView::has_option(const TcpOptionKind kind) const
 
 std::optional<TcpMssOption> TcpHeaderView::mss() const
 {
-    auto res = option<TcpMssOption, details::TcpMssOptionInner, TcpOptionKind::MSS>();
-    if (!res.has_value()) {
-        return std::nullopt;
-    }
-    res.value().mss = ntohs(res.value().mss);
-    return res;
+    return option<TcpMssOption, details::TcpMssOptionInner, TcpOptionKind::MSS>();
 }
 
 std::optional<TcpSackPermOption> TcpHeaderView::sack_perm() const
@@ -365,13 +360,7 @@ std::optional<TcpSackPermOption> TcpHeaderView::sack_perm() const
 
 std::optional<TcpTimestampOption> TcpHeaderView::timestamp() const
 {
-    auto res = option<TcpTimestampOption, details::TcpTimestampOptionInner, TcpOptionKind::TIMESTAMP>();
-    if (!res.has_value()) {
-        return std::nullopt;
-    }
-    res.value().tv = ntohl(res.value().tv);
-    res.value().tr = ntohl(res.value().tr);
-    return res;
+    return option<TcpTimestampOption, details::TcpTimestampOptionInner, TcpOptionKind::TIMESTAMP>();
 }
 
 std::optional<TcpWinScaleOption> TcpHeaderView::win_scale() const
