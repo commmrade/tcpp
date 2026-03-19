@@ -393,7 +393,12 @@ std::pair<bool, std::size_t> TcpHeaderView::has_option_inner(const TcpOptionKind
 
 TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
 {
-    std::size_t offset = 0;
+    parse(options_bytes);
+}
+
+void TcpOptions::parse(const std::span<const std::byte> options_bytes)
+{
+     std::size_t offset = 0;
     while (offset < options_bytes.size()) {
         auto kind_byte = options_bytes[offset];
         switch (kind_byte) {
@@ -480,6 +485,59 @@ TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
     }
 }
 
+std::vector<std::byte> TcpOptions::serialize() const {
+    const auto opts_size = options_size();
+    std::vector<std::byte> bytes;
+    bytes.resize(opts_size);
+    std::memset(bytes.data(), 0x01, opts_size); // In case there is padding, if there is not, it will be overwritten with options
+
+    std::ptrdiff_t offset = 0;
+    if (mss_option_.has_value()) {
+        const auto& mss = mss_option_.value();
+        const details::TcpMssOptionInner inner{mss.kind, mss.size, mss.mss};
+        std::memcpy(bytes.data(), &inner, sizeof(inner));
+        offset += sizeof(inner);
+    }
+    if (win_scale_option_.has_value()) {
+        const auto& wnscl = win_scale_option_.value();
+        const details::TcpWinScaleOptionInner inner{wnscl.kind, wnscl.size, wnscl.shift_cnt};
+        std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
+        offset += sizeof(inner);
+    }
+    if (sack_perm_option_.has_value()) {
+        const auto& sackperm = sack_perm_option_.value();
+        const details::TcpSackPermOptionInner inner{sackperm.kind, sackperm.size};
+        std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
+        offset += sizeof(inner);
+    }
+    if (timestamp_option_.has_value()) {
+        const auto& timestamp = timestamp_option_.value();
+        const details::TcpTimestampOptionInner inner{timestamp.kind, timestamp.size, timestamp.tv, timestamp.tr};
+        std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
+        offset += sizeof(inner);
+    }
+
+    return bytes;
+}
+
+std::size_t TcpOptions::options_size() const {
+    std::size_t res = 0;
+    if (mss_option_.has_value()) {
+        res += sizeof(details::TcpMssOptionInner);
+    }
+    if (win_scale_option_.has_value()) {
+        res += sizeof(details::TcpWinScaleOptionInner);
+    }
+    if (sack_perm_option_.has_value()) {
+        res += sizeof(details::TcpSackPermOptionInner);
+    }
+    if (timestamp_option_.has_value()) {
+        res += sizeof(details::TcpTimestampOptionInner);
+    }
+    res += (res % 4);
+    return res;
+}
+
 TcpHeader::TcpHeader(const TcpHeaderView &tcph)
 {
     const auto data = tcph.data();
@@ -489,7 +547,7 @@ TcpHeader::TcpHeader(const TcpHeaderView &tcph)
     auto options_size = data_off() * 4 - TCPH_MIN_SIZE;
     const auto options_data = data.subspan(TCPH_MIN_SIZE, options_size);
     if (!options_data.empty()) {
-        options_ = std::make_unique<TcpOptions>(options_data);
+        options_.parse(options_data);
     }
 }
 
@@ -572,7 +630,8 @@ void TcpHeader::calculate_checksum(const netparser::IpHeader &iph, std::span<con
     pseudo.dst_addr = iph.dest_addr();
     pseudo.zero = 0;
     pseudo.protocol = iph.protocol();
-    pseudo.tcp_length = htons(sizeof(tcphdr) + static_cast<std::uint16_t>(payload.size()));// NOLINT
+    const auto tcph_size = static_cast<std::uint16_t>(TCPH_MIN_SIZE + options_.options_size());
+    pseudo.tcp_length = htons(tcph_size + static_cast<std::uint16_t>(payload.size()));// NOLINT
 
     uint32_t sum = 0;
 
@@ -589,8 +648,10 @@ void TcpHeader::calculate_checksum(const netparser::IpHeader &iph, std::span<con
         if (length == 1) { sum += *reinterpret_cast<const uint8_t *>(ptr); }
     };
 
+    const auto opt_bytes = options_.serialize();
     accumulate(&pseudo, sizeof(pseudo));
     accumulate(&hdr_, sizeof(tcphdr));
+    accumulate(opt_bytes.data(), opt_bytes.size());
     accumulate(payload.data(), payload.size());
 
     // Fold carries
@@ -604,11 +665,20 @@ std::uint16_t TcpHeader::urg_ptr() const { return ntohs(hdr_.urg_ptr); }
 
 void TcpHeader::urg_ptr(const std::uint16_t ptr) { hdr_.urg_ptr = htons(ptr); }
 
-std::vector<std::byte> TcpHeader::serialize() const
+std::vector<std::byte> TcpHeader::serialize()
 {
     std::vector<std::byte> res{};
-    res.resize(sizeof(hdr_));// TODO: MAKE IT INCLUDE OPTIONS
-    std::memcpy(res.data(), &hdr_, sizeof(hdr_));
+    const auto options_bytes = options_.serialize();
+    res.resize(TCPH_MIN_SIZE + options_bytes.size());
+
+    assert((TCPH_MIN_SIZE + options_bytes.size()) % 4 == 0);
+
+    std::ptrdiff_t offset = 0;
+    std::memcpy(res.data(), &hdr_, TCPH_MIN_SIZE);
+    offset += TCPH_MIN_SIZE;
+    std::memcpy(std::next(res.data(), offset), options_bytes.data(), options_bytes.size());
+    offset += options_bytes.size();
+
     return res;
 }
 

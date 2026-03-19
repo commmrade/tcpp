@@ -4,6 +4,20 @@
 
 #include "conn.hpp"
 
+void TcpConnection::append_send_data(const std::span<const std::byte> data) { send_buf_.append_range(data); }
+
+void TcpConnection::append_recv_data(const std::span<const std::byte> data) { recv_buf_.append_range(data); }
+
+void TcpConnection::erase_send_data(const std::size_t bytes_n)
+{
+    send_buf_.erase(send_buf_.begin(), send_buf_.begin() + static_cast<const std::ptrdiff_t>(bytes_n));
+}
+
+void TcpConnection::erase_recv_data(const std::size_t bytes_n)
+{
+    recv_buf_.erase(recv_buf_.begin(), recv_buf_.begin() + static_cast<const std::ptrdiff_t>(bytes_n));
+}
+
 bool TcpConnection::validate_seq_n(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) const
 {
     if (payload.size() == 0 && recv_.wnd == 0 && tcph.seqn() == recv_.nxt) { return true; } else if (
@@ -90,7 +104,7 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
             const auto acked_bytes_n = tcph.ackn() - send_.una;
             if (!send_buf_.empty()) {
                 // if empty, probably means that SYN/FIN was ACKed
-                send_buf_.erase(send_buf_.begin(), send_buf_.begin() + acked_bytes_n);
+                erase_send_data(acked_bytes_n);
             }
             send_.una = tcph.ackn();
         } else if (wrapping_lt(tcph.ackn(), send_.una + 1)) {
@@ -149,9 +163,9 @@ bool TcpConnection::handle_seg_text(Tun &tun,
             return true;
         }
 
-        recv_buf_.append_range(payload);// append new data
+        append_recv_data(payload);
         recv_.nxt += payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
-        recv_.wnd = recv_mss_;//TODO: CALC PROEPRLY
+        recv_.wnd = recv_mss_ * 3; //TODO: CALC PROEPRLY
         // Make sure RCV.WND right edge doesn't shift left
         tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
         tcph_.ack(true);
@@ -363,15 +377,17 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
 {
     const std::span<const std::byte> payload{ send_buf_.data(), max_size };
 
-    iph_.total_len(static_cast<std::uint16_t>(iph_.ihl() * 4 + tcph_.data_off() * 4 + payload.size()));
+    iph_.total_len(static_cast<std::uint16_t>(iph_.ihl() * 4 + (netparser::TCPH_MIN_SIZE + tcph_.options().options_size()) + payload.size()));
     iph_.calculate_checksum();
+    const auto ip_data = iph_.serialize();
 
     tcph_.seqn(seqn_from);
     tcph_.ackn(recv_.nxt);
+    const auto tcph_size = static_cast<std::uint8_t>(netparser::TCPH_MIN_SIZE + tcph_.options().options_size());
+    tcph_.data_off(tcph_size / 4);
     tcph_.calculate_checksum(iph_, payload);
+    const auto tcp_data = tcph_.serialize(); // TCP data off is changed here
 
-    const auto ip_data = iph_.serialize();
-    const auto tcp_data = tcph_.serialize();
 
     std::vector<std::byte> buf{};
     buf.resize(iph_.ihl() * 4 + tcph_.data_off() * 4 + payload.size());
@@ -399,7 +415,7 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
     tcph_.ack(false);
     tcph_.fin(false);
     tcph_.rst(false);
-
+    tcph_.options().clear();
     return written;
 }
 
@@ -444,9 +460,12 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
     if (tcph.syn()) {
         recv_.nxt = tcph.seqn() + 1;
         recv_.irs = tcph.seqn();
+        recv_.wnd = recv_mss_ * 3;
 
-        recv_.wnd = tcph.window();// I think this is correct? TODO: MAKE SURE
-        send_.wnd = send_mss_;
+        if (auto opt = tcph.mss(); opt.has_value()) {
+            send_mss_ = opt.value().mss;
+        }
+        send_.wnd = tcph_.window();
 
         // SEt ISS
         // TODO: use a better mechanism, just 10 for now
@@ -456,9 +475,11 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
             std::numeric_limits<std::uint32_t>::max());
         auto iss = dis(gen);
         // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
-        tcph_.window(static_cast<std::uint16_t>(send_.wnd));
+        tcph_.options().mss(recv_mss_);
+        tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
         tcph_.syn(true);
         tcph_.ack(true);
+
         send(tun, iss, 0);
 
         send_.iss = iss;
@@ -500,7 +521,7 @@ void TcpConnection::connect(Tun &tun,
     tcph_.dest_port(dport);// destination port, you'll need to pass this into connect()
     tcph_.seqn(iss);
     tcph_.ackn(0);// 0 on SYN
-    tcph_.data_off(5);// 5 * 4 = 20 bytes, no options
+    tcph_.options().mss(recv_mss_); // data_off is set in send()
     tcph_.syn(true);
     tcph_.window(init_window);
     tcph_.urg_ptr(0);
@@ -537,7 +558,7 @@ ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
 
     const auto bytes_copy = std::min(buf_size, recv_buf_.size());
     std::memcpy(buf, recv_buf_.data(), bytes_copy);
-    recv_buf_.erase(recv_buf_.begin(), recv_buf_.begin() + bytes_copy);
+    erase_recv_data(bytes_copy);
     return static_cast<ssize_t>(bytes_copy);
 }
 
@@ -554,7 +575,8 @@ ssize_t TcpConnection::write(const void *buf, const std::size_t buf_size)
     case TcpState::SYN_RCVD:
     case TcpState::ESTAB:
     case TcpState::CLOSE_WAIT: {
-        send_buf_.append_range(std::span<const std::byte>{ static_cast<const std::byte *>(buf), insert_bytes_n });
+        const std::span<const std::byte> data{ static_cast<const std::byte *>(buf), insert_bytes_n };
+        append_send_data(data);
         break;
     }
     default:

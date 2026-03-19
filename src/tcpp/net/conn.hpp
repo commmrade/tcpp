@@ -53,30 +53,26 @@ class Tcp;
 
 class TcpConnection
 {
-    friend class Tcp;
-    std::condition_variable recv_var_;// Notified when something is received
-    std::condition_variable conn_var_;// Notified when 3 way handshake is done (both active and passive)
+public:
+    TcpConnection() = default;
+    // Helpers
+    std::condition_variable &get_connect_var() { return conn_var_; }
+    std::condition_variable &get_recv_var() { return recv_var_; }
+    bool is_recv_empty() const { return recv_buf_.empty(); }
+    bool is_finished() const { return is_finished_; }
+    TcpState get_state() const { return state_; }
 
-    // Not tcp protocol things
-    // So I don't need to recreate ip header or tcp header each write
-    netparser::IpHeader iph_;
-    netparser::TcpHeader tcph_;
+    // "Userspace" kinda functions -------------------------------------
+    void shutdown(ShutdownType sht);
+    void close();
+    ssize_t read(void *buf, const std::size_t buf_size);
+    ssize_t write(const void *buf, const std::size_t buf_size);
 
-    // Tcp protocol stuff
-    SendSequence send_;
-    Buffer send_buf_;
-    ReceiveSequence recv_;
-    Buffer recv_buf_;// First element is SND.UNA, last is SND.UNA + SND.WND
-    TcpState state_;
-
-    // My MSS (what this host can send)
-    std::uint16_t send_mss_{ 536 };
-    // Their MSS (what that host can send
-    std::uint32_t recv_mss_{ 536 };
-
-    // Buffers and stuff
-    bool should_send_fin_{ false };// TODO: Get rid of this. This should be sent after all data in buffers is sent
-    bool is_finished_{ false };
+private:
+    void append_send_data(const std::span<const std::byte> data);
+    void append_recv_data(const std::span<const std::byte> data);
+    void erase_send_data(const std::size_t bytes_n);
+    void erase_recv_data(const std::size_t bytes_n);
 
     [[nodiscard]] bool validate_seq_n(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) const;
 
@@ -115,21 +111,31 @@ class TcpConnection
         const std::uint32_t daddr,
         const std::uint16_t dport);
 
-public:
-    TcpConnection() = default;
 
-    // Helpers
-    std::condition_variable &get_connect_var() { return conn_var_; }
-    std::condition_variable &get_recv_var() { return recv_var_; }
-    bool is_recv_empty() const { return recv_buf_.empty(); }
-    bool is_finished() const { return is_finished_; }
-    TcpState get_state() const { return state_; }
+    friend class Tcp;
+    std::condition_variable recv_var_;// Notified when something is received
+    std::condition_variable conn_var_;// Notified when 3 way handshake is done (both active and passive)
 
-    // "Userspace" kinda functions -------------------------------------
-    void shutdown(ShutdownType sht);
-    void close();
-    ssize_t read(void *buf, const std::size_t buf_size);
-    ssize_t write(const void *buf, const std::size_t buf_size);
+    // Not tcp protocol things
+    // So I don't need to recreate ip header or tcp header each write
+    netparser::IpHeader iph_;
+    netparser::TcpHeader tcph_;
+
+    // Tcp protocol stuff
+    SendSequence send_;
+    Buffer send_buf_;
+    ReceiveSequence recv_;
+    Buffer recv_buf_;// First element is SND.UNA, last is SND.UNA + SND.WND
+    TcpState state_;
+
+    // My MSS (what this host can send)
+    std::uint16_t send_mss_{ 536 };
+    // Their MSS (what that host can send
+    std::uint16_t recv_mss_{ 1460 };
+
+    // Buffers and stuff
+    bool should_send_fin_{ false };// TODO: Get rid of this. This should be sent after all data in buffers is sent
+    bool is_finished_{ false };
 };
 
 
