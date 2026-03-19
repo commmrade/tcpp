@@ -476,6 +476,7 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
         auto iss = dis(gen);
         // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
         tcph_.options().mss(recv_mss_);
+        tcph_.options().set_sack_perm();
         tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
         tcph_.syn(true);
         tcph_.ack(true);

@@ -360,7 +360,7 @@ public:
 
     std::optional<TcpSackPermOption> sack_perm() const { return sack_perm_option_; }
 
-    void sack_perm()
+    void set_sack_perm()
     {
         TcpSackPermOption opt{};
         sack_perm_option_ = std::move(opt);

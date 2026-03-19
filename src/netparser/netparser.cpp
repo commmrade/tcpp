@@ -391,27 +391,22 @@ std::pair<bool, std::size_t> TcpHeaderView::has_option_inner(const TcpOptionKind
     return { false, 0 };
 }
 
-TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes)
-{
-    parse(options_bytes);
-}
+TcpOptions::TcpOptions(const std::span<const std::byte> options_bytes) { parse(options_bytes); }
 
 void TcpOptions::parse(const std::span<const std::byte> options_bytes)
 {
-     std::size_t offset = 0;
+    std::size_t offset = 0;
     while (offset < options_bytes.size()) {
         auto kind_byte = options_bytes[offset];
         switch (kind_byte) {
         case static_cast<std::byte>(TcpOptionKind::WIN_SCALE): {
             const auto subp = options_bytes.subspan(offset);
             details::TcpWinScaleOptionInner wnscl{};
-            if (subp.size() < sizeof(wnscl)) {
-                throw std::runtime_error("Tcp options is ill-formed");
-            }
+            if (subp.size() < sizeof(wnscl)) { throw std::runtime_error("Tcp options is ill-formed"); }
             std::memcpy(&wnscl, subp.data(), sizeof(wnscl));
 
             win_scale_option_.emplace();
-            auto& temp_win_scale = win_scale_option_.value();
+            auto &temp_win_scale = win_scale_option_.value();
             temp_win_scale.kind = wnscl.kind;
             temp_win_scale.size = wnscl.size;
             temp_win_scale.shift_cnt = wnscl.shift_cnt;
@@ -422,13 +417,11 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
         case static_cast<std::byte>(TcpOptionKind::MSS): {
             const auto subsp = options_bytes.subspan(offset);
             details::TcpMssOptionInner mss{};
-            if (subsp.size() < sizeof(mss)) {
-                throw std::runtime_error("Tcp options is ill-formed");
-            }
+            if (subsp.size() < sizeof(mss)) { throw std::runtime_error("Tcp options is ill-formed"); }
             std::memcpy(&mss, subsp.data(), sizeof(mss));
 
             mss_option_.emplace();
-            auto& temp_mss = mss_option_.value();
+            auto &temp_mss = mss_option_.value();
             temp_mss.kind = mss.kind;
             temp_mss.size = mss.size;
             temp_mss.mss = ntohs(mss.mss);
@@ -443,13 +436,11 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
         case static_cast<std::byte>(TcpOptionKind::SACK_PERM): {
             const auto subsp = options_bytes.subspan(offset);
             details::TcpSackPermOptionInner sack{};
-            if (subsp.size() < sizeof(sack)) {
-                throw std::runtime_error("Tcp options is ill-formed");
-            }
+            if (subsp.size() < sizeof(sack)) { throw std::runtime_error("Tcp options is ill-formed"); }
             std::memcpy(&sack, subsp.data(), sizeof(sack));
 
             sack_perm_option_.emplace();
-            auto& temp_s = sack_perm_option_.value();
+            auto &temp_s = sack_perm_option_.value();
             temp_s.size = sack.size;
             temp_s.kind = sack.kind;
 
@@ -459,13 +450,11 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
         case static_cast<std::byte>(TcpOptionKind::TIMESTAMP): {
             const auto subsp = options_bytes.subspan(offset);
             details::TcpTimestampOptionInner ts{};
-            if (subsp.size() < sizeof(ts)) {
-                throw std::runtime_error("Tcp options is ill-formed");
-            }
+            if (subsp.size() < sizeof(ts)) { throw std::runtime_error("Tcp options is ill-formed"); }
             std::memcpy(&ts, subsp.data(), sizeof(ts));
 
             timestamp_option_.emplace();
-            auto& temp_ts = timestamp_option_.value();
+            auto &temp_ts = timestamp_option_.value();
             temp_ts.kind = ts.kind;
             temp_ts.size = ts.size;
             temp_ts.tv = ntohl(ts.tv);
@@ -478,62 +467,59 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
             // Stop parsing
             break;
         }
-        default: {
-            throw std::runtime_error("Not impl option. idk what to do");
-        }
+        default: { throw std::runtime_error("Not impl option. idk what to do"); }
         }
     }
 }
 
-std::vector<std::byte> TcpOptions::serialize() const {
+std::vector<std::byte> TcpOptions::serialize() const
+{
     const auto opts_size = options_size();
     std::vector<std::byte> bytes;
     bytes.resize(opts_size);
-    std::memset(bytes.data(), 0x01, opts_size); // In case there is padding, if there is not, it will be overwritten with options
+    // std::memset(bytes.data(), 0x01, opts_size); // In case there is padding, if there is not, it will be overwritten with options
 
     std::ptrdiff_t offset = 0;
     if (mss_option_.has_value()) {
-        const auto& mss = mss_option_.value();
-        const details::TcpMssOptionInner inner{mss.kind, mss.size, mss.mss};
+        const auto &mss = mss_option_.value();
+        const details::TcpMssOptionInner inner{ mss.kind, mss.size, mss.mss };
         std::memcpy(bytes.data(), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
     if (win_scale_option_.has_value()) {
-        const auto& wnscl = win_scale_option_.value();
-        const details::TcpWinScaleOptionInner inner{wnscl.kind, wnscl.size, wnscl.shift_cnt};
+        const auto &wnscl = win_scale_option_.value();
+        const details::TcpWinScaleOptionInner inner{ wnscl.kind, wnscl.size, wnscl.shift_cnt };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
     if (sack_perm_option_.has_value()) {
-        const auto& sackperm = sack_perm_option_.value();
-        const details::TcpSackPermOptionInner inner{sackperm.kind, sackperm.size};
+        const auto &sackperm = sack_perm_option_.value();
+        const details::TcpSackPermOptionInner inner{ sackperm.kind, sackperm.size };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
     if (timestamp_option_.has_value()) {
-        const auto& timestamp = timestamp_option_.value();
-        const details::TcpTimestampOptionInner inner{timestamp.kind, timestamp.size, timestamp.tv, timestamp.tr};
+        const auto &timestamp = timestamp_option_.value();
+        const details::TcpTimestampOptionInner inner{ timestamp.kind, timestamp.size, timestamp.tv, timestamp.tr };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
+    }
+
+    if (offset % 4 != 0) {
+        const std::size_t to_fill_n = static_cast<std::size_t>(offset) % 4;
+        std::memset(std::next(bytes.data(), offset), 0x01, to_fill_n);// Pad with NO-OP options
     }
 
     return bytes;
 }
 
-std::size_t TcpOptions::options_size() const {
+std::size_t TcpOptions::options_size() const
+{
     std::size_t res = 0;
-    if (mss_option_.has_value()) {
-        res += sizeof(details::TcpMssOptionInner);
-    }
-    if (win_scale_option_.has_value()) {
-        res += sizeof(details::TcpWinScaleOptionInner);
-    }
-    if (sack_perm_option_.has_value()) {
-        res += sizeof(details::TcpSackPermOptionInner);
-    }
-    if (timestamp_option_.has_value()) {
-        res += sizeof(details::TcpTimestampOptionInner);
-    }
+    if (mss_option_.has_value()) { res += sizeof(details::TcpMssOptionInner); }
+    if (win_scale_option_.has_value()) { res += sizeof(details::TcpWinScaleOptionInner); }
+    if (sack_perm_option_.has_value()) { res += sizeof(details::TcpSackPermOptionInner); }
+    if (timestamp_option_.has_value()) { res += sizeof(details::TcpTimestampOptionInner); }
     res += (res % 4);
     return res;
 }
@@ -546,9 +532,7 @@ TcpHeader::TcpHeader(const TcpHeaderView &tcph)
 
     auto options_size = data_off() * 4 - TCPH_MIN_SIZE;
     const auto options_data = data.subspan(TCPH_MIN_SIZE, options_size);
-    if (!options_data.empty()) {
-        options_.parse(options_data);
-    }
+    if (!options_data.empty()) { options_.parse(options_data); }
 }
 
 std::uint16_t TcpHeader::source_port() const { return ntohs(hdr_.source); }
@@ -676,8 +660,10 @@ std::vector<std::byte> TcpHeader::serialize()
     std::ptrdiff_t offset = 0;
     std::memcpy(res.data(), &hdr_, TCPH_MIN_SIZE);
     offset += TCPH_MIN_SIZE;
-    std::memcpy(std::next(res.data(), offset), options_bytes.data(), options_bytes.size());
-    offset += options_bytes.size();
+    if (!options_bytes.empty()) {
+        std::memcpy(std::next(res.data(), offset), options_bytes.data(), options_bytes.size());
+        offset += options_bytes.size();
+    }
 
     return res;
 }
