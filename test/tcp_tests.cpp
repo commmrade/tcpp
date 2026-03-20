@@ -197,6 +197,82 @@ TEST_CASE("Options not present return nullopt", "[TcpHeaderView]")
     REQUIRE_FALSE(tcph.win_scale().has_value());
 }
 
+TEST_CASE("TcpHeader round-trip: construct with options, serialize, parse back", "[TcpHeader]")
+{
+    // Build
+    netparser::TcpHeader tcph{};
+    tcph.source_port(32980);
+    tcph.dest_port(8090);
+    tcph.seqn(0x761fb87a);
+    tcph.ackn(0);
+    tcph.syn(true);
+    tcph.window(64240);
+    tcph.checksum(0);
+    tcph.urg_ptr(0);
+
+    tcph.options().mss(1460);
+    tcph.options().set_sack_perm();
+    tcph.options().timestamp(0x7e7d3817, 0x00000000);
+    tcph.options().win_scale(10);
+
+    // Serialize
+    const auto bytes = tcph.serialize();
+    REQUIRE_FALSE(bytes.empty());
+
+    // Parse back via view
+    const netparser::TcpHeaderView view{ bytes };
+
+    SECTION("Fixed fields round-trip")
+    {
+        REQUIRE(view.source_port() == 32980);
+        REQUIRE(view.dest_port() == 8090);
+        REQUIRE(view.seqn() == 0x761fb87a);
+        REQUIRE(view.ackn() == 0);
+        REQUIRE(view.syn());
+        REQUIRE(view.window() == 64240);
+    }
+
+    SECTION("MSS option round-trips")
+    {
+        auto mss = view.mss();
+        REQUIRE(mss.has_value());
+        REQUIRE(mss->kind == 2);
+        REQUIRE(mss->size == 4);
+        REQUIRE(mss->mss == 1460);
+    }
+
+    SECTION("SACK permitted option round-trips")
+    {
+        auto sack = view.sack_perm();
+        REQUIRE(sack.has_value());
+        REQUIRE(sack->kind == 4);
+        REQUIRE(sack->size == 2);
+    }
+
+    SECTION("Timestamp option round-trips")
+    {
+        auto ts = view.timestamp();
+        REQUIRE(ts.has_value());
+        REQUIRE(ts->tv == 0x7e7d3817);
+        REQUIRE(ts->tr == 0x00000000);
+    }
+
+    SECTION("Window scale option round-trips")
+    {
+        auto ws = view.win_scale();
+        REQUIRE(ws.has_value());
+        REQUIRE(ws->shift_cnt == 10);
+    }
+
+    SECTION("has_option is consistent")
+    {
+        REQUIRE(view.has_option(netparser::TcpOptionKind::MSS));
+        REQUIRE(view.has_option(netparser::TcpOptionKind::SACK_PERM));
+        REQUIRE(view.has_option(netparser::TcpOptionKind::TIMESTAMP));
+        REQUIRE(view.has_option(netparser::TcpOptionKind::WIN_SCALE));
+    }
+}
+
 TEST_CASE("Options not present return nullopt owned", "[TcpHeader]")
 {
     constexpr std::array<std::byte, 20> plain_tcp_header{
@@ -213,7 +289,10 @@ TEST_CASE("Options not present return nullopt owned", "[TcpHeader]")
 
     const netparser::TcpHeaderView tcph_view{plain_tcp_header};
     const netparser::TcpHeader tcph{tcph_view};
-    REQUIRE_FALSE(tcph.has_options());
+    REQUIRE(!tcph.options().has_option(netparser::TcpOptionKind::MSS));
+    REQUIRE(!tcph.options().has_option(netparser::TcpOptionKind::TIMESTAMP));
+    REQUIRE(!tcph.options().has_option(netparser::TcpOptionKind::WIN_SCALE));
+    REQUIRE(!tcph.options().has_option(netparser::TcpOptionKind::SACK_PERM));
 }
 
 TEST_CASE("Malformed option length does not crash", "[TcpHeaderView]")

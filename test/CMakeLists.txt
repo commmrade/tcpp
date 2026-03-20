@@ -34,6 +34,10 @@ set_tests_properties(cli.version_matches PROPERTIES PASS_REGULAR_EXPRESSION "${P
 add_executable(tests tests.cpp
         ip_tests.cpp
         tcp_tests.cpp)
+
+set(SPDLOG_FMT_EXTERNAL ON)
+target_link_libraries(tests PRIVATE fmt::fmt)
+
 target_link_libraries(
         tests
         PRIVATE tcpp::tcpp_warnings

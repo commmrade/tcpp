@@ -191,27 +191,36 @@ enum class TcpOptionKind
 struct TcpMssOption
 {
     TcpMssOption() = default;
-    explicit TcpMssOption(const details::TcpMssOptionInner inner) : kind(inner.kind), size(inner.size), mss(ntohs(inner.mss)) {}
-    std::uint8_t kind;
-    std::uint8_t size;
-    std::uint16_t mss;
+
+    explicit TcpMssOption(const details::TcpMssOptionInner inner)
+        : kind(inner.kind), size(inner.size), mss(ntohs(inner.mss)) {}
+
+    std::uint8_t kind{ 2 };
+    std::uint8_t size{ 4 };
+    std::uint16_t mss{};
 };
 
 
 struct TcpSackPermOption
 {
     TcpSackPermOption() = default;
-    explicit TcpSackPermOption(const details::TcpSackPermOptionInner inner) : kind(inner.kind), size(inner.size) {}
-    std::uint8_t kind;
-    std::uint8_t size;
+
+    explicit TcpSackPermOption(const details::TcpSackPermOptionInner inner)
+        : kind(inner.kind), size(inner.size) {}
+
+    std::uint8_t kind{ 4 };
+    std::uint8_t size{ 2 };
 };
 
 struct TcpTimestampOption
 {
     TcpTimestampOption() = default;
-    explicit TcpTimestampOption(const details::TcpTimestampOptionInner inner) : kind(inner.kind), size(inner.size), tv(ntohl(inner.tv)), tr(ntohl(inner.tr)) {}
-    std::uint8_t kind;
-    std::uint8_t size;
+
+    explicit TcpTimestampOption(const details::TcpTimestampOptionInner inner)
+        : kind(inner.kind), size(inner.size), tv(ntohl(inner.tv)), tr(ntohl(inner.tr)) {}
+
+    std::uint8_t kind{ 8 };
+    std::uint8_t size{ 10 };
     std::uint32_t tv;
     std::uint32_t tr;
 };
@@ -219,15 +228,19 @@ struct TcpTimestampOption
 struct TcpWinScaleOption
 {
     TcpWinScaleOption() = default;
-    explicit TcpWinScaleOption(const details::TcpWinScaleOptionInner inner) : kind(inner.kind), size(inner.size), shift_cnt(inner.shift_cnt) {}
-    std::uint8_t kind;
-    std::uint8_t size;
+
+    explicit TcpWinScaleOption(const details::TcpWinScaleOptionInner inner)
+        : kind(inner.kind), size(inner.size), shift_cnt(inner.shift_cnt) {}
+
+    std::uint8_t kind{ 3 };
+    std::uint8_t size{ 3 };
     std::uint8_t shift_cnt;
 };
 
 class TcpHeaderView
 {
     const std::span<const std::byte> bytes_;
+
 public:
     TcpHeaderView() = default;
     explicit TcpHeaderView(const std::span<const std::byte> bytes);
@@ -257,15 +270,16 @@ public:
     [[nodiscard]] std::span<const std::byte> data() const { return bytes_; }
 
     bool has_option(const TcpOptionKind kind) const;
-    std::optional<TcpMssOption> mss() const;
-    std::optional<TcpSackPermOption> sack_perm() const;
-    std::optional<TcpTimestampOption> timestamp() const;
-    std::optional<TcpWinScaleOption> win_scale() const;
+    [[nodiscard]] std::optional<TcpMssOption> mss() const;
+    [[nodiscard]] std::optional<TcpSackPermOption> sack_perm() const;
+    [[nodiscard]] std::optional<TcpTimestampOption> timestamp() const;
+    [[nodiscard]] std::optional<TcpWinScaleOption> win_scale() const;
+
 private:
-    std::pair<bool, std::size_t> has_option_inner(const TcpOptionKind kind) const;
+    [[nodiscard]] std::pair<bool, std::size_t> has_option_inner(const TcpOptionKind kind) const;
 
     template<typename T, typename T_INNER, TcpOptionKind KIND> requires std::constructible_from<T, T_INNER>
-    std::optional<T> option() const
+    [[nodiscard]] std::optional<T> option() const
     {
         auto [has, pos] = has_option_inner(KIND);
         if (!has) { return std::nullopt; }
@@ -296,68 +310,78 @@ private:
     std::optional<TcpWinScaleOption> win_scale_option_;
     std::optional<TcpSackPermOption> sack_perm_option_;
     std::optional<TcpTimestampOption> timestamp_option_;
+
 public:
-    bool has_option(const TcpOptionKind kind) const
+    TcpOptions() = default;
+    explicit TcpOptions(const std::span<const std::byte> options_bytes);
+    void parse(const std::span<const std::byte> options_bytes);
+
+    [[nodiscard]] std::vector<std::byte> serialize() const;
+
+    [[nodiscard]] std::size_t options_size() const;
+
+    void clear()
+    {
+        mss_option_.reset();
+        win_scale_option_.reset();
+        sack_perm_option_.reset();
+        timestamp_option_.reset();
+    }
+
+    [[nodiscard]] bool has_option(const TcpOptionKind kind) const
     {
         switch (kind) {
-        case TcpOptionKind::WIN_SCALE: {
-            return win_scale_option_.has_value();
-        }
-        case TcpOptionKind::MSS: {
-            return mss_option_.has_value();
-        }
-        case TcpOptionKind::TIMESTAMP: {
-            return timestamp_option_.has_value();
-        }
-        case TcpOptionKind::SACK_PERM: {
-            return sack_perm_option_.has_value();
-        }
+        case TcpOptionKind::WIN_SCALE: { return win_scale_option_.has_value(); }
+        case TcpOptionKind::MSS: { return mss_option_.has_value(); }
+        case TcpOptionKind::TIMESTAMP: { return timestamp_option_.has_value(); }
+        case TcpOptionKind::SACK_PERM: { return sack_perm_option_.has_value(); }
         default:
-            assert(false && "Why would you even get here?");
+            return false;
         }
     }
 
-    std::optional<TcpWinScaleOption> win_scale() const
+    [[nodiscard]] std::optional<TcpWinScaleOption> win_scale() const { return win_scale_option_; }
+
+    void win_scale(const std::uint8_t shift)
     {
-        return win_scale_option_;
-    }
-    void win_scale(TcpWinScaleOption win_scale)
-    {
-        win_scale_option_ = std::move(win_scale);
+        TcpWinScaleOption opt{};
+        opt.shift_cnt = shift;
+        win_scale_option_ = std::move(opt);
     }
 
-    std::optional<TcpMssOption> mss() const
+    [[nodiscard]] std::optional<TcpMssOption> mss() const { return mss_option_; }
+
+    void mss(const std::uint16_t mss)
     {
-        return mss_option_;
+        TcpMssOption opt;
+        opt.mss = mss;
+        mss_option_ = std::move(opt);
     }
-    void mss(TcpMssOption mss)
+
+    [[nodiscard]] std::optional<TcpSackPermOption> sack_perm() const { return sack_perm_option_; }
+
+    void set_sack_perm()
     {
-        mss_option_ = std::move(mss);
+        TcpSackPermOption opt{};
+        sack_perm_option_ = std::move(opt);
     }
-    std::optional<TcpSackPermOption> sack_perm() const
+
+    [[nodiscard]] std::optional<TcpTimestampOption> timestamp() const { return timestamp_option_; }
+
+    void timestamp(const std::uint32_t tv, const std::uint32_t tr)
     {
-        return sack_perm_option_;
+        TcpTimestampOption opt{};
+        opt.tv = tv;
+        opt.tr = tr;
+        timestamp_option_ = std::move(opt);
     }
-    void sack_perm(TcpSackPermOption sack_p)
-    {
-        sack_perm_option_ = std::move(sack_p);
-    }
-    std::optional<TcpTimestampOption> timestamp() const
-    {
-        return timestamp_option_;
-    }
-    void timestamp(TcpTimestampOption ts)
-    {
-        timestamp_option_ = std::move(ts);
-    }
-    explicit TcpOptions(const std::span<const std::byte> options_bytes);
 };
 
 class TcpHeader
 {
 private:
     tcphdr hdr_{};
-    std::unique_ptr<TcpOptions> options_;
+    TcpOptions options_;
 public:
     TcpHeader() = default;
     explicit TcpHeader(const TcpHeaderView &tcph);
@@ -414,22 +438,10 @@ public:
     [[nodiscard]] std::uint16_t urg_ptr() const;
     void urg_ptr(const std::uint16_t ptr);
 
-    std::vector<std::byte> serialize() const;
+    [[nodiscard]] std::vector<std::byte> serialize();
 
-    bool has_options() const
-    {
-        return options_ != nullptr;
-    }
-    TcpOptions& options()
-    {
-        assert(options_);
-        return *options_;
-    }
-    const TcpOptions& options() const
-    {
-        assert(options_);
-        return *options_;
-    }
+    [[nodiscard]] TcpOptions &options() { return options_; }
+    [[nodiscard]] const TcpOptions &options() const { return options_; }
 };
 }// namespace netparser
 

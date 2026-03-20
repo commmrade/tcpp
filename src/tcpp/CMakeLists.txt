@@ -2,8 +2,11 @@ add_executable(main main.cpp
         tun.cpp
         tun.hpp
         util.hpp
-        tcp.cpp
-        tcp.hpp
+        net/tcp.cpp
+        net/tcp.hpp
+        net/conn.cpp
+        net/conn.hpp
+        net/common.hpp
 )
 
 add_custom_target(setcap
