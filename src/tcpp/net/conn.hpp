@@ -111,6 +111,8 @@ private:
         const std::uint32_t daddr,
         const std::uint16_t dport);
 
+    void update_timer_on_send(const std::uint32_t seq_n);
+    void check_timer_on_ack(const std::uint32_t ack_n);
 
     friend class Tcp;
     std::condition_variable recv_var_;// Notified when something is received
@@ -127,6 +129,18 @@ private:
     ReceiveSequence recv_;
     Buffer recv_buf_;// First element is SND.UNA, last is SND.UNA + SND.WND
     TcpState state_;
+
+    // Timer things (all in MS) ----
+    std::int64_t send_at_{-1}; // Time at which oldest UNACKed segment was sent.
+    std::uint32_t send_seq_at_; // Seq n at which send_at_ segmetn was sent
+
+    std::uint64_t rtt_ms_{};
+    std::uint64_t srtt_{}; // Smothed round-trip time
+    std::uint64_t rttvar_{}; // round-trip time variation
+    std::uint64_t rto_ms_{100}; // Default RTO is 1 (1000ms) second, as per RFC 6298
+
+    int backoff_factor_{1};
+    // timers ----
 
     // My MSS (what this host can send)
     std::uint16_t send_mss_{ 536 };
