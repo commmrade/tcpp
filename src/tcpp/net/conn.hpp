@@ -111,8 +111,11 @@ private:
         const std::uint32_t daddr,
         const std::uint16_t dport);
 
-    void update_timer_on_send(const std::uint32_t seq_n);
-    void check_timer_on_ack(const std::uint32_t ack_n);
+    void update_rtt_on_send(const std::uint32_t seq_n);
+    void check_rtt_on_ack(const std::uint32_t ack_n);
+
+    void update_timer_on_send();
+    void check_timer_tick(Tun& tun, const std::uint32_t ack_n);
 
     friend class Tcp;
     std::condition_variable recv_var_;// Notified when something is received
@@ -131,16 +134,22 @@ private:
     TcpState state_;
 
     // Timer things (all in MS) ----
-    std::int64_t send_at_{-1}; // Time at which oldest UNACKed segment was sent.
+    std::optional<std::int64_t> send_at_; // Time at which oldest UNACKed segment was sent.
     std::uint32_t send_seq_at_; // Seq n at which send_at_ segmetn was sent
 
-    std::uint64_t rtt_ms_{};
-    std::uint64_t srtt_{}; // Smothed round-trip time
-    std::uint64_t rttvar_{}; // round-trip time variation
-    std::uint64_t rto_ms_{100}; // Default RTO is 1 (1000ms) second, as per RFC 6298
+    std::uint32_t rtt_ms_{};
+    std::uint32_t srtt_{}; // Smothed round-trip time
+    std::uint32_t rttvar_{}; // round-trip time variation
+    std::uint32_t rto_ms_{1000}; // Default RTO is 1 (1000ms) second, as per RFC 6298
 
-    int backoff_factor_{1};
     // timers ----
+    // Retransmit. things (IN MS) -----
+    std::optional<std::int64_t> timer_start_{};
+    std::uint32_t timer_start_seq_at_{};
+    std::int64_t timer_expire_at_{-1};
+    bool retransmit_fin_test_{false};
+
+    // retransmissions -----
 
     // My MSS (what this host can send)
     std::uint16_t send_mss_{ 536 };

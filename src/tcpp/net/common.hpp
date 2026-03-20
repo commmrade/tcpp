@@ -56,7 +56,7 @@ template<> struct std::hash<Quad>
 {
     std::size_t operator()(const Quad &quad) const noexcept
     {
-        std::size_t hash;
+        std::size_t hash{};
         hash_combine(hash, quad.src_addr);
         hash_combine(hash, quad.src_port);
         hash_combine(hash, quad.dst_addr);

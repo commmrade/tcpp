@@ -82,15 +82,13 @@ bool TcpConnection::handle_syn(Tun &tun, const netparser::TcpHeaderView &tcph, s
 
 bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
 {
-    // TODO: for now, check timers here
-    std::println("got ack: {}", tcph.ackn());
-    check_timer_on_ack(tcph.ackn());
-
+    check_rtt_on_ack(tcph.ackn());
 
     switch (state_) {
     case TcpState::SYN_RCVD: {
+        std::println("Ack is invalid: una {} < ackn {} <= nxt {}", send_.una, tcph.ackn(), send_.nxt);
         if (!is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
-            std::println("ACK IS NOT VALID");
+            std::println("ACK IS NOT VALID. RST SET HERE");
             tcph_.rst(true);
             send(tun, tcph.ackn(), 0);
         }
@@ -100,6 +98,7 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
         send_.wnd = tcph.window();
         send_.wl1 = tcph.seqn();
         send_.wl2 = tcph.ackn();
+        // TODO: imagine ACK after SYNACK is lost, we might wanna fall through if this is the case, so we can process payload. or should we fall?
         break;
     }
     case TcpState::ESTAB: {
@@ -150,6 +149,8 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
     default:
         break;// TODO
     }
+
+    check_timer_tick(tun, tcph.ackn());
     return true;
 }
 
@@ -242,7 +243,7 @@ bool TcpConnection::handle_syn_sent(Tun &tun,
         if (wrapping_lt(tcph.ackn() - 1, send_.iss) || tcph.ackn() > send_.nxt) {
             tcph_.syn(false);// it was probably true because of connect()
             tcph_.rst(true);
-            std::println("SENDING RST");
+            std::println("SENDING RST IN SYN SENT");
             send(tun, tcph.ackn(), 0);
             return false;// return from processing
         }
@@ -349,6 +350,7 @@ bool TcpConnection::handle_send(Tun &tun)
     // TODO: cong. control things. basically calculate how many bytes to send
     if (!send_buf_.empty()) {
         const auto in_flight_n = send_.nxt - send_.una;
+        // std::println("in flight: {} - {}", send_.nxt, send_.una);
         const auto bytes_to_send = std::min(static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n);
         if (bytes_to_send) {
             tcph_.ack(true);
@@ -366,8 +368,8 @@ bool TcpConnection::handle_close(Tun &tun)
         tcph_.fin(true);
         tcph_.ack(true);
         send(tun, send_.nxt, 0);
+        retransmit_fin_test_ = true;
 
-        // TODO: make sure it is retransmitted
         state_ = TcpState::FIN_WAIT_1;
         should_send_fin_ = false;
     }
@@ -376,6 +378,8 @@ bool TcpConnection::handle_close(Tun &tun)
 
 void TcpConnection::on_tick(Tun &tun)
 {
+    check_timer_tick(tun, send_.una);
+
     if (!handle_send(tun)) { return; }
 
     // do_close is second, because if we are done sending in SEND (buffers are empty), we can try to issue a FIN
@@ -385,7 +389,10 @@ void TcpConnection::on_tick(Tun &tun)
 ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
 {
     // TODO!!!!!!: SHOULD SEND FROM "seqn_from". but rn seqn_from equals to start of send buffer
-    const std::span<const std::byte> payload{ send_buf_.data() + (seqn_from - send_.una), max_size };
+    const auto send_buf_idx = static_cast<std::int64_t>(seqn_from) - static_cast<std::int64_t>(send_.una);
+    std::println("Send buf idx: {}", send_buf_idx);
+    assert(send_buf_idx >= 0);
+    const std::span<const std::byte> payload{ send_buf_.data() + send_buf_idx, max_size };
 
     iph_.total_len(
         static_cast<std::uint16_t>(iph_.ihl() * 4 + (netparser::TCPH_MIN_SIZE + tcph_.options().options_size()) +
@@ -425,10 +432,17 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
     // If not measuring currently
     const auto data_size = payload.size() + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
     if (data_size > 0) {
-        update_timer_on_send(seqn_from);
+        if (wrapping_gt(seqn_from, send_.nxt - 1)) {
+            // Karn algorithm says that you shouldn't measure RTT on retransmitted segments
+            update_rtt_on_send(seqn_from);
+        }
+        update_timer_on_send();
     }
 
-    send_.nxt += payload.size() + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
+    if (wrapping_gt(seqn_from + static_cast<std::uint32_t>(data_size), send_.nxt - 1)) {
+        send_.nxt += seqn_from + data_size - send_.nxt; // maybe + 1?
+    }
+
     tcph_.syn(false);
     tcph_.ack(false);
     tcph_.fin(false);
@@ -468,7 +482,7 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
     // Second, check for an ACK:
     if (tcph.ack()) {
         // ACK shouldn't be set in initial SYN segment
-
+        std::println("RST IS SET IN ACCEPT");
         tcph_.rst(true);
         send(tun, tcph.ackn(), 0);
         return;
@@ -552,37 +566,31 @@ void TcpConnection::connect(Tun &tun,
     state_ = TcpState::SYN_SENT;
 }
 
-void TcpConnection::update_timer_on_send(const std::uint32_t seq_n)
+void TcpConnection::update_rtt_on_send(const std::uint32_t seq_n)
 {
-    // TODO: make sure it is not a retrans segment
     send_seq_at_ = seq_n;
-    // TODO: make sure it is not resent?
-    send_at_ = std::chrono::steady_clock::now().time_since_epoch().count();
-    std::println("Send at: {}", send_at_);
+    send_at_ = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::println("Send at: {}", send_at_.value());
 }
 
-void TcpConnection::check_timer_on_ack(const std::uint32_t ack_n)
+void TcpConnection::check_rtt_on_ack(const std::uint32_t ack_n)
 {
-    if (send_at_ > 0 && ack_n > send_seq_at_) {
-        send_at_ = -1; // reset send_at time
+    if (send_at_.has_value() && wrapping_gt(ack_n, send_seq_at_)) {
+        const std::int64_t cur_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        const std::int64_t res = cur_time - send_at_.value();// cur. rtt
 
-        // check that we are measuring rtt currently
-        const std::int64_t cur_time = std::chrono::steady_clock::now().time_since_epoch().count();
-        const std::uint64_t res = (cur_time - send_at_) / 1'000'000; // cur. rtt
-
-        static constexpr std::uint64_t GRAN_MS = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::duration(1)).count();
+        static constexpr std::uint32_t GRAN_MS = 1;
         if (rtt_ms_ == 0) {
             // First measurement
-            srtt_ = static_cast<std::uint64_t>(res);
-            rttvar_ = static_cast<std::uint64_t>(res / 2);
+            srtt_ = static_cast<std::uint32_t>(res);
+            rttvar_ = static_cast<std::uint32_t>(res / 2);
         } else {
             // Following measurements
             static constexpr double ALPHA = 1.0 / 8.0;
             static constexpr double BETA = 1.0 / 4.0;
-            rttvar_ = static_cast<std::uint64_t>((1.0 - BETA) * static_cast<double>(rttvar_) + BETA * std::abs(
+            rttvar_ = static_cast<std::uint32_t>((1.0 - BETA) * static_cast<double>(rttvar_) + BETA * std::abs(
                                                      static_cast<double>(srtt_) - static_cast<double>(res)));
-            srtt_ = static_cast<std::uint64_t>((1.0 - ALPHA) * static_cast<double>(srtt_) + ALPHA * static_cast<double>(
+            srtt_ = static_cast<std::uint32_t>((1.0 - ALPHA) * static_cast<double>(srtt_) + ALPHA * static_cast<double>(
                                                    res));
         }
         rto_ms_ = srtt_ + std::max(GRAN_MS, 4 * rttvar_);
@@ -590,10 +598,94 @@ void TcpConnection::check_timer_on_ack(const std::uint32_t ack_n)
         // then the RTO SHOULD be rounded up to 1 second
         if (rto_ms_ < 1000) { rto_ms_ = 1000; }
 
-        rtt_ms_ = res;
-        assert(rtt_ms_); // it shouldn't be 0, otherwise "initial RTT measurement" is broken
+        rtt_ms_ = static_cast<std::uint32_t>(res);
+        assert(rtt_ms_);// it shouldn't be 0, otherwise "initial RTT measurement" is broken
 
+        send_at_.reset();
         std::println("RTT IS {}, SRTT IS {}, RTTVAR IS {}, RTO IS {}", rtt_ms_, srtt_, rttvar_, rto_ms_);
+    }
+}
+
+void TcpConnection::update_timer_on_send()
+{
+    if (!timer_start_.has_value()) {
+        const auto cur_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        timer_start_.emplace(cur_time);// Start timer
+        timer_expire_at_ = cur_time + static_cast<std::int64_t>(rto_ms_);// It expires at RTO
+        timer_start_seq_at_ = send_.una;
+        std::println("Armed timer until {}. Now is {}. timer seq {}", timer_expire_at_, cur_time, timer_start_seq_at_);
+        // then i need to check timer on ack
+    }
+}
+
+void TcpConnection::check_timer_tick(Tun& tun, const std::uint32_t ack_n)
+{
+    if (timer_start_.has_value()) {
+        const auto cur_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (ack_n == send_.nxt) {
+            std::println("All outstanding data ACKED. Disable timer");
+            // (5.2) When all outstanding data has been acknowledged, turn off the retransmission timer.
+            timer_start_.reset();// Disable timer;
+        } else if (wrapping_gt(ack_n, timer_start_seq_at_)) {
+            // Window was moved, restart timer
+            // (5.3) When an ACK is received that acknowledges new data, restart the retransmission timer so that it will expire
+            // after RTO seconds (for the current value of RTO).
+            std::println("Window moved. Restart the timer");
+            timer_start_ = cur_time_ms;
+            timer_expire_at_ = cur_time_ms + static_cast<std::int64_t>(rto_ms_);
+            timer_start_seq_at_ = ack_n;// una is now at ACK Number
+
+            // TOOD: reset backoff and RTO shit i guess?
+            // Reset values, since timer is restarted
+        } else {
+            // timer is neither updated nor disabled
+            if (cur_time_ms >= timer_expire_at_) {
+                // Retransmission should happen
+                send_at_.reset(); // Must not measure on retransmits
+
+                // (5.4) Retransmit the earliest segment that has not been acknowledged by the TCP receiver.
+                const auto bytes_to_send = std::min(static_cast<std::size_t>(send_mss_), send_buf_.size()); // it looks like repacketization ahh thing
+                // For now retransmit everything inside window (not bigger than MSS)
+                if (bytes_to_send || retransmit_fin_test_) {
+                    std::println("RETRANSMITTING after {} ms!!!!!!!!!!!!", rto_ms_);
+
+                    // TODO: THIS IS TEMP, UNTIL I HAVE segemtnation
+                    if (retransmit_fin_test_) {
+                        tcph_.fin(true);
+                    }
+
+                    tcph_.ack(true);
+                    send(tun, send_.una, bytes_to_send);
+                }
+
+                // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
+                // maximum value discussed in (2.5) above may be used to provide
+                // an upper bound to this doubling operation.
+                rto_ms_ = rto_ms_ * 2;
+                // rto_ms_ = rto_ms_ * static_cast<std::size_t>(backoff_factor_);
+
+                std::println("TIMER EXPIRED with rto now: {}", rto_ms_);
+                // These values are likely bogus after several backoffs (3)
+                if (rto_ms_ > 10000) {
+                    srtt_ = 0;
+                    rttvar_ = 0;
+                }
+                if (rto_ms_ > 60000) {
+                    rto_ms_ = 60000; // Upper bound
+                }
+
+                //  (5.6) Start the retransmission timer, such that it expires after RTO
+                //  seconds
+                timer_start_ = cur_time_ms;
+                timer_expire_at_ = cur_time_ms + static_cast<std::int64_t>(rto_ms_);
+                // TOOD: max value for rto (about 60 secs)
+                timer_start_seq_at_ = send_.una;
+
+                // TODO: handle 5.7 (ABOUT SYN SEGMENTS)
+            }
+        }
     }
 }
 
