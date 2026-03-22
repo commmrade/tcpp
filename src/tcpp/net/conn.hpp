@@ -83,8 +83,9 @@ private:
     bool handle_urg(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) { return true; }
     bool handle_seg_text(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
     bool handle_fin(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
-    bool handle_syn_sent(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
 
+    bool handle_segment_syn_sent(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
+    bool handle_segment_other(Tun& tun, const netparser::TcpHeaderView& tcph, std::span<const std::byte> payload);
     void on_packet(Tun &tun,
         const netparser::IpHeaderView &iph,
         const netparser::TcpHeaderView &tcph,
@@ -111,11 +112,15 @@ private:
         const std::uint32_t daddr,
         const std::uint16_t dport);
 
-    void update_rtt_on_send(const std::uint32_t seq_n);
-    void check_rtt_on_ack(const std::uint32_t ack_n);
+    void start_measure_rtt(const std::uint32_t seq_n);
+    void stop_measure_rtt();
+    void measure_rtt(const std::uint32_t ack_n);
 
-    void update_timer_on_send();
-    void check_timer_tick(Tun& tun, const std::uint32_t ack_n);
+    void start_timer(const std::uint32_t seq_n);
+    void stop_timer();
+    void handle_timer_retransmit(Tun& tun);
+
+    void update_timer(Tun& tun, const std::uint32_t ack_n);
 
     friend class Tcp;
     std::condition_variable recv_var_;// Notified when something is received
