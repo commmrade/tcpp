@@ -586,10 +586,12 @@ void TcpConnection::connect(Tun &tun,
 
 void TcpConnection::start_measure_rtt(const std::uint32_t seq_n)
 {
-    send_seq_at_ = seq_n;
-    send_at_ = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-    std::println("Send at: {}", send_at_.value());
+    if (!send_at_.has_value()) {
+        send_seq_at_ = seq_n;
+        send_at_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        std::println("Send at: {}", send_at_.value());
+    }
 }
 
 void TcpConnection::stop_measure_rtt() { send_at_.reset(); }
