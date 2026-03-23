@@ -85,7 +85,7 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
     measure_rtt(tcph.ackn());
 
     switch (state_) {
-    case TcpState::SYN_RCVD: {
+    case TcpState::SYN_RCVD: { // got ACK for our SYNACK
         std::println("Ack is invalid: una {} < ackn {} <= nxt {}", send_.una, tcph.ackn(), send_.nxt);
         if (!is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
             std::println("ACK IS NOT VALID. RST SET HERE");
@@ -98,6 +98,8 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
         send_.wnd = tcph.window();
         send_.wl1 = tcph.seqn();
         send_.wl2 = tcph.ackn();
+
+        retransmit_syn_test_ = false;
         // TODO: imagine ACK after SYNACK is lost, we might wanna fall through if this is the case, so we can process payload. or should we fall?
         break;
     }
@@ -242,7 +244,6 @@ bool TcpConnection::handle_segment_syn_sent(Tun &tun,
     if (tcph.ack()) {
         std::println("{} {}. {} {}", tcph.ackn() - 1, send_.iss, tcph.ackn(), send_.nxt);
         if (wrapping_lt(tcph.ackn() - 1, send_.iss) || tcph.ackn() > send_.nxt) {
-            tcph_.syn(false);// it was probably true because of connect()
             tcph_.rst(true);
             std::println("SENDING RST IN SYN SENT");
             send(tun, tcph.ackn(), 0);
@@ -266,8 +267,6 @@ bool TcpConnection::handle_segment_syn_sent(Tun &tun,
     assert((is_ack_acceptable || !tcph.ack()) && !tcph.rst());
     // This step should be reached only if the ACK is ok, or there is no ACK, and the segment did not contain a RST.
     if (tcph.syn()) {
-        // TODO: read MSS and shit setup vars
-
         recv_.nxt = tcph.seqn() + 1;
         recv_.irs = tcph.seqn();
         if (tcph.ack()) { send_.una = tcph.ackn(); }
@@ -293,6 +292,8 @@ bool TcpConnection::handle_segment_syn_sent(Tun &tun,
         send_.wnd = tcph.window();
         send_.wl1 = tcph.seqn();
         send_.wl2 = tcph.ackn();
+
+        retransmit_syn_test_ = false; // SInce this handle SYNACK of our SYN
     }
 
     if (!tcph.syn() && !tcph.rst()) {
@@ -534,6 +535,8 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
         send_.nxt = send_.iss;// 1 goes for SYN (in send()), since it uses up a SEQ number
         send(tun, iss, 0);
 
+        retransmit_syn_test_ = true;
+
         state_ = TcpState::SYN_RCVD;
     }
 }
@@ -580,6 +583,8 @@ void TcpConnection::connect(Tun &tun,
     send_.nxt = send_.iss;// +1 is in send()
     send_.wnd = send_mss_;// Update this after we get a SYNACK. Default is 536
     send(tun, iss, 0);
+
+    retransmit_syn_test_ = true;
 
     state_ = TcpState::SYN_SENT;
 }
@@ -653,15 +658,28 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
     const auto bytes_to_send = std::min(static_cast<std::size_t>(send_mss_), send_buf_.size());
     // it looks like repacketization ahh thing
     // For now retransmit everything inside window (not bigger than MSS)
-    if (bytes_to_send || retransmit_fin_test_) {
+    if (bytes_to_send || retransmit_fin_test_ || retransmit_syn_test_) {
         std::println("RETRANSMITTING after {} ms!!!!!!!!!!!!", rto_ms_);
 
+        tcph_.ack(true);
         // TODO: THIS IS TEMP, UNTIL I HAVE segemtnation
         if (retransmit_fin_test_) { tcph_.fin(true); }
+        if (retransmit_syn_test_) {
+            tcph_.syn(true);
 
-        tcph_.ack(true);
+            switch (state_) {
+            case TcpState::SYN_SENT:
+                // Since we are in SYN_SENT -> we should retransmit SYN withotu ACK
+                tcph_.ack(false);
+                break;
+            default:
+                break;
+            }
+        }
+
         send(tun, send_.una, bytes_to_send);
     }
+
 
     // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
     // maximum value discussed in (2.5) above may be used to provide

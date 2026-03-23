@@ -153,6 +153,7 @@ private:
     std::uint32_t timer_start_seq_at_{};
     std::int64_t timer_expire_at_{-1};
     bool retransmit_fin_test_{false};
+    bool retransmit_syn_test_{false};
 
     // retransmissions -----
 
