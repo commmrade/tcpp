@@ -12,6 +12,7 @@
 #include "conn.hpp"
 #include "../tun.hpp"
 
+constexpr std::string_view SRC_IP = "10.0.0.2";
 class Tcp
 {
 public:
@@ -19,24 +20,10 @@ public:
 
     std::condition_variable &get_accept_var() { return accept_var_; }
 
-    TcpConnection &get_connection(const Quad &quad)
-    {
-        assert(established_connections_.contains(quad) && established_connections_.find(quad)->second);
-        return *established_connections_.find(quad)->second;
-    }
+    TcpConnection &get_connection(const Quad &quad);
 
-    bool has_conn_on_port(const std::uint16_t port) const
-    {
-        return !bound_.find(port)->second.empty();
-    }
-    Quad pop_conn(const std::uint16_t port)
-    {
-        auto iter = bound_.find(port);
-
-        auto quad = iter->second.front();
-        iter->second.pop_front();
-        return quad;
-    }
+    bool has_conn_on_port(const std::uint16_t port) const;
+    Quad pop_conn(const std::uint16_t port);
 
     // "USERSPACE" functions
     void bind(const std::uint16_t port);

@@ -407,10 +407,10 @@ void TcpConnection::on_tick(Tun &tun)
 
 ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
 {
-    // TODO!!!!!!: SHOULD SEND FROM "seqn_from". but rn seqn_from equals to start of send buffer
     const auto send_buf_idx = static_cast<std::int64_t>(seqn_from) - static_cast<std::int64_t>(send_.una);
     std::println("Send buf idx: {}", send_buf_idx);
-    assert(send_buf_idx >= 0);
+    assert(static_cast<std::size_t>(send_buf_idx) < send_buf_.size());
+
     const std::span<const std::byte> payload{ send_buf_.data() + send_buf_idx, max_size };
 
     iph_.total_len(
@@ -557,7 +557,6 @@ void TcpConnection::connect(Tun &tun,
     iph_.version(4);
     iph_.ihl(5);// 5 * 4 = 20 bytes (no options)
     iph_.type_of_service(0);
-    iph_.total_len(40);// 20 (IP) + 20 (TCP)
     iph_.id(0);
     iph_.dont_fragment(true);
     iph_.more_fragments(false);

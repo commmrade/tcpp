@@ -81,13 +81,28 @@ void Tcp::process_packet(Tun &tun)
     dispatch_packet(tun, std::span<const std::byte>(buf.data(), (size_t)rd_bytes));
 }
 
+TcpConnection & Tcp::get_connection(const Quad &quad) {
+    assert(established_connections_.contains(quad) && established_connections_.find(quad)->second);
+    return *established_connections_.find(quad)->second;
+}
+
+bool Tcp::has_conn_on_port(const std::uint16_t port) const {
+    return !bound_.find(port)->second.empty();
+}
+
+Quad Tcp::pop_conn(const std::uint16_t port) {
+    auto iter = bound_.find(port);
+
+    auto quad = iter->second.front();
+    iter->second.pop_front();
+    return quad;
+}
+
 
 Quad Tcp::connect(Tun &tun, const std::uint32_t daddr, const std::uint16_t dport)
 {
     std::uint32_t s_addr{};
-    // TODO: avoid hardcoding src_ip
-    int ret = inet_pton(AF_INET, "10.0.0.2", &s_addr);
-    assert(ret >= 0);// It can't really fail
+    inet_pton(AF_INET, SRC_IP.data(), &s_addr);
 
     std::random_device rnd;
     std::mt19937 gen(rnd());
