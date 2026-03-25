@@ -360,7 +360,6 @@ bool TcpConnection::handle_send(Tun &tun)
     // TODO: cong. control things. basically calculate how many bytes to send
     if (!send_buf_.empty()) {
         const auto in_flight_n = send_.nxt - send_.una;
-        // std::println("in flight: {} - {}", send_.nxt, send_.una);
         const auto bytes_to_send = std::min(static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n);
         if (bytes_to_send) {
             tcph_.ack(true);
@@ -455,7 +454,7 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
             // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
             start_measure_rtt(seqn_from);
         }
-        start_timer(send_.una);
+        start_timer(send_.una, rtt_measurement_.rto_ms);
     }
 
     if (wrapping_gt(seqn_from + static_cast<std::uint32_t>(data_size), send_.nxt - 1)) {
@@ -476,7 +475,7 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
     iph_.ihl(iph.ihl());
     iph_.total_len(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE);
     // It is just that, since IP and TCP do not support options for now.
-    iph_.id(1212);
+    iph_.id(0);
     iph_.dont_fragment(iph.dont_fragment());
     iph_.more_fragments(iph.more_fragments());
     iph_.frag_offset(iph.frag_offset());
@@ -589,63 +588,63 @@ void TcpConnection::connect(Tun &tun,
 
 void TcpConnection::start_measure_rtt(const std::uint32_t seq_n)
 {
-    if (!send_at_.has_value()) {
-        send_seq_at_ = seq_n;
-        send_at_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+    if (!rtt_measurement_.send_at_.has_value()) {
+        rtt_measurement_.send_seq_at_ = seq_n;
+        rtt_measurement_.send_at_ = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        std::println("Send at: {}", send_at_.value());
+        std::println("Send at: {}", rtt_measurement_.send_at_.value());
     }
 }
 
-void TcpConnection::stop_measure_rtt() { send_at_.reset(); }
+void TcpConnection::stop_measure_rtt() { rtt_measurement_.send_at_.reset(); }
 
 void TcpConnection::measure_rtt(const std::uint32_t ack_n)
 {
-    if (send_at_.has_value() && wrapping_gt(ack_n, send_seq_at_)) {
+    if (rtt_measurement_.send_at_.has_value() && wrapping_gt(ack_n, rtt_measurement_.send_seq_at_)) {
         const std::int64_t cur_time = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        const std::int64_t res = cur_time - send_at_.value();// cur. rtt
+        const std::int64_t res = cur_time - rtt_measurement_.send_at_.value();// cur. rtt
 
         static constexpr std::uint32_t GRAN_MS = 1;
-        if (rtt_ms_ == 0) {
+        if (rtt_measurement_.rtt_ms == 0) {
             // First measurement
-            srtt_ = static_cast<std::uint32_t>(res);
-            rttvar_ = static_cast<std::uint32_t>(res / 2);
+            rtt_measurement_.srtt = static_cast<std::uint32_t>(res);
+            rtt_measurement_.rttvar = static_cast<std::uint32_t>(res / 2);
         } else {
             // Following measurements
             static constexpr double ALPHA = 1.0 / 8.0;
             static constexpr double BETA = 1.0 / 4.0;
-            rttvar_ = static_cast<std::uint32_t>((1.0 - BETA) * static_cast<double>(rttvar_) + BETA * std::abs(
-                                                     static_cast<double>(srtt_) - static_cast<double>(res)));
-            srtt_ = static_cast<std::uint32_t>((1.0 - ALPHA) * static_cast<double>(srtt_) + ALPHA * static_cast<double>(
+            rtt_measurement_.rttvar = static_cast<std::uint32_t>((1.0 - BETA) * static_cast<double>(rtt_measurement_.rttvar) + BETA * std::abs(
+                                                     static_cast<double>(rtt_measurement_.srtt) - static_cast<double>(res)));
+            rtt_measurement_.srtt = static_cast<std::uint32_t>((1.0 - ALPHA) * static_cast<double>(rtt_measurement_.srtt) + ALPHA * static_cast<double>(
                                                    res));
         }
-        rto_ms_ = srtt_ + std::max(GRAN_MS, 4 * rttvar_);
+        rtt_measurement_.rto_ms = rtt_measurement_.srtt + std::max(GRAN_MS, 4 * rtt_measurement_.rttvar);
         // Whenever RTO is computed, if it is less than 1 second,
         // then the RTO SHOULD be rounded up to 1 second
-        if (rto_ms_ < 1000) { rto_ms_ = 1000; }
+        if (rtt_measurement_.rto_ms < 1000) { rtt_measurement_.rto_ms = 1000; }
 
-        rtt_ms_ = static_cast<std::uint32_t>(res);
-        assert(rtt_ms_);// it shouldn't be 0, otherwise "initial RTT measurement" is broken
+        rtt_measurement_.rtt_ms = static_cast<std::uint32_t>(res);
+        assert(rtt_measurement_.rtt_ms);// it shouldn't be 0, otherwise "initial RTT measurement" is broken
 
-        send_at_.reset();
-        std::println("RTT IS {}, SRTT IS {}, RTTVAR IS {}, RTO IS {}", rtt_ms_, srtt_, rttvar_, rto_ms_);
+        rtt_measurement_.send_at_.reset();
+        std::println("RTT IS {}, SRTT IS {}, RTTVAR IS {}, RTO IS {}", rtt_measurement_.rtt_ms, rtt_measurement_.srtt, rtt_measurement_.rttvar, rtt_measurement_.rto_ms);
     }
 }
 
-void TcpConnection::start_timer(const std::uint32_t seq_n)
+void TcpConnection::start_timer(const std::uint32_t seq_n, const std::uint32_t rto_ms)
 {
-    if (!timer_start_.has_value()) {
+    if (!timer_.timer_start.has_value()) {
         const auto cur_time = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        timer_start_.emplace(cur_time);// Start timer
-        timer_expire_at_ = cur_time + static_cast<std::int64_t>(rto_ms_);// It expires at RTO
-        timer_start_seq_at_ = seq_n;
-        std::println("Armed timer until {}. Now is {}. timer seq {}", timer_expire_at_, cur_time, timer_start_seq_at_);
+        timer_.timer_start.emplace(cur_time);// Start timer
+        timer_.timer_expire_at = cur_time + static_cast<std::int64_t>(rto_ms);// It expires at RTO
+        timer_.timer_start_seq_at = seq_n;
+        std::println("Armed timer until {}. Now is {}. timer seq {}", timer_.timer_expire_at, cur_time, timer_.timer_start_seq_at);
     }
 }
 
-void TcpConnection::stop_timer() { timer_start_.reset(); }
+void TcpConnection::stop_timer() { timer_.timer_start.reset(); }
 
 void TcpConnection::handle_timer_retransmit(Tun &tun)
 {
@@ -657,7 +656,7 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
     // it looks like repacketization ahh thing
     // For now retransmit everything inside window (not bigger than MSS)
     if (bytes_to_send || retransmit_fin_test_ || retransmit_syn_test_) {
-        std::println("RETRANSMITTING after {} ms!!!!!!!!!!!!", rto_ms_);
+        std::println("RETRANSMITTING after {} ms!!!!!!!!!!!!", rtt_measurement_.rto_ms);
 
         tcph_.ack(true);
         // TODO: THIS IS TEMP, UNTIL I HAVE segemtnation
@@ -682,23 +681,23 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
     // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
     // maximum value discussed in (2.5) above may be used to provide
     // an upper bound to this doubling operation.
-    rto_ms_ = rto_ms_ * 2;
-    // rto_ms_ = rto_ms_ * static_cast<std::size_t>(backoff_factor_);
+    rtt_measurement_.rto_ms = rtt_measurement_.rto_ms * 2;
+    // rtt_measurement_.rto_ms = rtt_measurement_.rto_ms * static_cast<std::size_t>(backoff_factor_);
 
-    std::println("TIMER EXPIRED with rto now: {}", rto_ms_);
+    std::println("TIMER EXPIRED with rto now: {}", rtt_measurement_.rto_ms);
     // These values are likely bogus after several backoffs (3)
-    if (rto_ms_ > 10000) {
-        srtt_ = 0;
-        rttvar_ = 0;
+    if (rtt_measurement_.rto_ms > 10000) {
+        rtt_measurement_.srtt = 0;
+        rtt_measurement_.rttvar = 0;
     }
-    if (rto_ms_ > 60000) {
-        rto_ms_ = 60000;// Upper bound
+    if (rtt_measurement_.rto_ms > 60000) {
+        rtt_measurement_.rto_ms = 60000;// Upper bound
     }
 
     //  (5.6) Start the retransmission timer, such that it expires after RTO
     //  seconds
     stop_timer();
-    start_timer(send_.una);
+    start_timer(send_.una, rtt_measurement_.rto_ms);
 
     // TODO: handle 5.7 (ABOUT SYN SEGMENTS)
 }
@@ -706,14 +705,14 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
 
 void TcpConnection::update_timer(Tun &tun, const std::uint32_t ack_n)
 {
-    if (timer_start_.has_value()) {
+    if (timer_.timer_start.has_value()) {
         const auto cur_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
         if (ack_n == send_.nxt) {
             std::println("All outstanding data ACKED. Disable timer");
             // (5.2) When all outstanding data has been acknowledged, turn off the retransmission timer.
             stop_timer();
-        } else if (wrapping_gt(ack_n, timer_start_seq_at_)) {
+        } else if (wrapping_gt(ack_n, timer_.timer_start_seq_at)) {
             // Window was moved, restart timer
             // (5.3) When an ACK is received that acknowledges new data, restart the retransmission timer so that it will expire
             // after RTO seconds (for the current value of RTO).
@@ -721,10 +720,10 @@ void TcpConnection::update_timer(Tun &tun, const std::uint32_t ack_n)
 
             // Restart
             stop_timer();
-            start_timer(ack_n);
+            start_timer(ack_n, rtt_measurement_.rto_ms);
         } else {
             // timer is neither updated nor disabled
-            if (cur_time_ms >= timer_expire_at_) { handle_timer_retransmit(tun); }
+            if (cur_time_ms >= timer_.timer_expire_at) { handle_timer_retransmit(tun); }
         }
     }
 }

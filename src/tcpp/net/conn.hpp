@@ -49,6 +49,24 @@ struct ReceiveSequence
     std::uint32_t irs;// initial receiver seq n
 };
 
+struct RttMeasurement
+{
+    std::optional<std::int64_t> send_at_; // Time at which oldest UNACKed segment was sent.
+    std::uint32_t send_seq_at_; // Seq n at which send_at_ segmetn was sent
+
+    std::uint32_t rtt_ms{};
+    std::uint32_t srtt{}; // Smothed round-trip time
+    std::uint32_t rttvar{}; // round-trip time variation
+    std::uint32_t rto_ms{1000}; // Default RTO is 1 (1000ms) second, as per RFC 6298
+};
+
+struct Timer
+{
+    std::optional<std::int64_t> timer_start{};
+    std::uint32_t timer_start_seq_at{};
+    std::int64_t timer_expire_at{-1};
+};
+
 class Tcp;
 
 class TcpConnection
@@ -116,7 +134,7 @@ private:
     void stop_measure_rtt();
     void measure_rtt(const std::uint32_t ack_n);
 
-    void start_timer(const std::uint32_t seq_n);
+    void start_timer(const std::uint32_t seq_n, const std::uint32_t rto_ms);
     void stop_timer();
     void handle_timer_retransmit(Tun& tun);
 
@@ -137,34 +155,22 @@ private:
     ReceiveSequence recv_;
     Buffer recv_buf_;// First element is SND.UNA, last is SND.UNA + SND.WND
     TcpState state_;
-
-    // Timer things (all in MS) ----
-    std::optional<std::int64_t> send_at_; // Time at which oldest UNACKed segment was sent.
-    std::uint32_t send_seq_at_; // Seq n at which send_at_ segmetn was sent
-
-    std::uint32_t rtt_ms_{};
-    std::uint32_t srtt_{}; // Smothed round-trip time
-    std::uint32_t rttvar_{}; // round-trip time variation
-    std::uint32_t rto_ms_{1000}; // Default RTO is 1 (1000ms) second, as per RFC 6298
-
-    // timers ----
-    // Retransmit. things (IN MS) -----
-    std::optional<std::int64_t> timer_start_{};
-    std::uint32_t timer_start_seq_at_{};
-    std::int64_t timer_expire_at_{-1};
-    bool retransmit_fin_test_{false};
-    bool retransmit_syn_test_{false};
-
-    // retransmissions -----
-
     // My MSS (what this host can send)
     std::uint16_t send_mss_{ 536 };
     // Their MSS (what that host can send
     std::uint16_t recv_mss_{ 1460 };
-
     // Buffers and stuff
     bool should_send_fin_{ false };// TODO: Get rid of this. This should be sent after all data in buffers is sent
     bool is_finished_{ false };
+
+    // Timer things (all in MS) ----
+    RttMeasurement rtt_measurement_;
+
+    // Retransmit. things (IN MS) -----
+    Timer timer_;
+    bool retransmit_fin_test_{false};
+    bool retransmit_syn_test_{false};
+    // retransmissions -----
 };
 
 
