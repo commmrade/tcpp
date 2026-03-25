@@ -682,9 +682,7 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
     // maximum value discussed in (2.5) above may be used to provide
     // an upper bound to this doubling operation.
     rtt_measurement_.rto_ms = rtt_measurement_.rto_ms * 2;
-    // rtt_measurement_.rto_ms = rtt_measurement_.rto_ms * static_cast<std::size_t>(backoff_factor_);
 
-    std::println("TIMER EXPIRED with rto now: {}", rtt_measurement_.rto_ms);
     // These values are likely bogus after several backoffs (3)
     if (rtt_measurement_.rto_ms > 10000) {
         rtt_measurement_.srtt = 0;
@@ -693,6 +691,7 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
     if (rtt_measurement_.rto_ms > 60000) {
         rtt_measurement_.rto_ms = 60000;// Upper bound
     }
+    std::println("TIMER EXPIRED with rto now: {}", rtt_measurement_.rto_ms);
 
     //  (5.6) Start the retransmission timer, such that it expires after RTO
     //  seconds
