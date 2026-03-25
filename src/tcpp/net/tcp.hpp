@@ -16,6 +16,7 @@ constexpr std::string_view SRC_IP = "10.0.0.2";
 class Tcp
 {
 public:
+    Tcp() = default;
     void process_packet(Tun &tun);
 
     std::condition_variable &get_accept_var() { return accept_var_; }
