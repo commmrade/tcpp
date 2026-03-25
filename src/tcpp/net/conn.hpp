@@ -83,8 +83,9 @@ private:
     bool handle_urg(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) { return true; }
     bool handle_seg_text(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
     bool handle_fin(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
-    bool handle_syn_sent(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
 
+    bool handle_segment_syn_sent(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
+    bool handle_segment_other(Tun& tun, const netparser::TcpHeaderView& tcph, std::span<const std::byte> payload);
     void on_packet(Tun &tun,
         const netparser::IpHeaderView &iph,
         const netparser::TcpHeaderView &tcph,
@@ -111,6 +112,15 @@ private:
         const std::uint32_t daddr,
         const std::uint16_t dport);
 
+    void start_measure_rtt(const std::uint32_t seq_n);
+    void stop_measure_rtt();
+    void measure_rtt(const std::uint32_t ack_n);
+
+    void start_timer(const std::uint32_t seq_n);
+    void stop_timer();
+    void handle_timer_retransmit(Tun& tun);
+
+    void update_timer(Tun& tun, const std::uint32_t ack_n);
 
     friend class Tcp;
     std::condition_variable recv_var_;// Notified when something is received
@@ -127,6 +137,25 @@ private:
     ReceiveSequence recv_;
     Buffer recv_buf_;// First element is SND.UNA, last is SND.UNA + SND.WND
     TcpState state_;
+
+    // Timer things (all in MS) ----
+    std::optional<std::int64_t> send_at_; // Time at which oldest UNACKed segment was sent.
+    std::uint32_t send_seq_at_; // Seq n at which send_at_ segmetn was sent
+
+    std::uint32_t rtt_ms_{};
+    std::uint32_t srtt_{}; // Smothed round-trip time
+    std::uint32_t rttvar_{}; // round-trip time variation
+    std::uint32_t rto_ms_{1000}; // Default RTO is 1 (1000ms) second, as per RFC 6298
+
+    // timers ----
+    // Retransmit. things (IN MS) -----
+    std::optional<std::int64_t> timer_start_{};
+    std::uint32_t timer_start_seq_at_{};
+    std::int64_t timer_expire_at_{-1};
+    bool retransmit_fin_test_{false};
+    bool retransmit_syn_test_{false};
+
+    // retransmissions -----
 
     // My MSS (what this host can send)
     std::uint16_t send_mss_{ 536 };

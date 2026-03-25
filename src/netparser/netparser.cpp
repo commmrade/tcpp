@@ -642,6 +642,7 @@ void TcpHeader::calculate_checksum(const netparser::IpHeader &iph, std::span<con
     accumulate(&pseudo, sizeof(pseudo));
     accumulate(&hdr_, sizeof(tcphdr));
     accumulate(opt_bytes.data(), opt_bytes.size());
+    std::println("payload size: {}", payload.size());
     accumulate(payload.data(), payload.size());
 
     // Fold carries

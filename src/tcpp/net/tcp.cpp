@@ -10,7 +10,7 @@ void Tcp::accept(Tun &tun, const netparser::IpHeaderView &iph, const netparser::
     auto [iter, inserted] = connections.emplace(quad, std::make_unique<TcpConnection>());
     assert(inserted);
     auto &conn = iter->second;
-
+    std::println("Accepted: {} {} {} {}", quad.src_addr, quad.src_port, quad.dst_addr, quad.dst_port);
     conn->accept(tun, iph, tcph);
 }
 
@@ -30,14 +30,13 @@ void Tcp::dispatch_packet(Tun& tun, const std::span<const std::byte> buf)
         rd_offset += tcph.data_off() * 4UL;
         const Quad quad{ .src_addr = iph.source_addr(), .src_port = tcph.source_port(), .dst_addr = iph.dest_addr(),
                          .dst_port = tcph.dest_port() };
-
         auto conn_iter = connections.find(quad);
         if (conn_iter != connections.end()) {
             const std::span<const std::byte> payload{ std::next(buf.data(), rd_offset),
                                                       buf.size() - static_cast<std::size_t>(rd_offset) };
             conn_iter->second->on_packet(tun, iph, tcph, payload);
             if (conn_iter->second->get_state() == TcpState::CLOSED) {
-                std::println("Delete TCB");
+                std::println("Delete TCB!!!!!!!!");
                 connections.erase(conn_iter);// TODO: this may cause problems when waiting on a cond var
             }
         } else {

@@ -82,10 +82,13 @@ bool TcpConnection::handle_syn(Tun &tun, const netparser::TcpHeaderView &tcph, s
 
 bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
 {
+    measure_rtt(tcph.ackn());
+
     switch (state_) {
-    case TcpState::SYN_RCVD: {
+    case TcpState::SYN_RCVD: { // got ACK for our SYNACK
+        std::println("Ack is invalid: una {} < ackn {} <= nxt {}", send_.una, tcph.ackn(), send_.nxt);
         if (!is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
-            std::println("ACK IS NOT VALID");
+            std::println("ACK IS NOT VALID. RST SET HERE");
             tcph_.rst(true);
             send(tun, tcph.ackn(), 0);
         }
@@ -95,15 +98,18 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
         send_.wnd = tcph.window();
         send_.wl1 = tcph.seqn();
         send_.wl2 = tcph.ackn();
+
+        retransmit_syn_test_ = false;
+        // TODO: imagine ACK after SYNACK is lost, we might wanna fall through if this is the case, so we can process payload. or should we fall?
         break;
     }
     case TcpState::ESTAB: {
         // TODO: HANDLE ACK FOR SYn/FIN
 
         if (is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
-            const auto acked_bytes_n = tcph.ackn() - send_.una; // This wraps fine
+            const auto acked_bytes_n = tcph.ackn() - send_.una;// This wraps fine
             if (!send_buf_.empty()) {
-                assert(acked_bytes_n <= send_buf_.size()); // Just in case
+                assert(acked_bytes_n <= send_buf_.size());// Just in case
                 // if empty, probably means that SYN/FIN was ACKed
                 erase_send_data(acked_bytes_n);
             }
@@ -145,6 +151,8 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
     default:
         break;// TODO
     }
+
+    update_timer(tun, tcph.ackn());
     return true;
 }
 
@@ -165,8 +173,8 @@ bool TcpConnection::handle_seg_text(Tun &tun,
         }
 
         append_recv_data(payload);
-        recv_.nxt += payload.size() + (tcph.syn() ? 1 : 0); // FIN is handled in handle_fin()
-        recv_.wnd = recv_mss_ * 3; //TODO: CALC PROEPRLY
+        recv_.nxt += payload.size() + (tcph.syn() ? 1 : 0);// FIN is handled in handle_fin()
+        recv_.wnd = recv_mss_ * 3;//TODO: CALC PROEPRLY
         // Make sure RCV.WND right edge doesn't shift left
         tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
         tcph_.ack(true);
@@ -203,12 +211,13 @@ bool TcpConnection::handle_fin(Tun &tun, const netparser::TcpHeaderView &tcph, s
         state_ = TcpState::CLOSE_WAIT;
         // But since I already sent a FIN and an ACK I may switch to LAST_ACK (**???**)
         // TODO: At first, i should send all data, then switch to LAST_ACK, but since no buffers yet do this.
+        should_send_fin_ = true;
 
-        tcph_.fin(true);
-        tcph_.ack(true);
-        send(tun, send_.nxt, 0);
+        // tcph_.fin(true);
+        // tcph_.ack(true);
+        // send(tun, send_.nxt, 0);
 
-        state_ = TcpState::LAST_ACK;// TODO: Wait for ACK of FIN properly
+        // state_ = TcpState::LAST_ACK;// TODO: Wait for ACK of FIN properly
         break;
     }
     case TcpState::FIN_WAIT_2: {
@@ -225,7 +234,7 @@ bool TcpConnection::handle_fin(Tun &tun, const netparser::TcpHeaderView &tcph, s
     return true;
 }
 
-bool TcpConnection::handle_syn_sent(Tun &tun,
+bool TcpConnection::handle_segment_syn_sent(Tun &tun,
     const netparser::TcpHeaderView &tcph,
     std::span<const std::byte> payload)
 {
@@ -235,9 +244,8 @@ bool TcpConnection::handle_syn_sent(Tun &tun,
     if (tcph.ack()) {
         std::println("{} {}. {} {}", tcph.ackn() - 1, send_.iss, tcph.ackn(), send_.nxt);
         if (wrapping_lt(tcph.ackn() - 1, send_.iss) || tcph.ackn() > send_.nxt) {
-            tcph_.syn(false);// it was probably true because of connect()
             tcph_.rst(true);
-            std::println("SENDING RST");
+            std::println("SENDING RST IN SYN SENT");
             send(tun, tcph.ackn(), 0);
             return false;// return from processing
         }
@@ -259,8 +267,6 @@ bool TcpConnection::handle_syn_sent(Tun &tun,
     assert((is_ack_acceptable || !tcph.ack()) && !tcph.rst());
     // This step should be reached only if the ACK is ok, or there is no ACK, and the segment did not contain a RST.
     if (tcph.syn()) {
-        // TODO: read MSS and shit setup vars
-
         recv_.nxt = tcph.seqn() + 1;
         recv_.irs = tcph.seqn();
         if (tcph.ack()) { send_.una = tcph.ackn(); }
@@ -282,17 +288,53 @@ bool TcpConnection::handle_syn_sent(Tun &tun,
             send(tun, send_.iss, 0);
         }
 
-        if (auto opt = tcph.mss(); opt.has_value()) {
-            send_mss_ = opt.value().mss;
-        }
+        if (auto opt = tcph.mss(); opt.has_value()) { send_mss_ = opt.value().mss; }
         send_.wnd = tcph.window();
         send_.wl1 = tcph.seqn();
         send_.wl2 = tcph.ackn();
+
+        retransmit_syn_test_ = false; // SInce this handle SYNACK of our SYN
     }
 
     if (!tcph.syn() && !tcph.rst()) {
         return false;// return from processing
     }
+    return true;
+}
+
+bool TcpConnection::handle_segment_other(Tun &tun,
+    const netparser::TcpHeaderView &tcph,
+    std::span<const std::byte> payload)
+{
+    // First, check sequence number
+    if (!validate_seq_n(tcph, payload) && recv_.wnd != 0) {
+        // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
+        // If an incoming segment is not acceptable, an acknowledgment should be sent in reply (unless the RST bit is set, if so drop the segment and return):
+        if (tcph.rst()) { return false; }
+
+        tcph_.ack(true);
+        send(tun, send_.nxt, 0);
+        return false;
+    }
+
+    // False signals, that a handler wants to return (usually in drop-and-return situations)
+    if (tcph.rst()) { if (!handle_rst(tun, tcph, payload)) { return false; } }
+
+    // Fourth
+    if (tcph.syn()) { if (!handle_syn(tun, tcph, payload)) { return false; } }// NOLINT
+
+    // Fifth, check the ACK field
+    if (!tcph.ack()) { return false; }
+    if (!handle_ack(tun, tcph, payload)) { return false; }
+
+    // TODO: Check URG bit
+    if (tcph.urg()) { if (!handle_urg(tun, tcph, payload)) { return false; } }// NOLINT
+
+    if (!payload.empty()) { if (!handle_seg_text(tun, tcph, payload)) { return false; } }// NOLINT
+
+    // TODO: Check FIN bit
+    if (tcph.fin()) { if (!handle_fin(tun, tcph, payload)) { return false; } }// NOLINT
+
     return true;
 }
 
@@ -303,39 +345,11 @@ void TcpConnection::on_packet(Tun &tun,
 {
     switch (state_) {
     case TcpState::SYN_SENT: {
-        if (!handle_syn_sent(tun, tcph, payload)) { return; }
+        if (!handle_segment_syn_sent(tun, tcph, payload)) { return; }
         break;
     }
     default: {
-        // First, check sequence number
-        if (!validate_seq_n(tcph, payload) && recv_.wnd != 0) {
-            // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
-            // If an incoming segment is not acceptable, an acknowledgment should be sent in reply (unless the RST bit is set, if so drop the segment and return):
-            if (tcph.rst()) { return; }
-
-            tcph_.ack(true);
-            send(tun, send_.nxt, 0);
-            return;
-        }
-
-        // False signals, that a handler wants to return (usually in drop-and-return situations)
-        if (tcph.rst()) { if (!handle_rst(tun, tcph, payload)) { return; } }
-
-        // Fourth
-        if (tcph.syn()) { if (!handle_syn(tun, tcph, payload)) { return; } }// NOLINT
-
-        // Fifth, check the ACK field
-        if (!tcph.ack()) { return; }
-        if (!handle_ack(tun, tcph, payload)) { return; }
-
-        // TODO: Check URG bit
-        if (tcph.urg()) { if (!handle_urg(tun, tcph, payload)) { return; } }// NOLINT
-
-        if (!payload.empty()) { if (!handle_seg_text(tun, tcph, payload)) { return; } }// NOLINT
-
-        // TODO: Check FIN bit
-        if (tcph.fin()) { if (!handle_fin(tun, tcph, payload)) { return; } }// NOLINT
-
+        if (!handle_segment_other(tun, tcph, payload)) { return; }
         break;
     }
     }
@@ -346,6 +360,7 @@ bool TcpConnection::handle_send(Tun &tun)
     // TODO: cong. control things. basically calculate how many bytes to send
     if (!send_buf_.empty()) {
         const auto in_flight_n = send_.nxt - send_.una;
+        // std::println("in flight: {} - {}", send_.nxt, send_.una);
         const auto bytes_to_send = std::min(static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n);
         if (bytes_to_send) {
             tcph_.ack(true);
@@ -358,21 +373,32 @@ bool TcpConnection::handle_send(Tun &tun)
 
 bool TcpConnection::handle_close(Tun &tun)
 {
-    // TODO: If piggybacking FIN wasn't possible, just send a raw FIN here
     if (should_send_fin_ && send_buf_.empty()) {
         tcph_.fin(true);
         tcph_.ack(true);
         send(tun, send_.nxt, 0);
-
-        // TODO: make sure it is retransmitted
-        state_ = TcpState::FIN_WAIT_1;
+        retransmit_fin_test_ = true;
         should_send_fin_ = false;
+
+        switch (state_) {
+        case TcpState::CLOSE_WAIT: {
+            state_ = TcpState::LAST_ACK;
+            break;
+        }
+        case TcpState::ESTAB: {
+            state_ = TcpState::FIN_WAIT_1;
+            break;
+        }
+        default: { break; }
+        }
     }
     return true;
 }
 
 void TcpConnection::on_tick(Tun &tun)
 {
+    update_timer(tun, send_.una);
+
     if (!handle_send(tun)) { return; }
 
     // do_close is second, because if we are done sending in SEND (buffers are empty), we can try to issue a FIN
@@ -382,9 +408,14 @@ void TcpConnection::on_tick(Tun &tun)
 ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
 {
     // TODO!!!!!!: SHOULD SEND FROM "seqn_from". but rn seqn_from equals to start of send buffer
-    const std::span<const std::byte> payload{ send_buf_.data() + (seqn_from - send_.una), max_size };
+    const auto send_buf_idx = static_cast<std::int64_t>(seqn_from) - static_cast<std::int64_t>(send_.una);
+    std::println("Send buf idx: {}", send_buf_idx);
+    assert(send_buf_idx >= 0);
+    const std::span<const std::byte> payload{ send_buf_.data() + send_buf_idx, max_size };
 
-    iph_.total_len(static_cast<std::uint16_t>(iph_.ihl() * 4 + (netparser::TCPH_MIN_SIZE + tcph_.options().options_size()) + payload.size()));
+    iph_.total_len(
+        static_cast<std::uint16_t>(iph_.ihl() * 4 + (netparser::TCPH_MIN_SIZE + tcph_.options().options_size()) +
+                                   payload.size()));
     iph_.calculate_checksum();
     const auto ip_data = iph_.serialize();
 
@@ -393,7 +424,7 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
     const auto tcph_size = static_cast<std::uint8_t>(netparser::TCPH_MIN_SIZE + tcph_.options().options_size());
     tcph_.data_off(tcph_size / 4);
     tcph_.calculate_checksum(iph_, payload);
-    const auto tcp_data = tcph_.serialize(); // TCP data off is changed here
+    const auto tcp_data = tcph_.serialize();// TCP data off is changed here
 
 
     std::vector<std::byte> buf{};
@@ -416,7 +447,20 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
     assert(static_cast<std::size_t>(written) == offset);
     // i think it should be ok, if fails, then i have to rewrite "snd.nxt +" logic
 
-    send_.nxt += payload.size() + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
+    // Measure once per RTT. // TODO: factor out in a separate function
+    // If not measuring currently
+    const auto data_size = payload.size() + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
+    if (data_size > 0) {
+        if (wrapping_gt(seqn_from, send_.nxt - 1)) {
+            // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
+            start_measure_rtt(seqn_from);
+        }
+        start_timer(send_.una);
+    }
+
+    if (wrapping_gt(seqn_from + static_cast<std::uint32_t>(data_size), send_.nxt - 1)) {
+        send_.nxt += seqn_from + data_size - send_.nxt;// maybe + 1?
+    }
 
     tcph_.syn(false);
     tcph_.ack(false);
@@ -457,7 +501,7 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
     // Second, check for an ACK:
     if (tcph.ack()) {
         // ACK shouldn't be set in initial SYN segment
-
+        std::println("RST IS SET IN ACCEPT");
         tcph_.rst(true);
         send(tun, tcph.ackn(), 0);
         return;
@@ -469,9 +513,7 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
         recv_.irs = tcph.seqn();
         recv_.wnd = recv_mss_ * 3;
 
-        if (auto opt = tcph.mss(); opt.has_value()) {
-            send_mss_ = opt.value().mss;
-        }
+        if (auto opt = tcph.mss(); opt.has_value()) { send_mss_ = opt.value().mss; }
         send_.wnd = tcph.window();
 
         // SEt ISS
@@ -490,8 +532,10 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
 
         send_.iss = iss;
         send_.una = send_.iss;
-        send_.nxt = send_.iss; // 1 goes for SYN (in send()), since it uses up a SEQ number
+        send_.nxt = send_.iss;// 1 goes for SYN (in send()), since it uses up a SEQ number
         send(tun, iss, 0);
+
+        retransmit_syn_test_ = true;
 
         state_ = TcpState::SYN_RCVD;
     }
@@ -529,18 +573,162 @@ void TcpConnection::connect(Tun &tun,
     tcph_.dest_port(dport);// destination port, you'll need to pass this into connect()
     tcph_.seqn(iss);
     tcph_.ackn(0);// 0 on SYN
-    tcph_.options().mss(recv_mss_); // data_off is set in send()
+    tcph_.options().mss(recv_mss_);// data_off is set in send()
     tcph_.syn(true);
     tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
     tcph_.urg_ptr(0);
 
     send_.iss = iss;
     send_.una = send_.iss;
-    send_.nxt = send_.iss; // +1 is in send()
-    send_.wnd = send_mss_; // Update this after we get a SYNACK. Default is 536
+    send_.nxt = send_.iss;// +1 is in send()
+    send_.wnd = send_mss_;// Update this after we get a SYNACK. Default is 536
     send(tun, iss, 0);
 
+    retransmit_syn_test_ = true;
+
     state_ = TcpState::SYN_SENT;
+}
+
+void TcpConnection::start_measure_rtt(const std::uint32_t seq_n)
+{
+    if (!send_at_.has_value()) {
+        send_seq_at_ = seq_n;
+        send_at_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        std::println("Send at: {}", send_at_.value());
+    }
+}
+
+void TcpConnection::stop_measure_rtt() { send_at_.reset(); }
+
+void TcpConnection::measure_rtt(const std::uint32_t ack_n)
+{
+    if (send_at_.has_value() && wrapping_gt(ack_n, send_seq_at_)) {
+        const std::int64_t cur_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        const std::int64_t res = cur_time - send_at_.value();// cur. rtt
+
+        static constexpr std::uint32_t GRAN_MS = 1;
+        if (rtt_ms_ == 0) {
+            // First measurement
+            srtt_ = static_cast<std::uint32_t>(res);
+            rttvar_ = static_cast<std::uint32_t>(res / 2);
+        } else {
+            // Following measurements
+            static constexpr double ALPHA = 1.0 / 8.0;
+            static constexpr double BETA = 1.0 / 4.0;
+            rttvar_ = static_cast<std::uint32_t>((1.0 - BETA) * static_cast<double>(rttvar_) + BETA * std::abs(
+                                                     static_cast<double>(srtt_) - static_cast<double>(res)));
+            srtt_ = static_cast<std::uint32_t>((1.0 - ALPHA) * static_cast<double>(srtt_) + ALPHA * static_cast<double>(
+                                                   res));
+        }
+        rto_ms_ = srtt_ + std::max(GRAN_MS, 4 * rttvar_);
+        // Whenever RTO is computed, if it is less than 1 second,
+        // then the RTO SHOULD be rounded up to 1 second
+        if (rto_ms_ < 1000) { rto_ms_ = 1000; }
+
+        rtt_ms_ = static_cast<std::uint32_t>(res);
+        assert(rtt_ms_);// it shouldn't be 0, otherwise "initial RTT measurement" is broken
+
+        send_at_.reset();
+        std::println("RTT IS {}, SRTT IS {}, RTTVAR IS {}, RTO IS {}", rtt_ms_, srtt_, rttvar_, rto_ms_);
+    }
+}
+
+void TcpConnection::start_timer(const std::uint32_t seq_n)
+{
+    if (!timer_start_.has_value()) {
+        const auto cur_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        timer_start_.emplace(cur_time);// Start timer
+        timer_expire_at_ = cur_time + static_cast<std::int64_t>(rto_ms_);// It expires at RTO
+        timer_start_seq_at_ = seq_n;
+        std::println("Armed timer until {}. Now is {}. timer seq {}", timer_expire_at_, cur_time, timer_start_seq_at_);
+    }
+}
+
+void TcpConnection::stop_timer() { timer_start_.reset(); }
+
+void TcpConnection::handle_timer_retransmit(Tun &tun)
+{
+    // Retransmission should happen
+    stop_measure_rtt();// Must not measure on retransmits
+
+    // (5.4) Retransmit the earliest segment that has not been acknowledged by the TCP receiver.
+    const auto bytes_to_send = std::min(static_cast<std::size_t>(send_mss_), send_buf_.size());
+    // it looks like repacketization ahh thing
+    // For now retransmit everything inside window (not bigger than MSS)
+    if (bytes_to_send || retransmit_fin_test_ || retransmit_syn_test_) {
+        std::println("RETRANSMITTING after {} ms!!!!!!!!!!!!", rto_ms_);
+
+        tcph_.ack(true);
+        // TODO: THIS IS TEMP, UNTIL I HAVE segemtnation
+        if (retransmit_fin_test_) { tcph_.fin(true); }
+        if (retransmit_syn_test_) {
+            tcph_.syn(true);
+
+            switch (state_) {
+            case TcpState::SYN_SENT:
+                // Since we are in SYN_SENT -> we should retransmit SYN withotu ACK
+                tcph_.ack(false);
+                break;
+            default:
+                break;
+            }
+        }
+
+        send(tun, send_.una, bytes_to_send);
+    }
+
+
+    // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
+    // maximum value discussed in (2.5) above may be used to provide
+    // an upper bound to this doubling operation.
+    rto_ms_ = rto_ms_ * 2;
+    // rto_ms_ = rto_ms_ * static_cast<std::size_t>(backoff_factor_);
+
+    std::println("TIMER EXPIRED with rto now: {}", rto_ms_);
+    // These values are likely bogus after several backoffs (3)
+    if (rto_ms_ > 10000) {
+        srtt_ = 0;
+        rttvar_ = 0;
+    }
+    if (rto_ms_ > 60000) {
+        rto_ms_ = 60000;// Upper bound
+    }
+
+    //  (5.6) Start the retransmission timer, such that it expires after RTO
+    //  seconds
+    stop_timer();
+    start_timer(send_.una);
+
+    // TODO: handle 5.7 (ABOUT SYN SEGMENTS)
+}
+
+
+void TcpConnection::update_timer(Tun &tun, const std::uint32_t ack_n)
+{
+    if (timer_start_.has_value()) {
+        const auto cur_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (ack_n == send_.nxt) {
+            std::println("All outstanding data ACKED. Disable timer");
+            // (5.2) When all outstanding data has been acknowledged, turn off the retransmission timer.
+            stop_timer();
+        } else if (wrapping_gt(ack_n, timer_start_seq_at_)) {
+            // Window was moved, restart timer
+            // (5.3) When an ACK is received that acknowledges new data, restart the retransmission timer so that it will expire
+            // after RTO seconds (for the current value of RTO).
+            std::println("Window moved. Restart the timer");
+
+            // Restart
+            stop_timer();
+            start_timer(ack_n);
+        } else {
+            // timer is neither updated nor disabled
+            if (cur_time_ms >= timer_expire_at_) { handle_timer_retransmit(tun); }
+        }
+    }
 }
 
 void TcpConnection::shutdown(ShutdownType sht)
