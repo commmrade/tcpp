@@ -4,17 +4,7 @@
 
 #include "tcp.hpp"
 
-void Tcp::accept(Tun &tun, const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
-{
-    Quad quad{ iph.source_addr(), tcph.source_port(), iph.dest_addr(), tcph.dest_port() };
-    auto [iter, inserted] = connections.emplace(quad, std::make_unique<TcpConnection>());
-    assert(inserted);
-    auto &conn = iter->second;
-    std::println("Accepted: {} {} {} {}", quad.src_addr, quad.src_port, quad.dst_addr, quad.dst_port);
-    conn->accept(tun, iph, tcph);
-}
-
-void Tcp::dispatch_packet(Tun& tun, const std::span<const std::byte> buf)
+void Tcp::dispatch_packet(Tun &tun, const std::span<const std::byte> buf)
 {
     std::ptrdiff_t rd_offset = 0;
     const netparser::IpHeaderView iph{
@@ -30,27 +20,34 @@ void Tcp::dispatch_packet(Tun& tun, const std::span<const std::byte> buf)
         rd_offset += tcph.data_off() * 4UL;
         const Quad quad{ .src_addr = iph.source_addr(), .src_port = tcph.source_port(), .dst_addr = iph.dest_addr(),
                          .dst_port = tcph.dest_port() };
-        auto conn_iter = connections.find(quad);
-        if (conn_iter != connections.end()) {
+
+
+        if (auto eiter = established_connections_.find(quad); eiter != established_connections_.end()){
+            auto &conn = eiter->second;
             const std::span<const std::byte> payload{ std::next(buf.data(), rd_offset),
                                                       buf.size() - static_cast<std::size_t>(rd_offset) };
-            conn_iter->second->on_packet(tun, iph, tcph, payload);
-            if (conn_iter->second->get_state() == TcpState::CLOSED) {
-                std::println("Delete TCB!!!!!!!!");
-                connections.erase(conn_iter);// TODO: this may cause problems when waiting on a cond var
+            conn->on_packet(tun, iph, tcph, payload);
+            if (conn->get_state() == TcpState::CLOSED) {
+                std::println("DELETED CONNECTION");
+                established_connections_.erase(eiter);
+            }
+        } else if (bound_.contains(quad.dst_port)) {
+            if (auto riter = syn_recv_connections_.find(quad); riter != syn_recv_connections_.end()) {
+                auto& conn = riter->second;
+                conn->on_packet(tun, iph, tcph, {});
+                if (conn->get_state() == TcpState::ESTAB) { // Now its fully estab conn, also check for any states besides "opening" states (is_synchronized)
+                    established_connections_.emplace(quad, std::unique_ptr<TcpConnection>(conn.release()));
+                    syn_recv_connections_.erase(riter);
+                    bound_.find(quad.dst_port)->second.push_back(quad);
+                    accept_var_.notify_all();
+                }
+            } else {
+                auto [conn_iter, inserted] = syn_recv_connections_.emplace(quad, std::make_unique<TcpConnection>());
+                assert(inserted);
+                conn_iter->second->accept(tun, iph, tcph);
             }
         } else {
-            auto p_iter = pending.find(quad.dst_port);
-            if (p_iter != pending.end()) {
-                std::println("accepting");
-                // Add this new connection to the list of pending connections, then notify userspace
-                p_iter->second.push_back(quad);
-                accept(tun, iph, tcph);
-
-                accept_var_.notify_all();
-            } else {
-                // TODO: Send RST
-            }
+            // Send RST
         }
     }
 }
@@ -69,7 +66,9 @@ void Tcp::process_packet(Tun &tun)
         throw std::runtime_error(std::format("poll failed: {}", std::strerror(errno)));// NOLINT
     }
 
-    for (const auto &[quad, conn] : connections) { conn->on_tick(tun); }
+    // It makes sence to call on_tick on syn_recv_conns, because they may retransmit SYNACK
+    for (const auto &[quad, conn] : syn_recv_connections_) { conn->on_tick(tun); }
+    for (const auto &[quad, conn] : established_connections_) { conn->on_tick(tun); }
 
     if (ret == 0) {
         return;// Nothing to read
@@ -82,13 +81,6 @@ void Tcp::process_packet(Tun &tun)
     dispatch_packet(tun, std::span<const std::byte>(buf.data(), (size_t)rd_bytes));
 }
 
-Quad Tcp::pop_pending(const std::uint16_t port)
-{
-    auto iter = pending.find(port);
-    auto res = std::move(iter->second.front());
-    iter->second.pop_front();
-    return res;
-}
 
 Quad Tcp::connect(Tun &tun, const std::uint32_t daddr, const std::uint16_t dport)
 {
@@ -103,7 +95,7 @@ Quad Tcp::connect(Tun &tun, const std::uint32_t daddr, const std::uint16_t dport
     std::uint16_t port = static_cast<std::uint16_t>(dist(gen));
     Quad quad{ daddr, dport, s_addr, port };
 
-    auto [iter, inserted] = connections.emplace(quad, std::make_unique<TcpConnection>());
+    auto [iter, inserted] = established_connections_.emplace(quad, std::make_unique<TcpConnection>());
     assert(inserted);
     auto &conn = iter->second;
 
@@ -113,6 +105,6 @@ Quad Tcp::connect(Tun &tun, const std::uint32_t daddr, const std::uint16_t dport
 
 void Tcp::bind(const std::uint16_t port)
 {
-    if (pending.contains(port)) { throw std::runtime_error("Already bound"); }
-    pending.emplace(port, std::deque<Quad>{});
+    if (bound_.contains(port)) { throw std::runtime_error("Already bound"); }
+    bound_.emplace(port, std::deque<Quad>());
 }

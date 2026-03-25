@@ -105,17 +105,9 @@ public:
         ctx_.tcp.bind(port);
     }
 
-    void listen(int backlog)
+    void listen([[maybe_unused]] int backlog)
     {
-        assert(backlog > 0);
-        // TODO: set max capacity
-        auto &ctx_ = Context::instance();
-        std::unique_lock lock{ ctx_.mx };
 
-        assert(ctx_.tcp.has_pending(port_));
-
-        // TODO: find a way to set a limit
-        // iter->second.reserve(static_cast<std::size_t>(backlog));
     }
 
     TcpSocket accept()
@@ -125,17 +117,9 @@ public:
         // TODO: maybe make it in 1 step some time later
         std::unique_lock accept_lock{ ctx_.mx };
         ctx_.tcp.get_accept_var().wait(accept_lock,
-            [this, &ctx_] { return ctx_.tcp.has_pending(port_) && !ctx_.tcp.is_pending_empty(port_); });
-
-        auto quad = ctx_.tcp.pop_pending(port_);
-
-        // TODO: Fix, this causes first SYN to retransmit
-        // Mutex is locked again at this point
-        auto &conn = ctx_.tcp.get_connection(quad);
-        conn.get_connect_var().wait(accept_lock);
-
-        // At this point 3 way handshake is likely to be complete
-        assert(conn.get_state() == TcpState::ESTAB);
+            [this, &ctx_] { return ctx_.tcp.has_conn_on_port(port_); });
+        std::println("AFTER ACCEPT WAIT");
+        auto quad = ctx_.tcp.pop_conn(port_);
         TcpSocket ret{ quad };
         return ret;
     }
@@ -187,6 +171,7 @@ int main()
     std::println("user: bound and listening");
     auto sock = listener.accept();
     std::println("user: accepted");
+    // return -1;
     while (true) {
         std::array<char, 512> buf{};
         auto rd = sock.read(buf.data(), buf.size());

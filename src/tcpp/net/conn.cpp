@@ -517,7 +517,6 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
         send_.wnd = tcph.window();
 
         // SEt ISS
-        // TODO: use a better mechanism, just 10 for now
         std::random_device rnd;
         std::mt19937 gen(rnd());
         std::uniform_int_distribution<std::uint32_t> dis(std::numeric_limits<std::uint32_t>::min(),

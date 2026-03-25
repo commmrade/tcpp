@@ -21,13 +21,22 @@ public:
 
     TcpConnection &get_connection(const Quad &quad)
     {
-        assert(connections.contains(quad));
-        return *connections.find(quad)->second;
+        assert(established_connections_.contains(quad) && established_connections_.find(quad)->second);
+        return *established_connections_.find(quad)->second;
     }
 
-    bool has_pending(const std::uint16_t port) const { return pending.contains(port); }
-    bool is_pending_empty(const std::uint16_t port) const { return pending.find(port)->second.empty(); }
-    Quad pop_pending(const std::uint16_t port);
+    bool has_conn_on_port(const std::uint16_t port) const
+    {
+        return !bound_.find(port)->second.empty();
+    }
+    Quad pop_conn(const std::uint16_t port)
+    {
+        auto iter = bound_.find(port);
+
+        auto quad = iter->second.front();
+        iter->second.pop_front();
+        return quad;
+    }
 
     // "USERSPACE" functions
     void bind(const std::uint16_t port);
@@ -35,16 +44,16 @@ public:
 
 private:
     // Accept a SYN packet
-    void accept(Tun &tun, const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph);
-
     void dispatch_packet(Tun& tun, const std::span<const std::byte> buf);
 
-    using PortType = std::uint16_t;
-    std::unordered_map<Quad, std::unique_ptr<TcpConnection>> connections;
-    // Sockets that are ready to be accepted. When they are accepted, they are removed from this queue.
-    std::unordered_map<PortType, std::deque<Quad>> pending;
-    std::condition_variable accept_var_;
+    // A set of ports that are bound and unaccepted conns
+    std::unordered_map<std::uint16_t, std::deque<Quad>> bound_;
 
+    // Connections that are in SYN_RCVD state
+    std::unordered_map<Quad, std::unique_ptr<TcpConnection>> syn_recv_connections_{};
+    // Established and "active-opened" connections
+    std::unordered_map<Quad, std::unique_ptr<TcpConnection>> established_connections_{};
+    std::condition_variable accept_var_;
 };
 
 #endif //TCPP_TCP_HPP
