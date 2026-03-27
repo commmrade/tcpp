@@ -131,8 +131,8 @@ std::jthread run_underlying_stuff()
     ctx.tun.set_addr("10.0.0.1");
     ctx.tun.set_mask("255.255.255.0");
     ctx.tun.set_flags(IFF_UP | IFF_RUNNING);
-    std::jthread tcp_thread{ [] {
-            while (true) {// NOLINT
+    std::jthread tcp_thread{ [](std::stop_token tok) {
+            while (!tok.stop_requested()) {// NOLINT
                 auto &ctx = Context::instance();
                 std::unique_lock lock{ ctx.mx };
                 ctx.tcp.process_packet(ctx.tun);
@@ -222,7 +222,7 @@ int main()
     //     }
     // }
 
-    sleep(2);
+    net_thread.request_stop();
     net_thread.join();
     return 0;
 }

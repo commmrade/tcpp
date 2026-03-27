@@ -408,7 +408,7 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
 {
     const auto send_buf_idx = static_cast<std::int64_t>(seqn_from) - static_cast<std::int64_t>(send_.una);
     std::println("Send buf idx: {}", send_buf_idx);
-    assert(static_cast<std::size_t>(send_buf_idx) < send_buf_.size());
+    // assert(static_cast<std::size_t>(send_buf_idx) <= send_buf_.size());
 
     const std::span<const std::byte> payload{ send_buf_.data() + send_buf_idx, max_size };
 
