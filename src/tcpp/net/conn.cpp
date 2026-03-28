@@ -367,7 +367,7 @@ bool TcpConnection::handle_send(Tun &tun)
     // TODO: cong. control things. basically calculate how many bytes to send
     if (!send_buf_.empty()) {
         const auto in_flight_n = send_.nxt - send_.una;
-        const auto bytes_to_send = std::min({static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n, static_cast<std::size_t>(send_.wnd)});
+        const auto bytes_to_send = std::min({static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n, static_cast<std::size_t>(send_.wnd - in_flight_n)});
         if (bytes_to_send) {
             tcph_.ack(true);
             send(tun, send_.nxt, bytes_to_send);
