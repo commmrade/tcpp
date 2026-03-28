@@ -174,7 +174,14 @@ bool TcpConnection::handle_seg_text(Tun &tun,
 
         append_recv_data(payload);
         recv_.nxt += payload.size() + (tcph.syn() ? 1 : 0);// FIN is handled in handle_fin()
-        recv_.wnd = recv_mss_ * 3;//TODO: CALC PROEPRLY
+
+        // So, we either keep the window size at max, or set it to available buffer space if it is getting smaller than max win. size
+        auto new_wnd = static_cast<std::uint32_t>(std::min(static_cast<std::size_t>(recv_mss_ * 3), recv_buf_.max_size() - recv_buf_.size()));
+        if (recv_.wnd < new_wnd) { // Can't let the window "shrink"
+            recv_.wnd = new_wnd;
+        }
+        // TODO: handle SWS
+
         // Make sure RCV.WND right edge doesn't shift left
         tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
         tcph_.ack(true);
@@ -360,7 +367,7 @@ bool TcpConnection::handle_send(Tun &tun)
     // TODO: cong. control things. basically calculate how many bytes to send
     if (!send_buf_.empty()) {
         const auto in_flight_n = send_.nxt - send_.una;
-        const auto bytes_to_send = std::min(static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n);
+        const auto bytes_to_send = std::min({static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n, static_cast<std::size_t>(send_.wnd)});
         if (bytes_to_send) {
             tcph_.ack(true);
             send(tun, send_.nxt, bytes_to_send);
