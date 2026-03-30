@@ -174,6 +174,7 @@ int main()
     // return -1;
     while (true) {
         std::array<char, 512> buf{};
+        sleep(15);
         auto rd = sock.read(buf.data(), buf.size());
         if (strncmp(buf.data(), "exit", 4) == 0) {
             sock.close();
@@ -222,6 +223,7 @@ int main()
     //     }
     // }
 
+    sleep(2);
     net_thread.request_stop();
     net_thread.join();
     return 0;

@@ -132,6 +132,14 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
                 send_.wl2 = tcph.ackn();
             }
         }
+
+        if (tcph.window() == 0 && !send_buf_.empty()) {
+            // At this point we have to start zero window probing, possibly using retransmission timer, so we don't have to code separate logic
+            // start_timer(send_.nxt, rtt_measurement_.rto_ms);
+
+            // TODO: make sure that there is at least 1 byte of data in send_buf_, if no data send a (SND.NXT - 1) segment?
+            send(tun, send_.nxt, 1);
+        }
         break;
     }
     case TcpState::LAST_ACK: {
@@ -172,22 +180,26 @@ bool TcpConnection::handle_seg_text(Tun &tun,
             return true;
         }
 
+        const auto payload_size = payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
         append_recv_data(payload);
-        recv_.nxt += payload.size() + (tcph.syn() ? 1 : 0);// FIN is handled in handle_fin()
+        recv_.nxt += payload_size; // FIN is handled in handle_fin()
 
         // So, we either keep the window size at max, or set it to available buffer space if it is getting smaller than max win. size
+
+        // Zero window and SWS receiver stuff here
         auto new_wnd = static_cast<std::uint32_t>(std::min(static_cast<std::size_t>(recv_mss_ * 3), recv_buf_.max_size() - recv_buf_.size()));
-        if (recv_.wnd < new_wnd) { // Can't let the window "shrink"
+        if (recv_.wnd - payload_size <= new_wnd) { // Can't let the window "shrink"
             recv_.wnd = new_wnd;
         }
-        // TODO: handle SWS
 
         // Make sure RCV.WND right edge doesn't shift left
         tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
         tcph_.ack(true);
-        send(tun, send_.nxt, 0);// TODO: piggyback this
+        if (!tcph_.fin() && payload_size) {
+            send(tun, send_.nxt, 0);// TODO: piggyback this
+            recv_var_.notify_all();
+        }
 
-        recv_var_.notify_all();
         break;
     }
     case TcpState::CLOSE_WAIT:
@@ -198,7 +210,8 @@ bool TcpConnection::handle_seg_text(Tun &tun,
         break;
     }
     default:
-        assert(0 && "This should not happen");
+        // assert(0 && "This should not happen");
+        break;
     }
     return true;
 }
@@ -208,10 +221,10 @@ bool TcpConnection::handle_fin(Tun &tun, const netparser::TcpHeaderView &tcph, s
     is_finished_ = true;
 
     recv_var_.notify_all();// Notify socekts about a read, now they should check is_finished
-    recv_.nxt += 1;// Advance over FIN bit
+    // recv_.nxt += 1;// Advance over FIN bit
 
-    tcph_.ack(true);
-    send(tun, send_.nxt, 0);
+    // tcph_.ack(true);
+    // send(tun, send_.nxt, 0);
 
     switch (state_) {
     case TcpState::ESTAB: {
@@ -337,7 +350,8 @@ bool TcpConnection::handle_segment_other(Tun &tun,
     // TODO: Check URG bit
     if (tcph.urg()) { if (!handle_urg(tun, tcph, payload)) { return false; } }// NOLINT
 
-    if (!payload.empty()) { if (!handle_seg_text(tun, tcph, payload)) { return false; } }// NOLINT
+    // if (!payload.empty()) {  }// NOLINT
+    if (!handle_seg_text(tun, tcph, payload)) { return false; }
 
     // TODO: Check FIN bit
     if (tcph.fin()) { if (!handle_fin(tun, tcph, payload)) { return false; } }// NOLINT
@@ -681,7 +695,7 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
             }
         }
 
-        send(tun, send_.una, bytes_to_send);
+        send(tun, timer_.timer_start_seq_at, bytes_to_send);
     }
 
 
