@@ -174,6 +174,7 @@ int main()
     // return -1;
     while (true) {
         std::array<char, 512> buf{};
+        auto d = getchar();
         auto rd = sock.read(buf.data(), buf.size());
         if (strncmp(buf.data(), "exit", 4) == 0) {
             sock.close();

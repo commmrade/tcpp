@@ -103,8 +103,8 @@ private:
     bool handle_seg_text(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
     bool handle_fin(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
 
-    void handle_recv_window(const netparser::TcpHeaderView& tcph, const std::size_t payload_size, const std::uint32_t old_wnd_size);
-    void handle_send_window(Tun& tun, const std::uint32_t old_wnd_size);
+    void update_recv_window();
+    void update_send_window(Tun& tun, const std::uint32_t old_wnd_size);
 
     bool handle_segment_syn_sent(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
     bool handle_segment_other(Tun& tun, const netparser::TcpHeaderView& tcph, std::span<const std::byte> payload);
@@ -163,7 +163,7 @@ private:
     // My MSS (what this host can send)
     std::uint16_t send_mss_{ 536 };
     // Their MSS (what that host can send
-    std::uint16_t recv_mss_{ 1460 };
+    std::uint16_t recv_mss_{ 15 }; // TODO: DONT FORGET TO SET BACK TO 1440
     // Buffers and stuff
     bool should_send_fin_{ false };// TODO: Get rid of this. This should be sent after all data in buffers is sent
     bool is_finished_{ false };

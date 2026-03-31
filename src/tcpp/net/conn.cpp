@@ -107,6 +107,11 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
     case TcpState::ESTAB: {
         // TODO: HANDLE ACK FOR SYn/FIN
         const auto old_wnd = send_.wnd;
+
+        if (tcph.seqn() == recv_.nxt - 1) { // It is a window probe probably (at least Linux Net. Stack one)
+            tcph_.ack(true);
+            send(tun, send_.nxt, 0);
+        }
         if (is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
             const auto acked_bytes_n = tcph.ackn() - send_.una;// This wraps fine
             if (!send_buf_.empty()) {
@@ -134,6 +139,7 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
             }
         }
 
+        update_send_window(tun, old_wnd);
         break;
     }
     case TcpState::LAST_ACK: {
@@ -158,22 +164,24 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, s
     return true;
 }
 
-void TcpConnection::handle_recv_window(const netparser::TcpHeaderView &tcph,
-    const std::size_t payload_size,
-    const std::uint32_t old_wnd_size)
+void TcpConnection::update_recv_window()
 {
     // Zero window and SWS receiver stuff here
-    // TODO: this overflows because of recv_buf.max_size(), so later I should use options to scale window size
+    // TODO: once i impl. segmentation, use proper size
+    // constexpr auto MAX_BUFFER_SIZE = std::numeric_limits<std::uint16_t>::max();
+    // TODO: Dont forget to set it back
+    constexpr auto MAX_BUFFER_SIZE = 50;
     auto new_wnd = static_cast<std::uint32_t>(std::min(static_cast<std::uint16_t>(recv_mss_ * 3),
-        static_cast<std::uint16_t>(std::numeric_limits<std::uint16_t>::max() - recv_buf_.size())));
-    if (old_wnd_size <= new_wnd) {
-        // Can't let the window "shrink", if old window is bigger than new_wnd, then the window shrank
-        // TODO: SWS STUFF HERE
-        recv_.wnd = new_wnd;
+        static_cast<std::uint16_t>(MAX_BUFFER_SIZE - recv_buf_.size())));
+
+    // Can't let the window "shrink", if old window is bigger than new_wnd, then the window shrank
+    if (MAX_BUFFER_SIZE >= recv_buf_.size() && MAX_BUFFER_SIZE - recv_buf_.size() - recv_.wnd >= std::min<std::size_t>(MAX_BUFFER_SIZE / 2, recv_mss_)) {
+        std::println("MAX WND: {}, recv buf: {}", MAX_BUFFER_SIZE, recv_buf_.size());
+        recv_.wnd = static_cast<std::uint32_t>(MAX_BUFFER_SIZE - recv_buf_.size());
     }
 }
 
-void TcpConnection::handle_send_window(Tun &tun,
+void TcpConnection::update_send_window(Tun &tun,
     const std::uint32_t old_wnd_size)
 {
     // Zero Window Probing is only for cases when there is data to send
@@ -359,8 +367,6 @@ bool TcpConnection::handle_segment_other(Tun &tun,
     if (tcph.syn()) { if (!handle_syn(tun, tcph, payload)) { return false; } }// NOLINT
 
     // Fifth, check the ACK field
-    const auto old_recv_wnd_size = recv_.wnd;
-    const auto old_send_wnd_size = send_.wnd;
     if (!tcph.ack()) { return false; }
     if (!handle_ack(tun, tcph, payload)) { return false; }
 
@@ -368,10 +374,9 @@ bool TcpConnection::handle_segment_other(Tun &tun,
     if (tcph.urg()) { if (!handle_urg(tun, tcph, payload)) { return false; } }// NOLINT
 
     const auto payload_size = payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
-    if (payload_size > 0) { if (!handle_seg_text(tun, tcph, payload)) { return false; } }
-
-    handle_recv_window(tcph, payload_size, old_recv_wnd_size);
-    handle_send_window(tun, old_send_wnd_size);
+    if (payload_size > 0) {
+        if (!handle_seg_text(tun, tcph, payload)) { return false; }
+    }
 
     // TODO: Check FIN bit
     if (tcph.fin()) { if (!handle_fin(tun, tcph, payload)) { return false; } }// NOLINT
@@ -463,7 +468,9 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
 
     tcph_.seqn(seqn_from);
     tcph_.ackn(recv_.nxt);
-    tcph_.window(static_cast<std::uint16_t>(recv_.nxt));
+
+    update_recv_window();
+    tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
     const auto tcph_size = static_cast<std::uint8_t>(netparser::TCPH_MIN_SIZE + tcph_.options().options_size());
     tcph_.data_off(tcph_size / 4);
     tcph_.calculate_checksum(iph_, payload);
