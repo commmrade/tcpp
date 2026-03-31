@@ -64,6 +64,7 @@ struct Timer
 {
     std::optional<std::int64_t> timer_start{};
     std::uint32_t timer_start_seq_at{};
+    std::uint32_t timer_data_length{};
     std::int64_t timer_expire_at{-1};
 };
 
@@ -102,6 +103,9 @@ private:
     bool handle_seg_text(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
     bool handle_fin(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
 
+    void handle_recv_window(const netparser::TcpHeaderView& tcph, const std::size_t payload_size, const std::uint32_t old_wnd_size);
+    void handle_send_window(Tun& tun, const std::uint32_t old_wnd_size);
+
     bool handle_segment_syn_sent(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
     bool handle_segment_other(Tun& tun, const netparser::TcpHeaderView& tcph, std::span<const std::byte> payload);
     void on_packet(Tun &tun,
@@ -133,8 +137,9 @@ private:
     void start_measure_rtt(const std::uint32_t seq_n);
     void stop_measure_rtt();
     void measure_rtt(const std::uint32_t ack_n);
+    void reset_rtt();
 
-    void start_timer(const std::uint32_t seq_n, const std::uint32_t rto_ms);
+    void start_timer(const std::uint32_t seq_n, const std::uint32_t data_len, const std::uint32_t rto_ms);
     void stop_timer();
     void handle_timer_retransmit(Tun& tun);
 
@@ -171,6 +176,9 @@ private:
     bool retransmit_fin_test_{false};
     bool retransmit_syn_test_{false};
     // retransmissions -----
+
+    // Zeor window timer
+    bool is_zwp{false};
 };
 
 

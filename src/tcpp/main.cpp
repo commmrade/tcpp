@@ -165,32 +165,32 @@ int main()
     //     }
     // }};
 
-    TcpListener listener{};
-    listener.bind(8090);
-    listener.listen(999);
-    std::println("user: bound and listening");
-    auto sock = listener.accept();
-    std::println("user: accepted");
-    // return -1;
-    while (true) {
-        std::array<char, 512> buf{};
-        sleep(15);
-        auto rd = sock.read(buf.data(), buf.size());
-        if (strncmp(buf.data(), "exit", 4) == 0) {
-            sock.close();
-            break;
-        }
-        if (rd == 0) {
-            std::println("user: DATA FINISHED, CLOSING...");
-            break;
-        } else {
-            std::println("user: got data {} bytes - '{}'",
-                rd,
-                std::string_view{ buf.data(), static_cast<std::size_t>(rd) });
-            auto wr = sock.write(buf.data(), static_cast<std::size_t>(rd));
-            // std::println("user: wrote {} bytes", wr);
-        }
-    }
+    // TcpListener listener{};
+    // listener.bind(8090);
+    // listener.listen(999);
+    // std::println("user: bound and listening");
+    // auto sock = listener.accept();
+    // std::println("user: accepted");
+    // // return -1;
+    // while (true) {
+    //     std::array<char, 512> buf{};
+    //     sleep(15);
+    //     auto rd = sock.read(buf.data(), buf.size());
+    //     if (strncmp(buf.data(), "exit", 4) == 0) {
+    //         sock.close();
+    //         break;
+    //     }
+    //     if (rd == 0) {
+    //         std::println("user: DATA FINISHED, CLOSING...");
+    //         break;
+    //     } else {
+    //         std::println("user: got data {} bytes - '{}'",
+    //             rd,
+    //             std::string_view{ buf.data(), static_cast<std::size_t>(rd) });
+    //         auto wr = sock.write(buf.data(), static_cast<std::size_t>(rd));
+    //         // std::println("user: wrote {} bytes", wr);
+    //     }
+    // }
 
 
     // Test FIN
@@ -205,23 +205,16 @@ int main()
 
 
     //
-    // sleep(3); // Wait for py test thing to start
-    // TcpSocket sock{};
-    // sock.connect("10.0.0.1", 8090);
-    //
-    // while (true) {
-    //     std::array<char, 512> buf{};
-    //
-    //     auto wr = sock.write("exit", 4);
-    //     std::println("user: written exit");
-    //
-    //     auto rd = sock.read(buf.data(), buf.size());
-    //     std::println("user: rd {}", rd);
-    //     if (rd == 0) {
-    //         std::println("user: FIN");
-    //         break;
-    //     }
-    // }
+    sleep(3); // Wait for py test thing to start
+    TcpSocket sock{};
+    sock.connect("10.0.0.1", 8090);
+
+    while (true) {
+        std::array<char, 100> buf{};
+        std::memset(buf.data(), 'c', buf.size());
+        auto wr = sock.write(buf.data(), buf.size());
+        sleep(1);
+    }
 
     sleep(2);
     net_thread.request_stop();
