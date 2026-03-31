@@ -163,8 +163,9 @@ void TcpConnection::handle_recv_window(const netparser::TcpHeaderView &tcph,
     const std::uint32_t old_wnd_size)
 {
     // Zero window and SWS receiver stuff here
-    auto new_wnd = static_cast<std::uint32_t>(std::min(static_cast<std::size_t>(recv_mss_ * 3),
-        recv_buf_.max_size() - recv_buf_.size()));
+    // TODO: this overflows because of recv_buf.max_size(), so later I should use options to scale window size
+    auto new_wnd = static_cast<std::uint32_t>(std::min(static_cast<std::uint16_t>(recv_mss_ * 3),
+        static_cast<std::uint16_t>(std::numeric_limits<std::uint16_t>::max() - recv_buf_.size())));
     if (old_wnd_size <= new_wnd) {
         // Can't let the window "shrink", if old window is bigger than new_wnd, then the window shrank
         // TODO: SWS STUFF HERE
