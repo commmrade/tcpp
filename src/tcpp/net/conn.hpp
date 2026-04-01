@@ -62,10 +62,23 @@ struct RttMeasurement
 
 struct Timer
 {
+    enum class TimerState : std::uint8_t
+    {
+        RETRANSMISSION,
+        ZWP,
+        SWS_OVERRIDE
+    };
     std::optional<std::int64_t> timer_start{};
     std::uint32_t timer_start_seq_at{};
     std::uint32_t timer_data_length{};
     std::int64_t timer_expire_at{-1};
+
+    TimerState state{TimerState::RETRANSMISSION};
+
+    bool is_armed(const TimerState tstate) const
+    {
+        return timer_start.has_value() && state == tstate;
+    }
 };
 
 class Tcp;
@@ -139,11 +152,13 @@ private:
     void measure_rtt(const std::uint32_t ack_n);
     void reset_rtt();
 
-    void start_timer(const std::uint32_t seq_n, const std::uint32_t data_len, const std::uint32_t rto_ms);
+    void start_timer(const std::uint32_t seq_n, const std::uint32_t data_len, const std::uint32_t rto_ms, const Timer::TimerState start_state);
     void stop_timer();
     void handle_timer_retransmit(Tun& tun);
 
     void update_timer(Tun& tun, const std::uint32_t ack_n);
+
+    void set_send_wnd(const std::uint32_t wnd);
 
     friend class Tcp;
     std::condition_variable recv_var_;// Notified when something is received
@@ -156,6 +171,7 @@ private:
 
     // Tcp protocol stuff
     SendSequence send_;
+    std::uint32_t send_wnd_max_;
     Buffer send_buf_;
     ReceiveSequence recv_;
     Buffer recv_buf_;// First element is SND.UNA, last is SND.UNA + SND.WND
@@ -163,7 +179,7 @@ private:
     // My MSS (what this host can send)
     std::uint16_t send_mss_{ 536 };
     // Their MSS (what that host can send
-    std::uint16_t recv_mss_{ 15 }; // TODO: DONT FORGET TO SET BACK TO 1440
+    std::uint16_t recv_mss_{ 1440 };
     // Buffers and stuff
     bool should_send_fin_{ false };// TODO: Get rid of this. This should be sent after all data in buffers is sent
     bool is_finished_{ false };
@@ -178,7 +194,8 @@ private:
     // retransmissions -----
 
     // Zeor window timer
-    bool is_zwp{false};
+    // bool is_zwp{false};
+    // bool is_sws_override{false};
 };
 
 
