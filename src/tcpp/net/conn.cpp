@@ -188,13 +188,13 @@ void TcpConnection::update_send_window(Tun &tun,
 
     // There is no point in ZWP if no data to send
     if (!send_buf_.empty()) {
-        if (send_.wnd == 0 && /*!timer_.is_armed(Timer::TimerState::ZWP)*/ timer_.state != Timer::TimerState::ZWP) {
+        if (send_.wnd == 0 && !timer_.is_armed(Timer::TimerState::ZWP)) {
             assert(!send_buf_.empty());
             const auto seq_num = send_.una;
             rtt_measurement_.rto_ms = 1000;
             stop_timer();
             std::println("START ZWP TIMER AGAIN");
-            start_timer(send_.una, 1, rtt_measurement_.rto_ms, Timer::TimerState::ZWP);
+            start_timer(seq_num, 1, rtt_measurement_.rto_ms, Timer::TimerState::ZWP);
         } else if (old_wnd_size == 0 && send_.wnd > 0 && timer_.is_armed(Timer::TimerState::ZWP)) {
             // is_zwp = false;
             // Not zero response
