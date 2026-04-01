@@ -63,10 +63,20 @@ struct TcpSocket
     ssize_t write(const void *buf, const std::size_t buf_sz)
     {
         auto &ctx = Context::instance();
-        std::unique_lock ctx_lock{ ctx.mx };
-        std::println("user: take lock to write");
-        auto &conn = ctx.tcp.get_connection(quad_);
-        return conn.write(buf, buf_sz);
+        std::size_t sent_total = 0;
+        while (sent_total < buf_sz) {
+            std::unique_lock send_lock{ ctx.mx };
+            std::println("user: take lock to write");
+            auto &conn = ctx.tcp.get_connection(quad_);
+            conn.get_send_var().wait(send_lock, [&conn] { return conn.send_buf_free_space() > 0; });
+
+            const auto result = conn.write(buf, buf_sz);
+            if (result < 0) {
+                throw std::runtime_error("Write error");
+            }
+            sent_total += static_cast<std::size_t>(result);
+        }
+        return static_cast<ssize_t>(sent_total);
     }
 
     // This will initiase a one-side close (send FIN)
@@ -165,32 +175,32 @@ int main()
     //     }
     // }};
 
-    TcpListener listener{};
-    listener.bind(8090);
-    listener.listen(999);
-    std::println("user: bound and listening");
-    auto sock = listener.accept();
-    std::println("user: accepted");
-    // return -1;
-    while (true) {
-        std::array<char, 512> buf{};
-        auto rd = sock.read(buf.data(), buf.size());
-        if (strncmp(buf.data(), "exit", 4) == 0) {
-            sock.close();
-            break;
-        }
-        if (rd == 0) {
-            std::println("user: DATA FINISHED, CLOSING...");
-            break;
-        } else {
-            std::println("user: got data {} bytes - '{}'",
-                rd,
-                std::string_view{ buf.data(), static_cast<std::size_t>(rd) });
-            auto wr = sock.write(buf.data(), static_cast<std::size_t>(rd));
-            // std::println("user: wrote {} bytes", wr);
-        }
-    }
-
+    // TcpListener listener{};
+    // listener.bind(8090);
+    // listener.listen(999);
+    // std::println("user: bound and listening");
+    // auto sock = listener.accept();
+    // std::println("user: accepted");
+    // // return -1;
+    // while (true) {
+    //     std::array<char, 512> buf{};
+    //     auto rd = sock.read(buf.data(), buf.size());
+    //     if (strncmp(buf.data(), "exit", 4) == 0) {
+    //         sock.close();
+    //         break;
+    //     }
+    //     if (rd == 0) {
+    //         std::println("user: DATA FINISHED, CLOSING...");
+    //         break;
+    //     } else {
+    //         std::println("user: got data {} bytes - '{}'",
+    //             rd,
+    //             std::string_view{ buf.data(), static_cast<std::size_t>(rd) });
+    //         auto wr = sock.write(buf.data(), static_cast<std::size_t>(rd));
+    //         // std::println("user: wrote {} bytes", wr);
+    //     }
+    // }
+    //
 
     // Test FIN
     // TcpListener listener{};
@@ -204,17 +214,17 @@ int main()
 
 
     //
-    // sleep(3); // Wait for py test thing to start
-    // TcpSocket sock{};
-    // sock.connect("10.0.0.1", 8090);
-    //
-    // while (true) {
-    //     std::array<char, 100> buf{};
-    //     std::memset(buf.data(), 'c', buf.size());
-    //     auto wr = sock.write(buf.data(), buf.size());
-    //     // sleep(1);
-    //     auto c = getchar();
-    // }
+    sleep(3); // Wait for py test thing to start
+    TcpSocket sock{};
+    sock.connect("10.0.0.1", 8090);
+
+    while (true) {
+        std::array<char, 100> buf{};
+        std::memset(buf.data(), 'c', buf.size());
+        auto wr = sock.write(buf.data(), buf.size());
+        // sleep(1);
+        auto c = getchar();
+    }
 
     sleep(2);
     net_thread.request_stop();

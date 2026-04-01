@@ -90,6 +90,7 @@ public:
     // Helpers
     std::condition_variable &get_connect_var() { return conn_var_; }
     std::condition_variable &get_recv_var() { return recv_var_; }
+    std::condition_variable &get_send_var() { return send_var_; }
     bool is_recv_empty() const { return recv_buf_.empty(); }
     bool is_finished() const { return is_finished_; }
     TcpState get_state() const { return state_; }
@@ -100,6 +101,7 @@ public:
     ssize_t read(void *buf, const std::size_t buf_size);
     ssize_t write(const void *buf, const std::size_t buf_size);
 
+    std::size_t send_buf_free_space() const { return std::numeric_limits<std::uint16_t>::max() - send_buf_.size(); }
 private:
     void append_send_data(const std::span<const std::byte> data);
     void append_recv_data(const std::span<const std::byte> data);
@@ -163,6 +165,7 @@ private:
     friend class Tcp;
     std::condition_variable recv_var_;// Notified when something is received
     std::condition_variable conn_var_;// Notified when 3 way handshake is done (both active and passive)
+    std::condition_variable send_var_; // Notified when there is free space in send_buffer
 
     // Not tcp protocol things
     // So I don't need to recreate ip header or tcp header each write

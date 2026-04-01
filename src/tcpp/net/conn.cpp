@@ -11,6 +11,7 @@ void TcpConnection::append_recv_data(const std::span<const std::byte> data) { re
 void TcpConnection::erase_send_data(const std::size_t bytes_n)
 {
     send_buf_.erase(send_buf_.begin(), send_buf_.begin() + static_cast<const std::ptrdiff_t>(bytes_n));
+    send_var_.notify_all();
 }
 
 void TcpConnection::erase_recv_data(const std::size_t bytes_n)
@@ -187,11 +188,12 @@ void TcpConnection::update_send_window(Tun &tun,
 
     // There is no point in ZWP if no data to send
     if (!send_buf_.empty()) {
-        if (send_.wnd == 0 && !timer_.is_armed(Timer::TimerState::ZWP)) {
+        if (send_.wnd == 0 && /*!timer_.is_armed(Timer::TimerState::ZWP)*/ timer_.state != Timer::TimerState::ZWP) {
             assert(!send_buf_.empty());
             const auto seq_num = send_.una;
             rtt_measurement_.rto_ms = 1000;
             stop_timer();
+            std::println("START ZWP TIMER AGAIN");
             start_timer(send_.una, 1, rtt_measurement_.rto_ms, Timer::TimerState::ZWP);
         } else if (old_wnd_size == 0 && send_.wnd > 0 && timer_.is_armed(Timer::TimerState::ZWP)) {
             // is_zwp = false;
@@ -414,14 +416,13 @@ bool TcpConnection::handle_send(Tun &tun)
         const auto usable_wnd = send_.wnd - in_flight_n;     // U in RFC terms
         const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n,
                                                   static_cast<std::size_t>(send_.wnd - in_flight_n) });
-        // TODO: PUSH flag
-        bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd) ||  (send_.nxt == send_.una && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
-        if (can_send) {
-            tcph_.ack(true);
-            send(tun, send_.nxt, bytes_to_send);
-        } else {
-            // Do not try to send anything if there is absolutely no reason to
-            if (unsent > 0 && send_.wnd > 0) {
+        if (unsent > 0 && send_.wnd > 0) {
+            // TODO: PUSH flag
+            bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd) ||  (send_.nxt == send_.una && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
+            if (can_send) {
+                tcph_.ack(true);
+                send(tun, send_.nxt, bytes_to_send);
+            } else {
                 start_timer(send_.nxt, static_cast<std::uint32_t>(bytes_to_send), 100, Timer::TimerState::SWS_OVERRIDE);
             }
         }
@@ -719,17 +720,17 @@ void TcpConnection::start_timer(const std::uint32_t seq_n, const std::uint32_t d
         timer_.timer_start_seq_at = seq_n;
         timer_.timer_data_length = data_len;
         timer_.state = start_state;
-        std::println("Armed timer until {}. Now is {}. timer seq {}",
+        std::println("Armed timer until {}. Now is {}. timer seq {}, state: {}",
             timer_.timer_expire_at,
             cur_time,
-            timer_.timer_start_seq_at);
+            timer_.timer_start_seq_at, (int)timer_.state);
     }
 }
 
 void TcpConnection::stop_timer()
 {
     timer_.timer_start.reset();
-    timer_.state = Timer::TimerState::RETRANSMISSION;
+    // timer_.state = Timer::TimerState::RETRANSMISSION;
 }
 
 void TcpConnection::handle_timer_retransmit(Tun &tun)
@@ -852,7 +853,6 @@ ssize_t TcpConnection::write(const void *buf, const std::size_t buf_size)
     assert(in_flight_n >= 0);// Well actually TCP allows window shrinks i think but it is highly discouraged
     const auto insert_bytes_n = std::min(buf_size, static_cast<std::size_t>(send_.wnd - in_flight_n));
     // Can't have more bytes, than the window allows
-    std::println("{}. buf size: {}, wnd - flight: {} - {}", __LINE__, buf_size, send_.wnd, in_flight_n);
     // if (insert_bytes_n == 0) { throw std::runtime_error("error: insufficient resources"); }
     if (insert_bytes_n == 0) { return 0; }
 
