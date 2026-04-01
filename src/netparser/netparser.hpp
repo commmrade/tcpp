@@ -3,7 +3,7 @@
 //
 #ifndef TCPP_NETPARSER_H
 #define TCPP_NETPARSER_H
-#include "../../out/build/unixlike-clang-debug/_deps/spdlog-src/include/spdlog/spdlog.h"
+#include <spdlog/spdlog.h>
 
 #include <any>
 #include <cassert>
