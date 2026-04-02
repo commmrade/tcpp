@@ -3,6 +3,7 @@
 //
 
 #include "conn.hpp"
+#include <random>
 
 void TcpConnection::append_send_data(const std::span<const std::byte> data) { send_buf_.append_range(data); }
 
@@ -33,7 +34,7 @@ bool TcpConnection::validate_seq_n(const netparser::TcpHeaderView &tcph, std::sp
     return false;
 }
 
-bool TcpConnection::handle_rst(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+bool TcpConnection::handle_rst(Tun &tun, const netparser::TcpHeaderView &tcph)
 {
     // from 3.10.7.4. Other States later TODO
 
@@ -75,13 +76,13 @@ bool TcpConnection::handle_rst(Tun &tun, const netparser::TcpHeaderView &tcph, s
     return true;
 }
 
-bool TcpConnection::handle_syn(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+bool TcpConnection::handle_syn(Tun &tun, const netparser::TcpHeaderView &tcph)
 {
     // TODO: Challenge ACK in synchronized states <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
     return true;
 }
 
-bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
 {
     measure_rtt(tcph.ackn());
 
@@ -193,7 +194,7 @@ void TcpConnection::update_send_window(Tun &tun,
         if (send_.wnd == 0 && !timer_.is_armed(Timer::TimerState::ZWP)) {
             assert(!send_buf_.empty());
             const auto seq_num = send_.una;
-            rtt_measurement_.rto_ms = 1000;
+            rtt_measurement_.rto_ms = RttMeasurement::DEFAULT_RTO_MS;
             stop_timer();
             std::println("START ZWP TIMER AGAIN");
             start_timer(seq_num, 1, rtt_measurement_.rto_ms, Timer::TimerState::ZWP);
@@ -204,7 +205,7 @@ void TcpConnection::update_send_window(Tun &tun,
 
             // Reset RTO and its vars since it is probably weird
             reset_rtt();
-            rtt_measurement_.rto_ms = 1000;
+            rtt_measurement_.rto_ms = RttMeasurement::DEFAULT_RTO_MS;
 
             // TODO: This is kinda weird??? Maybe I should postone this to on_tick()?? Dunno what to do with it yet.
             const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), static_cast<std::size_t>(send_.wnd),
@@ -259,7 +260,7 @@ bool TcpConnection::handle_seg_text(Tun &tun,
     return true;
 }
 
-bool TcpConnection::handle_fin(Tun &tun, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+bool TcpConnection::handle_fin()
 {
     is_finished_ = true;
     recv_var_.notify_all();// Notify socekts about a read, now they should check is_finished
@@ -285,8 +286,7 @@ bool TcpConnection::handle_fin(Tun &tun, const netparser::TcpHeaderView &tcph, s
 }
 
 bool TcpConnection::handle_segment_syn_sent(Tun &tun,
-    const netparser::TcpHeaderView &tcph,
-    std::span<const std::byte> payload)
+    const netparser::TcpHeaderView &tcph)
 {
     assert(payload.empty());// No support for payload here
 
@@ -369,17 +369,16 @@ bool TcpConnection::handle_segment_other(Tun &tun,
     }
 
     // False signals, that a handler wants to return (usually in drop-and-return situations)
-    if (tcph.rst()) { if (!handle_rst(tun, tcph, payload)) { return false; } }
+    if (tcph.rst()) { if (!handle_rst(tun, tcph)) { return false; } }
 
     // Fourth
-    if (tcph.syn()) { if (!handle_syn(tun, tcph, payload)) { return false; } }// NOLINT
+    if (tcph.syn()) { if (!handle_syn(tun, tcph)) { return false; } }// NOLINT
 
     // Fifth, check the ACK field
     if (!tcph.ack()) { return false; }
-    if (!handle_ack(tun, tcph, payload)) { return false; }
+    if (!handle_ack(tun, tcph)) { return false; }
 
-    // TODO: Check URG bit
-    if (tcph.urg()) { if (!handle_urg(tun, tcph, payload)) { return false; } }// NOLINT
+    // Ignore URG bit
 
     const auto payload_size = payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
     if (payload_size > 0) {
@@ -387,19 +386,18 @@ bool TcpConnection::handle_segment_other(Tun &tun,
     }
 
     // TODO: Check FIN bit
-    if (tcph.fin()) { if (!handle_fin(tun, tcph, payload)) { return false; } }// NOLINT
+    if (tcph.fin()) { if (!handle_fin()) { return false; } }// NOLINT
 
     return true;
 }
 
 void TcpConnection::on_packet(Tun &tun,
-    const netparser::IpHeaderView &iph,
     const netparser::TcpHeaderView &tcph,
     std::span<const std::byte> payload)
 {
     switch (state_) {
     case TcpState::SYN_SENT: {
-        if (!handle_segment_syn_sent(tun, tcph, payload)) { return; }
+        if (!handle_segment_syn_sent(tun, tcph)) { return; }
         break;
     }
     default: {
@@ -426,7 +424,7 @@ bool TcpConnection::handle_send(Tun &tun)
                 tcph_.ack(true);
                 send(tun, send_.nxt, bytes_to_send);
             } else {
-                start_timer(send_.nxt, static_cast<std::uint32_t>(bytes_to_send), 100, Timer::TimerState::SWS_OVERRIDE);
+                start_timer(send_.nxt, static_cast<std::uint32_t>(bytes_to_send), RttMeasurement::SWS_OVERRIDE_MS, Timer::TimerState::SWS_OVERRIDE);
             }
         }
     }
@@ -477,7 +475,7 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
     const std::span<const std::byte> payload{ send_buf_.data() + send_buf_idx, max_size };
 
     iph_.total_len(
-        static_cast<std::uint16_t>(iph_.ihl() * 4 + (netparser::TCPH_MIN_SIZE + tcph_.options().options_size()) +
+        static_cast<std::uint16_t>(static_cast<std::size_t>(iph_.ihl() * 4) + (netparser::TCPH_MIN_SIZE + tcph_.options().options_size()) +
                                    payload.size()));
     iph_.calculate_checksum();
     const auto ip_data = iph_.serialize();
@@ -494,7 +492,7 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
 
 
     std::vector<std::byte> buf{};
-    buf.resize(iph_.ihl() * 4 + tcph_.data_off() * 4 + payload.size());
+    buf.resize(static_cast<std::size_t>(iph_.ihl() * 4) + static_cast<std::size_t>(tcph_.data_off() * 4) + payload.size());
 
     std::size_t offset = 0;
     std::memcpy(buf.data() + offset, ip_data.data(), ip_data.size());// NOLINT
@@ -693,7 +691,7 @@ void TcpConnection::measure_rtt(const std::uint32_t ack_n)
         rtt_measurement_.rto_ms = rtt_measurement_.srtt + std::max(GRAN_MS, 4 * rtt_measurement_.rttvar);
         // Whenever RTO is computed, if it is less than 1 second,
         // then the RTO SHOULD be rounded up to 1 second
-        if (rtt_measurement_.rto_ms < 1000) { rtt_measurement_.rto_ms = 1000; }
+        rtt_measurement_.rto_ms = std::max(rtt_measurement_.rto_ms, RttMeasurement::DEFAULT_RTO_MS);
 
         rtt_measurement_.rtt_ms = static_cast<std::uint32_t>(res);
         assert(rtt_measurement_.rtt_ms);// it shouldn't be 0, otherwise "initial RTT measurement" is broken
@@ -726,7 +724,7 @@ void TcpConnection::start_timer(const std::uint32_t seq_n, const std::uint32_t d
         std::println("Armed timer until {}. Now is {}. timer seq {}, state: {}",
             timer_.timer_expire_at,
             cur_time,
-            timer_.timer_start_seq_at, (int)timer_.state);
+            timer_.timer_start_seq_at, static_cast<int>(timer_.state));
     }
 }
 
@@ -775,12 +773,12 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
     rtt_measurement_.rto_ms = rtt_measurement_.rto_ms * 2;
 
     // These values are likely bogus after several backoffs (3)
-    if (rtt_measurement_.rto_ms > 10000) {
+    constexpr std::uint32_t BACKOFF_THRESHOLD = 10000;
+    if (rtt_measurement_.rto_ms > BACKOFF_THRESHOLD) {
         reset_rtt();
     }
-    if (rtt_measurement_.rto_ms > 60000) {
-        rtt_measurement_.rto_ms = 60000;// Upper bound
-    }
+    rtt_measurement_.rto_ms = std::min(rtt_measurement_.rto_ms, RttMeasurement::MAX_RTO_MS);
+
     std::println("TIMER EXPIRED with rto now: {}", rtt_measurement_.rto_ms);
 
     //  (5.6) Start the retransmission timer, such that it expires after RTO
@@ -843,7 +841,7 @@ ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
     if (is_finished_ && !recv_buf_.empty()) { return 0; }
 
     const auto bytes_copy = std::min(buf_size, recv_buf_.size());
-    if (bytes_copy) {
+    if (bytes_copy > 0) {
         std::memcpy(buf, recv_buf_.data(), bytes_copy);
         erase_recv_data(bytes_copy);
     }

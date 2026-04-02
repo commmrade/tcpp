@@ -5,7 +5,6 @@
 #ifndef TCPP_TCP_HPP
 #define TCPP_TCP_HPP
 
-#include "../../netparser/netparser.hpp"
 #include <memory>
 #include <deque>
 #include "common.hpp"

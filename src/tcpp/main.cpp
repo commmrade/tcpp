@@ -17,6 +17,8 @@ struct Context
         return ctx;
     }
 
+    ~Context() = default;
+
     Context(const Context &) = delete;
 
     Context(Context &&) = delete;
