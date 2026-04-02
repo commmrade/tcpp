@@ -187,6 +187,7 @@ int main()
     while (true) {
         std::array<char, 512> buf{};
         auto rd = sock.read(buf.data(), buf.size());
+        auto c = getchar();
         if (strncmp(buf.data(), "exit", 4) == 0) {
             sock.close();
             break;
@@ -224,7 +225,6 @@ int main()
     //     std::array<char, 100> buf{};
     //     std::memset(buf.data(), 'c', buf.size());
     //     auto wr = sock.write(buf.data(), buf.size());
-    //     // sleep(1);
     //     auto c = getchar();
     // }
 

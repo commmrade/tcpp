@@ -184,13 +184,12 @@ void TcpConnection::update_recv_window()
 void TcpConnection::update_send_window(Tun &tun,
     const std::uint32_t old_wnd_size)
 {
-    // Zero Window Probing is only for cases when there is data to send
-    // FIXME: these timer_.state things are ugly
-
-    // There is no point in ZWP if no data to send
-    // TODO: i think i should check unsent, if usent is > 0 then i need to probe, and if unsent > 0 i need to stop probing, since
-    // it may only stop window probing after first packet where send_.wnd > 0
-    if (!send_buf_.empty()) {
+    const auto in_flight_n = send_.nxt - send_.una;
+    const auto unsent = static_cast<std::uint32_t>(send_buf_.size()) - in_flight_n;
+    // Start probing only if there is data to send, otherwise it is useless
+    // Stop probing when SND.WND has been updated and now TCP is about to send new data (in on_tick()).
+    // So (unsent > 0) is safe for stopping ZWP scenario
+    if (unsent > 0) {
         if (send_.wnd == 0 && !timer_.is_armed(Timer::TimerState::ZWP)) {
             assert(!send_buf_.empty());
             const auto seq_num = send_.una;
@@ -199,20 +198,14 @@ void TcpConnection::update_send_window(Tun &tun,
             std::println("START ZWP TIMER AGAIN");
             start_timer(seq_num, 1, rtt_measurement_.rto_ms, Timer::TimerState::ZWP);
         } else if (old_wnd_size == 0 && send_.wnd > 0 && timer_.is_armed(Timer::TimerState::ZWP)) {
-            // is_zwp = false;
-            // Not zero response
             stop_timer();
 
-            // Reset RTO and its vars since it is probably weird
+            // Reset RTT variables, since they may be kinda wrong after probing packets
             reset_rtt();
             rtt_measurement_.rto_ms = RttMeasurement::DEFAULT_RTO_MS;
 
-            // TODO: This is kinda weird??? Maybe I should postone this to on_tick()?? Dunno what to do with it yet.
-            const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), static_cast<std::size_t>(send_.wnd),
-                                                  send_buf_.size() });
-            assert(timer_.timer_start_seq_at == send_.una); // This impl. uses UNA byte for ZWP, since RFC 9293 and RFC 1122 do not specify this.
-            tcph_.ack(true);
-            send(tun, send_.una, bytes_to_send);
+            // I think It is kinda logical to start sending from UNA after ZWP is finished
+            send_.nxt = send_.una;
         }
     }
 
@@ -409,23 +402,21 @@ void TcpConnection::on_packet(Tun &tun,
 
 bool TcpConnection::handle_send(Tun &tun)
 {
-    // TODO: maybe i should calc unsent here and only do all this if unsent > 0 and so is window
-    if (!send_buf_.empty()) {
+    const auto in_flight_n = send_.nxt - send_.una;
+    const auto unsent = static_cast<std::uint32_t>(send_buf_.size()) - in_flight_n;
+    if (unsent > 0 && send_.wnd > 0) {
         // Sender SWS
-        const auto in_flight_n = send_.nxt - send_.una;
-        const auto unsent = static_cast<std::uint32_t>(send_buf_.size()) - in_flight_n;  // D in RFC terms
-        const auto usable_wnd = send_.wnd - in_flight_n;     // U in RFC terms
+        const auto usable_wnd = send_.wnd - in_flight_n;
         const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n,
                                                   static_cast<std::size_t>(send_.wnd - in_flight_n) });
-        if (unsent > 0 && send_.wnd > 0) {
-            // TODO: PUSH flag
-            bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd) ||  (send_.nxt == send_.una && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
-            if (can_send) {
-                tcph_.ack(true);
-                send(tun, send_.nxt, bytes_to_send);
-            } else {
-                start_timer(send_.nxt, static_cast<std::uint32_t>(bytes_to_send), RttMeasurement::SWS_OVERRIDE_MS, Timer::TimerState::SWS_OVERRIDE);
-            }
+
+        // TODO: PUSH flag in segments
+        bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd) ||  (send_.nxt == send_.una && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
+        if (can_send) {
+            tcph_.ack(true);
+            send(tun, send_.nxt, bytes_to_send);
+        } else {
+            start_timer(send_.nxt, static_cast<std::uint32_t>(bytes_to_send), RttMeasurement::SWS_OVERRIDE_MS, Timer::TimerState::SWS_OVERRIDE);
         }
     }
     return true;
