@@ -1,8 +1,10 @@
+#include <chrono>
 #include <print>
 #include "tun.hpp"
 #include "net/tcp.hpp"
 
 #include <mutex>
+#include <ratio>
 #include <thread>
 
 struct Context
@@ -68,10 +70,8 @@ struct TcpSocket
         std::size_t sent_total = 0;
         while (sent_total < buf_sz) {
             std::unique_lock send_lock{ ctx.mx };
-            std::println("user: take lock to write");
             auto &conn = ctx.tcp.get_connection(quad_);
             conn.get_send_var().wait(send_lock, [&conn] { return conn.send_buf_free_space() > 0; });
-
             const auto result = conn.write(buf, buf_sz);
             if (result < 0) {
                 throw std::runtime_error("Write error");
@@ -186,8 +186,10 @@ int main()
     // return -1;
     while (true) {
         std::array<char, 512> buf{};
-        auto rd = sock.read(buf.data(), buf.size());
+
         auto c = getchar();
+        auto rd = sock.read(buf.data(), buf.size());
+
         if (strncmp(buf.data(), "exit", 4) == 0) {
             sock.close();
             break;
@@ -200,6 +202,7 @@ int main()
                 rd,
                 std::string_view{ buf.data(), static_cast<std::size_t>(rd) });
             auto wr = sock.write(buf.data(), static_cast<std::size_t>(rd));
+            std::println("Wrote {} bytes", wr);
             // std::println("user: wrote {} bytes", wr);
         }
     }
@@ -225,7 +228,7 @@ int main()
     //     std::array<char, 100> buf{};
     //     std::memset(buf.data(), 'c', buf.size());
     //     auto wr = sock.write(buf.data(), buf.size());
-    //     auto c = getchar();
+    //     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     // }
 
     sleep(2);

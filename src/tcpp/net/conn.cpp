@@ -3,6 +3,7 @@
 //
 
 #include "conn.hpp"
+#include <print>
 #include <random>
 
 void TcpConnection::append_send_data(const std::span<const std::byte> data) { send_buf_.append_range(data); }
@@ -86,6 +87,7 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
 {
     measure_rtt(tcph.ackn());
 
+    std::println("Got ack n {}, SEND.NXT {}, UNA", tcph.ackn(), send_.nxt, send_.una);
     switch (state_) {
     case TcpState::SYN_RCVD: {
         // got ACK for our SYNACK
@@ -103,12 +105,11 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
         send_.wl2 = tcph.ackn();
 
         retransmit_syn_test_ = false;
-        // TODO: imagine ACK after SYNACK is lost, we might wanna fall through if this is the case, so we can process payload. or should we fall?
-        break;
+        [[fallthrough]];
     }
     case TcpState::ESTAB: {
         // TODO: HANDLE ACK FOR SYn/FIN
-        std::println("Got ack n {}, SEND.NXT {}", tcph.ackn(), send_.nxt);
+
         const auto old_wnd = send_.wnd;
 
         if (tcph.seqn() == recv_.nxt - 1 && recv_.wnd == 0) { // It is a window probe probably (at least Linux Net. Stack one)
@@ -197,6 +198,8 @@ void TcpConnection::update_send_window(Tun &tun,
             stop_timer();
             std::println("START ZWP TIMER AGAIN");
             start_timer(seq_num, 1, rtt_measurement_.rto_ms, Timer::TimerState::ZWP);
+
+            // TODO: do i really need old_wnd_size condition?
         } else if (old_wnd_size == 0 && send_.wnd > 0 && timer_.is_armed(Timer::TimerState::ZWP)) {
             stop_timer();
 
@@ -226,6 +229,7 @@ bool TcpConnection::handle_seg_text(Tun &tun,
             send(tun, send_.nxt, 0);
             return true;
         }
+
 
         const auto payload_size = payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
         append_recv_data(payload);
@@ -403,6 +407,11 @@ void TcpConnection::on_packet(Tun &tun,
 bool TcpConnection::handle_send(Tun &tun)
 {
     const auto in_flight_n = send_.nxt - send_.una;
+
+    // FIXME: This happens on SYN and FIN
+    if (in_flight_n > send_buf_.size()) {
+        return true;
+    }
     const auto unsent = static_cast<std::uint32_t>(send_buf_.size()) - in_flight_n;
     if (unsent > 0 && send_.wnd > 0) {
         // Sender SWS
@@ -413,9 +422,11 @@ bool TcpConnection::handle_send(Tun &tun)
         // TODO: PUSH flag in segments
         bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd) ||  (send_.nxt == send_.una && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
         if (can_send) {
+            std::println("SWS SEnding: {} {} {} {}, flight: {}", send_buf_.size(), usable_wnd, bytes_to_send, unsent, in_flight_n);
             tcph_.ack(true);
             send(tun, send_.nxt, bytes_to_send);
         } else {
+            std::println("Start SWS override timer: {} {} {}", usable_wnd, bytes_to_send, unsent);
             start_timer(send_.nxt, static_cast<std::uint32_t>(bytes_to_send), RttMeasurement::SWS_OVERRIDE_MS, Timer::TimerState::SWS_OVERRIDE);
         }
     }
@@ -449,18 +460,19 @@ bool TcpConnection::handle_close(Tun &tun)
 void TcpConnection::on_tick(Tun &tun)
 {
     update_timer(tun, send_.una);
-    // update_zwnd_timer(tun);
+
+    const auto old_wnd = send_.wnd;
 
     if (!handle_send(tun)) { return; }
-
-    // do_close is second, because if we are done sending in SEND (buffers are empty), we can try to issue a FIN
     if (!handle_close(tun)) { return; }
+
+    update_send_window(tun, old_wnd);
 }
 
 ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
 {
     const auto send_buf_idx = static_cast<std::int64_t>(seqn_from) - static_cast<std::int64_t>(send_.una);
-    std::println("Send buf idx: {}", send_buf_idx);
+    std::println("Send buf idx: {}, send buf size: {}, send size: {}", send_buf_idx, send_buf_.size(), max_size);
     // assert(static_cast<std::size_t>(send_buf_idx) <= send_buf_.size());
 
     const std::span<const std::byte> payload{ send_buf_.data() + send_buf_idx, max_size };
@@ -841,13 +853,7 @@ ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
 
 ssize_t TcpConnection::write(const void *buf, const std::size_t buf_size)
 {
-    const auto in_flight_n = static_cast<std::int64_t>(send_.nxt) - send_.una;
-    assert(in_flight_n >= 0);// Well actually TCP allows window shrinks i think but it is highly discouraged
-    const auto insert_bytes_n = std::min(buf_size, static_cast<std::size_t>(send_.wnd - in_flight_n));
-    // Can't have more bytes, than the window allows
-    // if (insert_bytes_n == 0) { throw std::runtime_error("error: insufficient resources"); }
-    if (insert_bytes_n == 0) { return 0; }
-
+    const auto insert_bytes_n = std::min(send_buf_free_space(), buf_size);
     switch (state_) {
     case TcpState::SYN_SENT:
     case TcpState::SYN_RCVD:
