@@ -187,6 +187,8 @@ void TcpConnection::update_send_window(Tun &tun,
     // FIXME: these timer_.state things are ugly
 
     // There is no point in ZWP if no data to send
+    // TODO: i think i should check unsent, if usent is > 0 then i need to probe, and if unsent > 0 i need to stop probing, since
+    // it may only stop window probing after first packet where send_.wnd > 0
     if (!send_buf_.empty()) {
         if (send_.wnd == 0 && !timer_.is_armed(Timer::TimerState::ZWP)) {
             assert(!send_buf_.empty());
@@ -409,6 +411,7 @@ void TcpConnection::on_packet(Tun &tun,
 
 bool TcpConnection::handle_send(Tun &tun)
 {
+    // TODO: maybe i should calc unsent here and only do all this if unsent > 0 and so is window
     if (!send_buf_.empty()) {
         // Sender SWS
         const auto in_flight_n = send_.nxt - send_.una;
