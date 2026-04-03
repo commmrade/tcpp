@@ -429,6 +429,7 @@ bool TcpConnection::handle_send(Tun &tun)
                                                   static_cast<std::size_t>(send_.wnd - in_flight_n) });
 
         // TODO: PUSH flag in segments
+        // FIXME: SND.NXT == SND.UNA is a NAGLE condition. I should let user disable NAgle so this cond. isnt enforced
         bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd) ||  (send_.nxt == send_.una && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
         if (can_send) {
             std::println("SWS SEnding: {} {} {} {}, flight: {}", send_buf_.size(), usable_wnd, bytes_to_send, unsent, in_flight_n);
