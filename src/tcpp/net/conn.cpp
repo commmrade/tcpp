@@ -465,12 +465,10 @@ void TcpConnection::on_tick(Tun &tun)
 {
     update_timer(tun, send_.una);
 
-    const auto old_wnd = send_.wnd;
-
     if (!handle_send(tun)) { return; }
     if (!handle_close(tun)) { return; }
 
-    update_send_window(tun, old_wnd);
+    update_send_window(tun, send_.wnd);
 }
 
 ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
