@@ -14,8 +14,6 @@ CLIENT_IP = "10.0.0.1"
 SERVER_PORT = 8090
 CLIENT_PORT = random.randint(49152, 65535)
 
-MSS = 536
-
 _send_queue = queue.Queue()
 
 
@@ -48,10 +46,8 @@ def make_seg(sport, dport, seq, ack, flags, window, payload=b""):
 def do_handshake():
     isn = random.randint(0, 2**32 - 1)
 
-    # Send SYN
     queued_send(make_seg(CLIENT_PORT, SERVER_PORT, isn, 0, "S", 65535))
 
-    # Wait for SYNACK
     def is_synack(pkt):
         return (
             pkt.haslayer(TCP)
@@ -79,83 +75,109 @@ def do_handshake():
 
     server_isn = synack[TCP].seq
     server_wnd = synack[TCP].window
+    mss = 536
+    for opt_name, opt_val in synack[TCP].options:
+        if opt_name == "MSS":
+            mss = opt_val
+            break
+
     our_seq = isn + 1
     server_seq = server_isn + 1
 
-    # Send ACK to complete handshake
     queued_send(make_seg(CLIENT_PORT, SERVER_PORT, our_seq, server_seq, "A", 65535))
 
     print(
-        f"Handshake done: our_seq={our_seq}, server_seq={server_seq}, server_wnd={server_wnd}"
+        f"Handshake done: our_seq={our_seq}, server_seq={server_seq}, "
+        f"server_wnd={server_wnd}, mss={mss}"
     )
-    return our_seq, server_seq, server_wnd
+    return our_seq, server_seq, server_wnd, mss
 
 
 class TestTcpZeroWindowProbe(unittest.TestCase):
     def test_zwp_server_responds(self):
         NUM_PROBES = 3
         DELTA = 0.35
+        OUR_WINDOW = 65535
 
         sender = threading.Thread(target=_sender_loop, daemon=True)
         sender.start()
 
         try:
-            our_seq, server_seq, server_wnd = do_handshake()
+            our_seq, server_seq, server_wnd, mss = do_handshake()
 
-            # ── Step 1: flood data to fill server's recv buffer ───────────────
-            # Server reads 512 bytes then sleeps 10s, so buffer fills quickly.
-            # Send server_wnd + extra to ensure window closes.
-            total_to_send = server_wnd + MSS * 4
-            nxt = our_seq
-            offset = 0
+            # ── Step 1: flood data respecting server's window ─────────────────
+            snd_una = our_seq
+            snd_nxt = our_seq
+            snd_wnd = server_wnd
 
-            while offset < total_to_send:
-                chunk = min(MSS, total_to_send - offset)
-                queued_send(
-                    make_seg(
-                        CLIENT_PORT,
-                        SERVER_PORT,
-                        seq=nxt,
-                        ack=server_seq,
-                        flags="PA",
-                        window=65535,
-                        payload=b"A" * chunk,
-                    )
-                )
-                nxt += chunk
-                offset += chunk
-                time.sleep(0.002)
+            flood_acks = queue.Queue()
+            flood_done = threading.Event()
 
-            print(f"Sent {total_to_send} bytes, waiting for window=0")
-
-            # ── Step 2: wait for server to advertise window=0 ────────────────
-            zero_wnd_pkts = []
-            zero_ready = threading.Event()
-
-            def is_zero_wnd(pkt):
+            def is_server_ack(pkt):
                 return (
                     pkt.haslayer(TCP)
                     and pkt[TCP].sport == SERVER_PORT
                     and pkt[TCP].dport == CLIENT_PORT
-                    and pkt[TCP].window == 0
+                    and pkt[TCP].flags & 0x10 != 0
                 )
 
-            def sniff_zero():
-                zero_ready.set()
-                pkts = sniff(iface=TUN_IFACE, lfilter=is_zero_wnd, count=1, timeout=15)
-                zero_wnd_pkts.extend(pkts)
+            def collect_flood_acks():
+                while not flood_done.is_set():
+                    pkts = sniff(
+                        iface=TUN_IFACE,
+                        lfilter=is_server_ack,
+                        count=1,
+                        timeout=0.5,
+                    )
+                    for pkt in pkts:
+                        flood_acks.put(pkt)
 
-            tz = threading.Thread(target=sniff_zero)
-            tz.start()
-            zero_ready.wait()
-            time.sleep(0.05)
-            tz.join()
+            ack_thread = threading.Thread(target=collect_flood_acks, daemon=True)
+            ack_thread.start()
 
-            self.assertEqual(len(zero_wnd_pkts), 1, "Server never advertised window=0")
-            snd_una = zero_wnd_pkts[0][TCP].ack
-            print(f"Got window=0. Server ACKed up to {snd_una}")
+            zero_wnd_seen = False
 
-            # ── Step 3: send ZWP probes, verify server ACKs each ─────────────
+            while not zero_wnd_seen:
+                while not flood_acks.empty():
+                    ack_pkt = flood_acks.get_nowait()
+                    acked = ack_pkt[TCP].ack
+                    new_wnd = ack_pkt[TCP].window
+                    if acked > snd_una:
+                        snd_una = acked
+                    snd_wnd = new_wnd
+                    print(f"Flood ACK: snd_una={snd_una}, snd_wnd={snd_wnd}")
+                    if snd_wnd == 0:
+                        zero_wnd_seen = True
+                        break
+
+                if zero_wnd_seen:
+                    break
+
+                while snd_nxt < snd_una + snd_wnd:
+                    available = (snd_una + snd_wnd) - snd_nxt
+                    chunk = min(mss, available)
+                    if chunk <= 0:
+                        break
+                    queued_send(
+                        make_seg(
+                            CLIENT_PORT,
+                            SERVER_PORT,
+                            seq=snd_nxt,
+                            ack=server_seq,
+                            flags="PA",
+                            window=OUR_WINDOW,
+                            payload=b"A" * chunk,
+                        )
+                    )
+                    snd_nxt += chunk
+                    time.sleep(0.002)
+
+                time.sleep(0.01)
+
+            flood_done.set()
+            print(f"Window closed. snd_una={snd_una}, snd_nxt={snd_nxt}")
+
+            # ── Step 2: ZWP probes (timed, verify backoff) ────────────────────
             probe_acks = []
             probe_ready = threading.Event()
 
@@ -170,7 +192,8 @@ class TestTcpZeroWindowProbe(unittest.TestCase):
             def on_probe_ack(pkt):
                 probe_acks.append(pkt)
                 print(
-                    f"Probe ACK {len(probe_acks) - 1}: window={pkt[TCP].window}, time={pkt.time:.3f}"
+                    f"Probe ACK {len(probe_acks) - 1}: window={pkt[TCP].window}, "
+                    f"time={pkt.time:.3f}"
                 )
 
             def sniff_probe_acks():
@@ -188,9 +211,7 @@ class TestTcpZeroWindowProbe(unittest.TestCase):
             probe_ready.wait()
             time.sleep(0.05)
 
-            # Send probes with exponential backoff: wait 1s, 2s, 4s before each
             rto = 1.0
-            probe_send_times = []
             for i in range(NUM_PROBES):
                 time.sleep(rto)
                 queued_send(
@@ -200,11 +221,10 @@ class TestTcpZeroWindowProbe(unittest.TestCase):
                         seq=snd_una,
                         ack=server_seq,
                         flags="A",
-                        window=65535,
+                        window=OUR_WINDOW,
                         payload=b"Z",
                     )
                 )
-                probe_send_times.append(time.time())
                 print(f"Sent probe {i}: seq={snd_una}, rto={rto:.1f}s")
                 rto *= 2
 
@@ -216,7 +236,6 @@ class TestTcpZeroWindowProbe(unittest.TestCase):
                 f"Expected {NUM_PROBES} probe ACKs from server, got {len(probe_acks)}",
             )
 
-            # Verify inter-probe-ACK gaps match our send cadence (~1s, ~2s, ~4s)
             expected_gap = 2.0
             for i in range(1, NUM_PROBES):
                 gap = probe_acks[i].time - probe_acks[i - 1].time
@@ -229,7 +248,126 @@ class TestTcpZeroWindowProbe(unittest.TestCase):
                 )
                 expected_gap *= 2
 
-            print("Test passed")
+            # ── Step 3: keep probing until window opens, then send data ───────
+            # Server will eventually drain its buffer and advertise window > 0.
+            # We must send a probe to elicit that update — it won't come unsolicited.
+            print("Probing for window reopen...")
+
+            reopened_wnd = 0
+            probe_rto = rto  # continue backoff from where we left off
+            max_recovery_probes = 10
+
+            for i in range(max_recovery_probes):
+                time.sleep(probe_rto)
+
+                probe_ack_pkts = []
+                rdy = threading.Event()
+
+                def sniff_one_probe_ack():
+                    rdy.set()
+                    pkts = sniff(
+                        iface=TUN_IFACE,
+                        lfilter=is_probe_ack,
+                        count=1,
+                        timeout=probe_rto + 1.0,
+                    )
+                    probe_ack_pkts.extend(pkts)
+
+                tr = threading.Thread(target=sniff_one_probe_ack)
+                tr.start()
+                rdy.wait()
+                time.sleep(0.05)
+
+                queued_send(
+                    make_seg(
+                        CLIENT_PORT,
+                        SERVER_PORT,
+                        seq=snd_una,
+                        ack=server_seq,
+                        flags="A",
+                        window=OUR_WINDOW,
+                        payload=b"Z",
+                    )
+                )
+                print(f"Recovery probe {i}: seq={snd_una}, rto={probe_rto:.1f}s")
+
+                tr.join()
+
+                self.assertEqual(
+                    len(probe_ack_pkts), 1, f"No ACK for recovery probe {i}"
+                )
+                ack_wnd = probe_ack_pkts[0][TCP].window
+                print(f"Recovery probe ACK: window={ack_wnd}")
+
+                if ack_wnd > 0:
+                    reopened_wnd = ack_wnd
+                    break
+
+                probe_rto = min(probe_rto * 2, 60.0)
+
+            self.assertGreater(
+                reopened_wnd, 0, "Window never reopened after recovery probes"
+            )
+            print(f"Window reopened: {reopened_wnd} bytes")
+
+            # ── Step 4: send a full MSS segment, verify ACK ───────────────────
+            # snd_una is the probe seq; probe payload is 1 byte ("Z"), so
+            # next seq is snd_una + 1.
+            recovery_seq = snd_una
+            send_len = min(mss, reopened_wnd)
+
+            recovery_acks = []
+            recovery_ready = threading.Event()
+
+            def is_recovery_ack(pkt):
+                return (
+                    pkt.haslayer(TCP)
+                    and pkt[TCP].sport == SERVER_PORT
+                    and pkt[TCP].dport == CLIENT_PORT
+                    and pkt[TCP].flags & 0x10 != 0
+                    and pkt[TCP].ack == recovery_seq + send_len
+                )
+
+            def sniff_recovery_ack():
+                recovery_ready.set()
+                pkts = sniff(
+                    iface=TUN_IFACE,
+                    lfilter=is_recovery_ack,
+                    count=1,
+                    timeout=10,
+                )
+                recovery_acks.extend(pkts)
+
+            tr = threading.Thread(target=sniff_recovery_ack)
+            tr.start()
+            recovery_ready.wait()
+            time.sleep(0.05)
+
+            queued_send(
+                make_seg(
+                    CLIENT_PORT,
+                    SERVER_PORT,
+                    seq=recovery_seq,
+                    ack=server_seq,
+                    flags="PA",
+                    window=OUR_WINDOW,
+                    payload=b"B" * send_len,
+                )
+            )
+            print(f"Sent recovery segment: seq={recovery_seq}, len={send_len}")
+
+            tr.join()
+
+            self.assertEqual(
+                len(recovery_acks),
+                1,
+                f"Recovery segment not ACKed (expected ack={recovery_seq + send_len})",
+            )
+            print(
+                f"Recovery ACK: ack={recovery_acks[0][TCP].ack}, "
+                f"window={recovery_acks[0][TCP].window}"
+            )
+            print("All tests passed")
 
         finally:
             _send_queue.put(None)

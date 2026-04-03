@@ -230,10 +230,12 @@ bool TcpConnection::handle_seg_text(Tun &tun,
             return true;
         }
 
-
-        const auto payload_size = payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
-        append_recv_data(payload);
-        recv_.nxt += payload_size;// FIN is handled in handle_fin()
+        // This should not be done in ZWP state
+        if (recv_.wnd != 0) {
+            const auto payload_size = payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
+            append_recv_data(payload);
+            recv_.nxt += payload_size;// FIN is handled in handle_fin()
+        }
 
         // FIN is gonna be handled in handle_fin()
         if (!tcph_.fin()) {
@@ -408,10 +410,12 @@ bool TcpConnection::handle_send(Tun &tun)
 {
     const auto in_flight_n = send_.nxt - send_.una;
 
-    // FIXME: This happens on SYN and FIN
+    // FIXME: This happens on SYN and FIN, can't fix it unless I implement segments
     if (in_flight_n > send_buf_.size()) {
+        assert(in_flignt_n == 1); // Usually it is just 1 byte - FIN,SYN, but if it is more, then it is kind of suspicious
         return true;
     }
+
     const auto unsent = static_cast<std::uint32_t>(send_buf_.size()) - in_flight_n;
     if (unsent > 0 && send_.wnd > 0) {
         // Sender SWS

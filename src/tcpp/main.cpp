@@ -187,24 +187,24 @@ int main()
     while (true) {
         std::array<char, 512> buf{};
 
-        auto c = getchar();
+        sleep(10);
         auto rd = sock.read(buf.data(), buf.size());
 
-        if (strncmp(buf.data(), "exit", 4) == 0) {
-            sock.close();
-            break;
-        }
-        if (rd == 0) {
-            std::println("user: DATA FINISHED, CLOSING...");
-            break;
-        } else {
-            std::println("user: got data {} bytes - '{}'",
-                rd,
-                std::string_view{ buf.data(), static_cast<std::size_t>(rd) });
-            auto wr = sock.write(buf.data(), static_cast<std::size_t>(rd));
-            std::println("Wrote {} bytes", wr);
-            // std::println("user: wrote {} bytes", wr);
-        }
+        // if (strncmp(buf.data(), "exit", 4) == 0) {
+        //     sock.close();
+        //     break;
+        // }
+        // if (rd == 0) {
+        //     std::println("user: DATA FINISHED, CLOSING...");
+        //     break;
+        // } else {
+        //     std::println("user: got data {} bytes - '{}'",
+        //         rd,
+        //         std::string_view{ buf.data(), static_cast<std::size_t>(rd) });
+        //     auto wr = sock.write(buf.data(), static_cast<std::size_t>(rd));
+        //     std::println("Wrote {} bytes", wr);
+        //     // std::println("user: wrote {} bytes", wr);
+        // }
     }
 
 
