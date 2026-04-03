@@ -159,6 +159,8 @@ private:
     void update_timer(Tun& tun, const std::uint32_t ack_n);
 
     void set_send_wnd(const std::uint32_t wnd);
+    [[nodiscard]] std::uint32_t get_recv_wnd() const { return right_wnd_edge_ - recv_.nxt; }
+    void set_recv_wnd(const std::uint32_t wnd, const std::uint32_t nxt);
 
     friend class Tcp;
     std::condition_variable recv_var_;// Notified when something is received
@@ -174,8 +176,12 @@ private:
     SendSequence send_{};
     std::uint32_t send_wnd_max_{};
     Buffer send_buf_;
+
     ReceiveSequence recv_{};
+    std::uint32_t right_wnd_edge_{};
     Buffer recv_buf_;// First element is SND.UNA, last is SND.UNA + SND.WND
+
+
     TcpState state_{};
     // My MSS (what this host can send)
     std::uint16_t send_mss_{ SENDER_DEF_MSS };

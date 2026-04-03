@@ -3,6 +3,7 @@
 //
 
 #include "conn.hpp"
+#include <limits>
 #include <print>
 #include <random>
 
@@ -171,14 +172,18 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
 
 void TcpConnection::update_recv_window()
 {
-    // Zero window and SWS receiver stuff here
-    // TODO: once i impl. segmentation, use proper size
-    constexpr auto MAX_BUFFER_SIZE = std::numeric_limits<std::uint16_t>::max();
-    // constexpr auto MAX_BUFFER_SIZE = 50;
-    // Can't let the window "shrink", if old window is bigger than new_wnd, then the window shrank
-    if (MAX_BUFFER_SIZE >= recv_buf_.size() && MAX_BUFFER_SIZE - recv_buf_.size() - recv_.wnd >= std::min<std::size_t>(MAX_BUFFER_SIZE / 2, recv_mss_)) {
-        std::println("MAX WND: {}, recv buf: {}", MAX_BUFFER_SIZE, recv_buf_.size());
-        recv_.wnd = static_cast<std::uint32_t>(MAX_BUFFER_SIZE - recv_buf_.size());
+    const std::size_t buffer_size = std::numeric_limits<std::uint16_t>::max();
+    const auto free_space = buffer_size - recv_buf_.size();
+
+    if (free_space == 0) {
+        set_recv_wnd(0, recv_.nxt);
+        return;
+    }
+
+    const auto wnd_size = get_recv_wnd();
+    const auto increment = free_space > wnd_size ? free_space - wnd_size : 0;
+    if (increment >= std::min(buffer_size / 2, static_cast<std::size_t>(recv_mss_))) {
+        set_recv_wnd(static_cast<std::uint32_t>(free_space), recv_.nxt);
     }
 }
 
@@ -489,7 +494,8 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
     tcph_.ackn(recv_.nxt);
 
     update_recv_window();
-    tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
+    const auto wnd_to_advertise = static_cast<std::uint16_t>(get_recv_wnd());
+    tcph_.window(wnd_to_advertise);
     const auto tcph_size = static_cast<std::uint8_t>(netparser::TCPH_MIN_SIZE + tcph_.options().options_size());
     tcph_.data_off(tcph_size / 4);
     tcph_.calculate_checksum(iph_, payload);
@@ -580,7 +586,8 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
     if (tcph.syn()) {
         recv_.nxt = tcph.seqn() + 1;
         recv_.irs = tcph.seqn();
-        recv_.wnd = recv_mss_ * 3;
+        // recv_.wnd = recv_mss_ * 3;
+        set_recv_wnd(std::numeric_limits<std::uint16_t>::max(), recv_.nxt);
 
         if (auto opt = tcph.mss(); opt.has_value()) { send_mss_ = opt.value().mss; }
         // send_.wnd = tcph.window();
@@ -622,7 +629,8 @@ void TcpConnection::connect(Tun &tun,
         std::numeric_limits<std::uint32_t>::max());
 
     const auto iss = dis(gen);
-    recv_.wnd = recv_mss_ * 3;
+    // recv_.wnd = recv_mss_ * 3;
+    set_recv_wnd(std::numeric_limits<std::uint16_t>::max(), recv_.nxt);
 
     iph_.version(4);
     iph_.ihl(5);// 5 * 4 = 20 bytes (no options)
@@ -824,6 +832,12 @@ void TcpConnection::set_send_wnd(const std::uint32_t wnd)
 {
     send_wnd_max_ = std::max(send_.wnd, wnd);
     send_.wnd = wnd;
+}
+
+void TcpConnection::set_recv_wnd(const std::uint32_t wnd, const std::uint32_t nxt)
+{
+    recv_.wnd = wnd;
+    right_wnd_edge_ = nxt + wnd;
 }
 
 void TcpConnection::shutdown(ShutdownType sht)
