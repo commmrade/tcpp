@@ -110,9 +110,6 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
     }
     case TcpState::ESTAB: {
         // TODO: HANDLE ACK FOR SYn/FIN
-
-        const auto old_wnd = send_.wnd;
-
         if (tcph.seqn() == recv_.nxt - 1 && recv_.wnd == 0) { // It is a window probe probably (at least Linux Net. Stack one)
             tcph_.ack(true);
             send(tun, send_.nxt, 0);
@@ -145,7 +142,7 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
             }
         }
 
-        update_send_window(tun, old_wnd);
+        update_send_window(tun);
         break;
     }
     case TcpState::LAST_ACK: {
@@ -187,8 +184,7 @@ void TcpConnection::update_recv_window()
     }
 }
 
-void TcpConnection::update_send_window(Tun &tun,
-    const std::uint32_t old_wnd_size)
+void TcpConnection::update_send_window(Tun &tun)
 {
     const auto in_flight_n = send_.nxt - send_.una;
     const auto unsent = static_cast<std::uint32_t>(send_buf_.size()) - in_flight_n;
@@ -205,7 +201,7 @@ void TcpConnection::update_send_window(Tun &tun,
             start_timer(seq_num, 1, rtt_measurement_.rto_ms, Timer::TimerState::ZWP);
 
             // TODO: do i really need old_wnd_size condition?
-        } else if (old_wnd_size == 0 && send_.wnd > 0 && timer_.is_armed(Timer::TimerState::ZWP)) {
+        } else if (send_.wnd > 0 && timer_.is_armed(Timer::TimerState::ZWP)) {
             stop_timer();
 
             // Reset RTT variables, since they may be kinda wrong after probing packets
@@ -471,7 +467,7 @@ void TcpConnection::on_tick(Tun &tun)
 {
     update_timer(tun, send_.una);
     // First, deal with window stuff (zero window, to be exact) and then handle send
-    update_send_window(tun, send_.wnd);
+    update_send_window(tun);
 
     if (!handle_send(tun)) { return; }
     if (!handle_close(tun)) { return; }

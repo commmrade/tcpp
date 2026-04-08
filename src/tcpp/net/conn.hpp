@@ -118,7 +118,7 @@ private:
     bool handle_fin();
 
     void update_recv_window();
-    void update_send_window(Tun& tun, const std::uint32_t old_wnd_size);
+    void update_send_window(Tun& tun);
 
     bool handle_segment_syn_sent(Tun &tun, const netparser::TcpHeaderView &tcph);
     bool handle_segment_other(Tun& tun, const netparser::TcpHeaderView& tcph, std::span<const std::byte> payload);
