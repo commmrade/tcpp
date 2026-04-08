@@ -470,11 +470,11 @@ bool TcpConnection::handle_close(Tun &tun)
 void TcpConnection::on_tick(Tun &tun)
 {
     update_timer(tun, send_.una);
+    // First, deal with window stuff (zero window, to be exact) and then handle send
+    update_send_window(tun, send_.wnd);
 
     if (!handle_send(tun)) { return; }
     if (!handle_close(tun)) { return; }
-
-    update_send_window(tun, send_.wnd);
 }
 
 ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
