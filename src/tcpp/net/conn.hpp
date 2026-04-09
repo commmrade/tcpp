@@ -196,7 +196,7 @@ private:
 
     // Retransmit. things (IN MS) -----
     Timer timer_;
-    bool retransmit_fin_test_{false};
+    // bool retransmit_fin_test_{false};
     bool retransmit_syn_test_{false};
     // retransmissions -----
 };

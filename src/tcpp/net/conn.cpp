@@ -3,6 +3,7 @@
 //
 
 #include "conn.hpp"
+#include "common.hpp"
 #include <limits>
 #include <print>
 #include <random>
@@ -108,7 +109,12 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
         retransmit_syn_test_ = false;
         [[fallthrough]];
     }
+    case TcpState::FIN_WAIT_1:
+    case TcpState::FIN_WAIT_2:
+    case TcpState::CLOSE_WAIT:
+    case TcpState::CLOSING:
     case TcpState::ESTAB: {
+        // TODO: this handling is used for other states besides ESTABLISHED, like FIN_WAIT_1 and FIN_WAIT_2, CLOSING
         // TODO: HANDLE ACK FOR SYn/FIN
         if (tcph.seqn() == recv_.nxt - 1 && recv_.wnd == 0) { // It is a window probe probably (at least Linux Net. Stack one)
             tcph_.ack(true);
@@ -150,18 +156,35 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
         state_ = TcpState::CLOSED;
         break;
     }
-    case TcpState::FIN_WAIT_1: {
-        // Probably got an ACK of our FIN. TODO: Make sure
-        state_ = TcpState::FIN_WAIT_2;
-        break;
-    }
-    case TcpState::FIN_WAIT_2: {
-        // User close can be ACKed now
-        break;
-    }
     default:
         break;// TODO
     }
+
+    // Process those states, that require ESTAB processing + something else
+    switch (state_) {
+        case TcpState::FIN_WAIT_1: {
+
+            // if FIN segment is ACKed, then continue in FIN_WAIT_2
+            // TOOD: actually make sure fin is acked
+            state_ = TcpState::FIN_WAIT_2;
+            [[fallthrough]];
+        }
+        case TcpState::FIN_WAIT_2: {
+            // if the retrans. queue is empty, then closing is done
+            if (send_buf_.empty()) {
+                // acknowledge user close
+            }
+            break;
+        }
+        case TcpState::CLOSING: {
+            // TOOD: actually make sure fin is acked
+            state_ = TcpState::TIME_WAIT;
+            break;
+        }
+        default:
+            break;
+    }
+
 
     update_timer(tun, tcph.ackn());
     return true;
@@ -445,7 +468,6 @@ bool TcpConnection::handle_close(Tun &tun)
         tcph_.fin(true);
         tcph_.ack(true);
         send(tun, send_.nxt, 0);
-        retransmit_fin_test_ = true;
         should_send_fin_ = false;
 
         switch (state_) {
@@ -752,7 +774,10 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
     // (5.4) Retransmit the earliest segment that has not been acknowledged by the TCP receiver.
     tcph_.ack(true);
     // TODO: this is some ugly shit, get rid of this
-    if (retransmit_fin_test_) { tcph_.fin(true); }
+    // if (retransmit_fin_test_) { tcph_.fin(true); }
+    if (is_fin_state(state_)) {
+        tcph_.fin(true);
+    }
     if (retransmit_syn_test_) {
         tcph_.syn(true);
 
