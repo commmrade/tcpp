@@ -106,7 +106,6 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
         send_.wl1 = tcph.seqn();
         send_.wl2 = tcph.ackn();
 
-        retransmit_syn_test_ = false;
         [[fallthrough]];
     }
     case TcpState::FIN_WAIT_1:
@@ -311,8 +310,6 @@ bool TcpConnection::handle_fin()
 bool TcpConnection::handle_segment_syn_sent(Tun &tun,
     const netparser::TcpHeaderView &tcph)
 {
-    assert(payload.empty());// No support for payload here
-
     bool is_ack_acceptable = false;
     if (tcph.ack()) {
         std::println("{} {}. {} {}", tcph.ackn() - 1, send_.iss, tcph.ackn(), send_.nxt);
@@ -366,8 +363,6 @@ bool TcpConnection::handle_segment_syn_sent(Tun &tun,
         set_send_wnd(tcph.window());
         send_.wl1 = tcph.seqn();
         send_.wl2 = tcph.ackn();
-
-        retransmit_syn_test_ = false;// SInce this handle SYNACK of our SYN
     }
 
     if (!tcph.syn() && !tcph.rst()) {
@@ -436,7 +431,7 @@ bool TcpConnection::handle_send(Tun &tun)
 
     // FIXME: This happens on SYN and FIN, can't fix it unless I implement segments
     if (in_flight_n > send_buf_.size()) {
-        assert(in_flignt_n == 1); // Usually it is just 1 byte - FIN,SYN, but if it is more, then it is kind of suspicious
+        // assert(in_flignt_n == 1); // Usually it is just 1 byte - FIN,SYN, but if it is more, then it is kind of suspicious
         return true;
     }
 
@@ -549,7 +544,8 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
             // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
             start_measure_rtt(seqn_from);
         }
-        start_timer(send_.una, static_cast<std::uint32_t>(data_size), rtt_measurement_.rto_ms, Timer::TimerState::RETRANSMISSION);
+        start_timer(send_.una, static_cast<std::uint32_t>(payload.size()), rtt_measurement_.rto_ms, Timer::TimerState::RETRANSMISSION);
+        // start_timer(send_.una, static_cast<std::uint32_t>(data_size), rtt_measurement_.rto_ms, Timer::TimerState::RETRANSMISSION);
     }
 
     if (wrapping_gt(seqn_from + static_cast<std::uint32_t>(data_size), send_.nxt - 1)) {
@@ -630,8 +626,6 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
         send_.nxt = send_.iss;// 1 goes for SYN (in send()), since it uses up a SEQ number
         send(tun, iss, 0);
 
-        retransmit_syn_test_ = true;
-
         state_ = TcpState::SYN_RCVD;
     }
 }
@@ -679,8 +673,6 @@ void TcpConnection::connect(Tun &tun,
     // send_.wnd = send_mss_;// Update this after we get a SYNACK. Default is 536
     set_send_wnd(send_mss_);
     send(tun, iss, 0);
-
-    retransmit_syn_test_ = true;
 
     state_ = TcpState::SYN_SENT;
 }
@@ -778,7 +770,7 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
     if (is_fin_state(state_)) {
         tcph_.fin(true);
     }
-    if (retransmit_syn_test_) {
+    if (is_syn_state(state_)) {
         tcph_.syn(true);
 
         switch (state_) {

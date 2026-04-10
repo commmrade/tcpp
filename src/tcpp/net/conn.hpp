@@ -70,7 +70,7 @@ struct Timer
     };
     std::optional<std::int64_t> timer_start{};
     std::uint32_t timer_start_seq_at{};
-    std::uint32_t timer_data_length{};
+    std::uint32_t timer_data_length{}; // Payload length
     std::int64_t timer_expire_at{-1};
 
     TimerState state{TimerState::RETRANSMISSION};
@@ -196,8 +196,6 @@ private:
 
     // Retransmit. things (IN MS) -----
     Timer timer_;
-    // bool retransmit_fin_test_{false};
-    bool retransmit_syn_test_{false};
     // retransmissions -----
 };
 
