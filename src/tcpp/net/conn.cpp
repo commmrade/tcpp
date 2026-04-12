@@ -37,7 +37,7 @@ bool TcpConnection::validate_seq_n(const netparser::TcpHeaderView &tcph, std::sp
     return false;
 }
 
-bool TcpConnection::handle_rst(Tun &tun, const netparser::TcpHeaderView &tcph)
+bool TcpConnection::handle_rst(const netparser::TcpHeaderView &tcph)
 {
     // from 3.10.7.4. Other States later TODO
 
@@ -47,7 +47,7 @@ bool TcpConnection::handle_rst(Tun &tun, const netparser::TcpHeaderView &tcph)
     } else if (tcph.seqn() != recv_.nxt) {
         // Inside window
         tcph_.ack(true);
-        send(tun, send_.nxt, 0);// Challenge ACK
+        send(send_.nxt, 0);// Challenge ACK
         return false;
     }
 
@@ -79,13 +79,13 @@ bool TcpConnection::handle_rst(Tun &tun, const netparser::TcpHeaderView &tcph)
     return true;
 }
 
-bool TcpConnection::handle_syn(Tun &tun, const netparser::TcpHeaderView &tcph)
+bool TcpConnection::handle_syn(const netparser::TcpHeaderView &tcph)
 {
     // TODO: Challenge ACK in synchronized states <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
     return true;
 }
 
-bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
+bool TcpConnection::handle_ack(const netparser::TcpHeaderView &tcph)
 {
     measure_rtt(tcph.ackn());
 
@@ -97,7 +97,7 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
         if (!is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
             std::println("ACK IS NOT VALID. RST SET HERE");
             tcph_.rst(true);
-            send(tun, tcph.ackn(), 0);
+            send(tcph.ackn(), 0);
         }
 
         conn_var_.notify_all();
@@ -115,9 +115,10 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
     case TcpState::ESTAB: {
         // TODO: this handling is used for other states besides ESTABLISHED, like FIN_WAIT_1 and FIN_WAIT_2, CLOSING
         // TODO: HANDLE ACK FOR SYn/FIN
-        if (tcph.seqn() == recv_.nxt - 1 && recv_.wnd == 0) { // It is a window probe probably (at least Linux Net. Stack one)
+        if (tcph.seqn() == recv_.nxt - 1 && recv_.wnd == 0) {
+            // It is a window probe probably (at least Linux Net. Stack one)
             tcph_.ack(true);
-            send(tun, send_.nxt, 0);
+            send(send_.nxt, 0);
         }
         if (is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
             const auto acked_bytes_n = tcph.ackn() - send_.una;// This wraps fine
@@ -132,7 +133,7 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
             // Ignore
         } else if (wrapping_gt(tcph.ackn(), send_.nxt)) {
             tcph_.ack(true);
-            send(tun, send_.nxt, 0);
+            send(send_.nxt, 0);
             return false;// Drop the segment and return
         }
 
@@ -147,7 +148,7 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
             }
         }
 
-        update_send_window(tun);
+        update_send_window();
         break;
     }
     case TcpState::LAST_ACK: {
@@ -161,31 +162,31 @@ bool TcpConnection::handle_ack(Tun &tun, const netparser::TcpHeaderView &tcph)
 
     // Process those states, that require ESTAB processing + something else
     switch (state_) {
-        case TcpState::FIN_WAIT_1: {
+    case TcpState::FIN_WAIT_1: {
 
-            // if FIN segment is ACKed, then continue in FIN_WAIT_2
-            // TOOD: actually make sure fin is acked
-            state_ = TcpState::FIN_WAIT_2;
-            [[fallthrough]];
+        // if FIN segment is ACKed, then continue in FIN_WAIT_2
+        // TOOD: actually make sure fin is acked
+        state_ = TcpState::FIN_WAIT_2;
+        [[fallthrough]];
+    }
+    case TcpState::FIN_WAIT_2: {
+        // if the retrans. queue is empty, then closing is done
+        if (send_buf_.empty()) {
+            // acknowledge user close
         }
-        case TcpState::FIN_WAIT_2: {
-            // if the retrans. queue is empty, then closing is done
-            if (send_buf_.empty()) {
-                // acknowledge user close
-            }
-            break;
-        }
-        case TcpState::CLOSING: {
-            // TOOD: actually make sure fin is acked
-            state_ = TcpState::TIME_WAIT;
-            break;
-        }
-        default:
-            break;
+        break;
+    }
+    case TcpState::CLOSING: {
+        // TOOD: actually make sure fin is acked
+        state_ = TcpState::TIME_WAIT;
+        break;
+    }
+    default:
+        break;
     }
 
 
-    update_timer(tun, tcph.ackn());
+    update_timer(tcph.ackn());
     return true;
 }
 
@@ -206,7 +207,7 @@ void TcpConnection::update_recv_window()
     }
 }
 
-void TcpConnection::update_send_window(Tun &tun)
+void TcpConnection::update_send_window()
 {
     const auto in_flight_n = send_.nxt - send_.una;
     const auto unsent = static_cast<std::uint32_t>(send_buf_.size()) - in_flight_n;
@@ -237,8 +238,7 @@ void TcpConnection::update_send_window(Tun &tun)
 
 }
 
-bool TcpConnection::handle_seg_text(Tun &tun,
-    const netparser::TcpHeaderView &tcph,
+bool TcpConnection::handle_seg_text(const netparser::TcpHeaderView &tcph,
     std::span<const std::byte> payload)
 {
     switch (state_) {
@@ -249,7 +249,7 @@ bool TcpConnection::handle_seg_text(Tun &tun,
         // when a valid segment arrives that is in the window but not at the left window edge
         if (tcph.seqn() != recv_.nxt) {
             tcph_.ack(true);
-            send(tun, send_.nxt, 0);
+            send(send_.nxt, 0);
             return true;
         }
 
@@ -263,7 +263,7 @@ bool TcpConnection::handle_seg_text(Tun &tun,
         // FIN is gonna be handled in handle_fin()
         if (!tcph_.fin()) {
             tcph_.ack(true);
-            send(tun, send_.nxt, 0);// TODO: piggyback this
+            send(send_.nxt, 0);// TODO: piggyback this
             recv_var_.notify_all();
         }
         break;
@@ -307,8 +307,7 @@ bool TcpConnection::handle_fin()
     return true;
 }
 
-bool TcpConnection::handle_segment_syn_sent(Tun &tun,
-    const netparser::TcpHeaderView &tcph)
+bool TcpConnection::handle_segment_syn_sent(const netparser::TcpHeaderView &tcph)
 {
     bool is_ack_acceptable = false;
     if (tcph.ack()) {
@@ -316,7 +315,7 @@ bool TcpConnection::handle_segment_syn_sent(Tun &tun,
         if (wrapping_lt(tcph.ackn() - 1, send_.iss) || tcph.ackn() > send_.nxt) {
             tcph_.rst(true);
             std::println("SENDING RST IN SYN SENT");
-            send(tun, tcph.ackn(), 0);
+            send(tcph.ackn(), 0);
             return false;// return from processing
         }
         if (is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
@@ -345,7 +344,7 @@ bool TcpConnection::handle_segment_syn_sent(Tun &tun,
             state_ = TcpState::ESTAB;
 
             tcph_.ack(true);
-            send(tun, send_.nxt, 0);
+            send(send_.nxt, 0);
 
             // 3 way handshake is done at this point
             conn_var_.notify_all();
@@ -355,7 +354,7 @@ bool TcpConnection::handle_segment_syn_sent(Tun &tun,
 
             tcph_.ack(true);
             tcph_.syn(true);
-            send(tun, send_.iss, 0);
+            send(send_.iss, 0);
         }
 
         if (auto opt = tcph.mss(); opt.has_value()) { send_mss_ = opt.value().mss; }
@@ -371,8 +370,7 @@ bool TcpConnection::handle_segment_syn_sent(Tun &tun,
     return true;
 }
 
-bool TcpConnection::handle_segment_other(Tun &tun,
-    const netparser::TcpHeaderView &tcph,
+bool TcpConnection::handle_segment_other(const netparser::TcpHeaderView &tcph,
     std::span<const std::byte> payload)
 {
     // First, check sequence number
@@ -382,26 +380,24 @@ bool TcpConnection::handle_segment_other(Tun &tun,
         if (tcph.rst()) { return false; }
 
         tcph_.ack(true);
-        send(tun, send_.nxt, 0);
+        send(send_.nxt, 0);
         return false;
     }
 
     // False signals, that a handler wants to return (usually in drop-and-return situations)
-    if (tcph.rst()) { if (!handle_rst(tun, tcph)) { return false; } }
+    if (tcph.rst()) { if (!handle_rst(tcph)) { return false; } }
 
     // Fourth
-    if (tcph.syn()) { if (!handle_syn(tun, tcph)) { return false; } }// NOLINT
+    if (tcph.syn()) { if (!handle_syn(tcph)) { return false; } }// NOLINT
 
     // Fifth, check the ACK field
     if (!tcph.ack()) { return false; }
-    if (!handle_ack(tun, tcph)) { return false; }
+    if (!handle_ack(tcph)) { return false; }
 
     // Ignore URG bit
 
     const auto payload_size = payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
-    if (payload_size > 0) {
-        if (!handle_seg_text(tun, tcph, payload)) { return false; }
-    }
+    if (payload_size > 0) { if (!handle_seg_text(tcph, payload)) { return false; } }
 
     // TODO: Check FIN bit
     if (tcph.fin()) { if (!handle_fin()) { return false; } }// NOLINT
@@ -415,17 +411,17 @@ void TcpConnection::on_packet(Tun &tun,
 {
     switch (state_) {
     case TcpState::SYN_SENT: {
-        if (!handle_segment_syn_sent(tun, tcph)) { return; }
+        if (!handle_segment_syn_sent(tcph)) { return; }
         break;
     }
     default: {
-        if (!handle_segment_other(tun, tcph, payload)) { return; }
+        if (!handle_segment_other(tcph, payload)) { return; }
         break;
     }
     }
 }
 
-bool TcpConnection::handle_send(Tun &tun)
+bool TcpConnection::handle_send()
 {
     const auto in_flight_n = send_.nxt - send_.una;
 
@@ -440,29 +436,38 @@ bool TcpConnection::handle_send(Tun &tun)
         // Sender SWS
         const auto usable_wnd = send_.wnd - in_flight_n;
         const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n,
-                                                  static_cast<std::size_t>(send_.wnd - in_flight_n) });
+                                              static_cast<std::size_t>(send_.wnd - in_flight_n) });
 
         // TODO: PUSH flag in segments
         // FIXME: SND.NXT == SND.UNA is a NAGLE condition. I should let user disable NAgle so this cond. isnt enforced
-        bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd) ||  (send_.nxt == send_.una && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
+        bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd)
+                        || (send_.nxt == send_.una && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
         if (can_send) {
-            std::println("SWS SEnding: {} {} {} {}, flight: {}", send_buf_.size(), usable_wnd, bytes_to_send, unsent, in_flight_n);
+            std::println("SWS SEnding: {} {} {} {}, flight: {}",
+                send_buf_.size(),
+                usable_wnd,
+                bytes_to_send,
+                unsent,
+                in_flight_n);
             tcph_.ack(true);
-            send(tun, send_.nxt, bytes_to_send);
+            send(send_.nxt, bytes_to_send);
         } else {
             std::println("Start SWS override timer: {} {} {}", usable_wnd, bytes_to_send, unsent);
-            start_timer(send_.nxt, static_cast<std::uint32_t>(bytes_to_send), RttMeasurement::SWS_OVERRIDE_MS, Timer::TimerState::SWS_OVERRIDE);
+            start_timer(send_.nxt,
+                static_cast<std::uint32_t>(bytes_to_send),
+                RttMeasurement::SWS_OVERRIDE_MS,
+                Timer::TimerState::SWS_OVERRIDE);
         }
     }
     return true;
 }
 
-bool TcpConnection::handle_close(Tun &tun)
+bool TcpConnection::handle_close()
 {
     if (should_send_fin_ && send_buf_.empty()) {
         tcph_.fin(true);
         tcph_.ack(true);
-        send(tun, send_.nxt, 0);
+        send(send_.nxt, 0);
         should_send_fin_ = false;
 
         switch (state_) {
@@ -480,17 +485,17 @@ bool TcpConnection::handle_close(Tun &tun)
     return true;
 }
 
-void TcpConnection::on_tick(Tun &tun)
+void TcpConnection::on_tick()
 {
-    update_timer(tun, send_.una);
+    update_timer(send_.una);
     // First, deal with window stuff (zero window, to be exact) and then handle send
-    update_send_window(tun);
+    update_send_window();
 
-    if (!handle_send(tun)) { return; }
-    if (!handle_close(tun)) { return; }
+    if (!handle_send()) { return; }
+    if (!handle_close()) { return; }
 }
 
-ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::size_t max_size)
+ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max_size)
 {
     const auto send_buf_idx = static_cast<std::int64_t>(seqn_from) - static_cast<std::int64_t>(send_.una);
     std::println("Send buf idx: {}, send buf size: {}, send size: {}", send_buf_idx, send_buf_.size(), max_size);
@@ -499,7 +504,8 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
     const std::span<const std::byte> payload{ send_buf_.data() + send_buf_idx, max_size };
 
     iph_.total_len(
-        static_cast<std::uint16_t>(static_cast<std::size_t>(iph_.ihl() * 4) + (netparser::TCPH_MIN_SIZE + tcph_.options().options_size()) +
+        static_cast<std::uint16_t>(static_cast<std::size_t>(iph_.ihl() * 4) + (
+                                       netparser::TCPH_MIN_SIZE + tcph_.options().options_size()) +
                                    payload.size()));
     iph_.calculate_checksum();
     const auto ip_data = iph_.serialize();
@@ -517,7 +523,8 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
 
 
     std::vector<std::byte> buf{};
-    buf.resize(static_cast<std::size_t>(iph_.ihl() * 4) + static_cast<std::size_t>(tcph_.data_off() * 4) + payload.size());
+    buf.resize(
+        static_cast<std::size_t>(iph_.ihl() * 4) + static_cast<std::size_t>(tcph_.data_off() * 4) + payload.size());
 
     std::size_t offset = 0;
     std::memcpy(buf.data() + offset, ip_data.data(), ip_data.size());// NOLINT
@@ -529,7 +536,7 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
         offset += payload.size();
     }
 
-    const auto written = tun.write(buf.data(), offset);
+    const auto written = tun_.write(buf.data(), offset);
     if (written < 0) {
         throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno)));// NOLINT
     }
@@ -544,7 +551,10 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
             // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
             start_measure_rtt(seqn_from);
         }
-        start_timer(send_.una, static_cast<std::uint32_t>(payload.size()), rtt_measurement_.rto_ms, Timer::TimerState::RETRANSMISSION);
+        start_timer(send_.una,
+            static_cast<std::uint32_t>(payload.size()),
+            rtt_measurement_.rto_ms,
+            Timer::TimerState::RETRANSMISSION);
         // start_timer(send_.una, static_cast<std::uint32_t>(data_size), rtt_measurement_.rto_ms, Timer::TimerState::RETRANSMISSION);
     }
 
@@ -560,7 +570,7 @@ ssize_t TcpConnection::send(Tun &tun, const std::uint32_t seqn_from, const std::
     return written;
 }
 
-void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
+void TcpConnection::accept(const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
 {
     iph_.version(iph.version());
     iph_.ihl(iph.ihl());
@@ -593,7 +603,7 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
         // ACK shouldn't be set in initial SYN segment
         std::println("RST IS SET IN ACCEPT");
         tcph_.rst(true);
-        send(tun, tcph.ackn(), 0);
+        send(tcph.ackn(), 0);
         return;
     }
 
@@ -624,14 +634,13 @@ void TcpConnection::accept(Tun &tun, const netparser::IpHeaderView &iph, const n
         send_.iss = iss;
         send_.una = send_.iss;
         send_.nxt = send_.iss;// 1 goes for SYN (in send()), since it uses up a SEQ number
-        send(tun, iss, 0);
+        send(iss, 0);
 
         state_ = TcpState::SYN_RCVD;
     }
 }
 
-void TcpConnection::connect(Tun &tun,
-    const std::uint32_t saddr,
+void TcpConnection::connect(const std::uint32_t saddr,
     const std::uint16_t sport,
     const std::uint32_t daddr,
     const std::uint16_t dport)
@@ -672,7 +681,7 @@ void TcpConnection::connect(Tun &tun,
     send_.nxt = send_.iss;// +1 is in send()
     // send_.wnd = send_mss_;// Update this after we get a SYNACK. Default is 536
     set_send_wnd(send_mss_);
-    send(tun, iss, 0);
+    send(iss, 0);
 
     state_ = TcpState::SYN_SENT;
 }
@@ -735,7 +744,10 @@ void TcpConnection::reset_rtt()
     rtt_measurement_.srtt = 0;
 }
 
-void TcpConnection::start_timer(const std::uint32_t seq_n, const std::uint32_t data_len, const std::uint32_t rto_ms, const Timer::TimerState start_state)
+void TcpConnection::start_timer(const std::uint32_t seq_n,
+    const std::uint32_t data_len,
+    const std::uint32_t rto_ms,
+    const Timer::TimerState start_state)
 {
     if (!timer_.timer_start.has_value()) {
         const auto cur_time = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -748,7 +760,8 @@ void TcpConnection::start_timer(const std::uint32_t seq_n, const std::uint32_t d
         std::println("Armed timer until {}. Now is {}. timer seq {}, state: {}",
             timer_.timer_expire_at,
             cur_time,
-            timer_.timer_start_seq_at, static_cast<int>(timer_.state));
+            timer_.timer_start_seq_at,
+            static_cast<int>(timer_.state));
     }
 }
 
@@ -758,7 +771,7 @@ void TcpConnection::stop_timer()
     // timer_.state = Timer::TimerState::RETRANSMISSION;
 }
 
-void TcpConnection::handle_timer_retransmit(Tun &tun)
+void TcpConnection::handle_timer_retransmit()
 {
     // Retransmission should happen
     stop_measure_rtt();// Must not measure on retransmits
@@ -767,9 +780,7 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
     tcph_.ack(true);
     // TODO: this is some ugly shit, get rid of this
     // if (retransmit_fin_test_) { tcph_.fin(true); }
-    if (is_fin_state(state_)) {
-        tcph_.fin(true);
-    }
+    if (is_fin_state(state_)) { tcph_.fin(true); }
     if (is_syn_state(state_)) {
         tcph_.syn(true);
 
@@ -783,7 +794,7 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
         }
     }
     std::println("Timer sending: state: {}", static_cast<int>(timer_.state));
-    send(tun, timer_.timer_start_seq_at, timer_.timer_data_length);
+    send(timer_.timer_start_seq_at, timer_.timer_data_length);
     switch (timer_.state) {
     case Timer::TimerState::SWS_OVERRIDE: {
         // If it is a SWS override timer, it should not exp. backoff, it can only be in range 0,1...1,0
@@ -791,7 +802,8 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
         stop_timer();
         return;
     }
-    default: break;
+    default:
+        break;
     }
 
     // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
@@ -801,9 +813,7 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
 
     // These values are likely bogus after several backoffs (3)
     constexpr std::uint32_t BACKOFF_THRESHOLD = 10000;
-    if (rtt_measurement_.rto_ms > BACKOFF_THRESHOLD) {
-        reset_rtt();
-    }
+    if (rtt_measurement_.rto_ms > BACKOFF_THRESHOLD) { reset_rtt(); }
     rtt_measurement_.rto_ms = std::min(rtt_measurement_.rto_ms, RttMeasurement::MAX_RTO_MS);
 
     std::println("TIMER EXPIRED with rto now: {}", rtt_measurement_.rto_ms);
@@ -817,7 +827,7 @@ void TcpConnection::handle_timer_retransmit(Tun &tun)
 }
 
 
-void TcpConnection::update_timer(Tun &tun, const std::uint32_t ack_n)
+void TcpConnection::update_timer(const std::uint32_t ack_n)
 {
     if (timer_.timer_start.has_value()) {
         const auto cur_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -826,7 +836,8 @@ void TcpConnection::update_timer(Tun &tun, const std::uint32_t ack_n)
             std::println("All outstanding data ACKED. Disable timer");
             // (5.2) When all outstanding data has been acknowledged, turn off the retransmission timer.
             stop_timer();
-        } else if (wrapping_gt(ack_n, timer_.timer_start_seq_at) && timer_.is_armed(Timer::TimerState::RETRANSMISSION)) {
+        } else if (wrapping_gt(ack_n, timer_.timer_start_seq_at) && timer_.
+                   is_armed(Timer::TimerState::RETRANSMISSION)) {
             // Window was moved, restart timer
             // (5.3) When an ACK is received that acknowledges new data, restart the retransmission timer so that it will expire
             // after RTO seconds (for the current value of RTO).
@@ -837,7 +848,7 @@ void TcpConnection::update_timer(Tun &tun, const std::uint32_t ack_n)
             start_timer(ack_n, timer_.timer_data_length, rtt_measurement_.rto_ms, timer_.state);
         } else {
             // timer is neither updated nor disabled
-            if (cur_time_ms >= timer_.timer_expire_at) { handle_timer_retransmit(tun); }
+            if (cur_time_ms >= timer_.timer_expire_at) { handle_timer_retransmit(); }
         }
     }
 }

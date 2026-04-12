@@ -9,8 +9,7 @@
 
 struct Context
 {
-    Tcp tcp{};
-    Tun tun;
+    Tcp tcp;
     std::mutex mx;// BEFORE ACCESSING ANY FIELD IT MUST BE LOCKED
 
     static Context &instance()
@@ -31,7 +30,7 @@ struct Context
 
 private:
     explicit Context(std::string_view dev_name)
-        : tun(dev_name) {}
+        : tcp(dev_name) {}
 };
 
 
@@ -47,7 +46,7 @@ struct TcpSocket
         std::uint32_t addr{};
         int ret = inet_pton(AF_INET, daddr.data(), &addr);
         if (ret < 0) { throw std::runtime_error("Ill formated address"); }
-        quad_ = ctx_.tcp.connect(ctx_.tun, addr, dport);
+        quad_ = ctx_.tcp.connect(addr, dport);
 
         auto &conn = ctx_.tcp.get_connection(quad_);
         conn.get_connect_var().wait(conn_lock);
@@ -73,9 +72,7 @@ struct TcpSocket
             auto &conn = ctx.tcp.get_connection(quad_);
             conn.get_send_var().wait(send_lock, [&conn] { return conn.send_buf_free_space() > 0; });
             const auto result = conn.write(buf, buf_sz);
-            if (result < 0) {
-                throw std::runtime_error("Write error");
-            }
+            if (result < 0) { throw std::runtime_error("Write error"); }
             sent_total += static_cast<std::size_t>(result);
         }
         return static_cast<ssize_t>(sent_total);
@@ -117,10 +114,7 @@ public:
         ctx_.tcp.bind(port);
     }
 
-    void listen([[maybe_unused]] int backlog)
-    {
-
-    }
+    void listen([[maybe_unused]] int backlog) {}
 
     TcpSocket accept()
     {
@@ -140,14 +134,12 @@ public:
 std::jthread run_underlying_stuff()
 {
     auto &ctx = Context::instance();
-    ctx.tun.set_addr("10.0.0.1");
-    ctx.tun.set_mask("255.255.255.0");
-    ctx.tun.set_flags(IFF_UP | IFF_RUNNING);
+
     std::jthread tcp_thread{ [](std::stop_token tok) {
             while (!tok.stop_requested()) {// NOLINT
                 auto &ctx = Context::instance();
                 std::unique_lock lock{ ctx.mx };
-                ctx.tcp.process_packet(ctx.tun);
+                ctx.tcp.process_packet();
                 lock.unlock();
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));// Let other threads lock the mutex
             }
@@ -216,7 +208,6 @@ int main()
     // auto sock = listener.accept();
     // std::println("user: accepted");
     // sock.shutdown(ShutdownType::WRITE);
-
 
 
     //
