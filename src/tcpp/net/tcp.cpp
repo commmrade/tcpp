@@ -27,7 +27,7 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
             auto &conn = eiter->second;
             const std::span<const std::byte> payload{ std::next(buf.data(), rd_offset),
                                                       buf.size() - static_cast<std::size_t>(rd_offset) };
-            conn->on_packet(tun_, tcph, payload);
+            conn->on_packet(tcph, payload);
             if (conn->get_state() == TcpState::CLOSED) {
                 std::println("DELETED CONNECTION");
                 established_connections_.erase(eiter);
@@ -35,7 +35,7 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
         } else if (bound_.contains(quad.dst_port)) {
             if (auto riter = syn_recv_connections_.find(quad); riter != syn_recv_connections_.end()) {
                 auto &conn = riter->second;
-                conn->on_packet(tun_, tcph, {});
+                conn->on_packet(tcph, {});
                 if (conn->get_state() == TcpState::ESTAB) {
                     // Now its fully estab conn, also check for any states besides "opening" states (is_synchronized)
                     established_connections_.emplace(quad, std::unique_ptr<TcpConnection>(conn.release()));

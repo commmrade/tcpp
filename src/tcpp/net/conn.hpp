@@ -81,6 +81,7 @@ struct Timer
 };
 
 class Tcp;
+class TcpConnectionTest;
 
 class TcpConnection
 {
@@ -174,6 +175,7 @@ private:
     void set_recv_wnd(const std::uint32_t wnd, const std::uint32_t nxt);
 
     friend class Tcp;
+    friend class TcpConnectionTest;
 
     IOInterface &tun_;
 
