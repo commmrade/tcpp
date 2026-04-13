@@ -21,6 +21,8 @@ include(GoogleTest)
 add_executable(tests
         ip_tests.cpp
         tcp_tests.cpp
+        ../src/tcpp/net/conn.hpp
+        ../src/tcpp/net/conn.cpp
         tcp_mock_tests.cpp)
 
 set(SPDLOG_FMT_EXTERNAL ON)

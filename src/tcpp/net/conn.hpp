@@ -113,6 +113,18 @@ public:
     {
         return *clock_.get();
     }
+    std::uint32_t get_send_iss() const
+    {
+        return send_.iss;
+    }
+
+    // Check timers, all sorts of events and issue SENDs
+    // TODO: Piggybacked ACKs should be here
+    // Method is used for SENDs and TIMEOUTs and all other kinds of events except SEGMENT ARRIVES
+    void on_tick();
+
+    void on_packet(const netparser::TcpHeaderView &tcph,
+        std::span<const std::byte> payload);
 private:
     void append_send_data(const std::span<const std::byte> data);
     void append_recv_data(const std::span<const std::byte> data);
@@ -133,17 +145,13 @@ private:
 
     bool handle_segment_syn_sent(const netparser::TcpHeaderView &tcph);
     bool handle_segment_other(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
-    void on_packet(const netparser::TcpHeaderView &tcph,
-        std::span<const std::byte> payload);
+
 
 
     bool handle_send();
     bool handle_close();
 
-    // Check timers, all sorts of events and issue SENDs
-    // TODO: Piggybacked ACKs should be here
-    // Method is used for SENDs and TIMEOUTs and all other kinds of events except SEGMENT ARRIVES
-    void on_tick();
+
 
     /// @param seqn_from first sequence number to send
     /// @param max_size how many bytes of payload it is allowed to send at most.

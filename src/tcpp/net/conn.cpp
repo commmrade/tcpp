@@ -434,9 +434,9 @@ bool TcpConnection::handle_send()
     if (unsent > 0 && send_.wnd > 0) {
         // Sender SWS
         const auto usable_wnd = send_.wnd - in_flight_n;
-        const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n,
-                                              static_cast<std::size_t>(send_.wnd - in_flight_n) });
-
+        // const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n,
+                                              // static_cast<std::size_t>(send_.wnd - in_flight_n) });
+        const auto bytes_to_send = std::min<std::size_t>({send_mss_, unsent, usable_wnd});
         // TODO: PUSH flag in segments
         // FIXME: SND.NXT == SND.UNA is a NAGLE condition. I should let user disable NAgle so this cond. isnt enforced
         bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd)
@@ -624,7 +624,7 @@ void TcpConnection::accept(const netparser::IpHeaderView &iph, const netparser::
             std::numeric_limits<std::uint32_t>::max());
         auto iss = dis(gen);
         // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
-        tcph_.options().mss(recv_mss_);
+        tcph_.options().mss(recv_mss_); // FIXME: SHOULD I SEND IT IF THAT PEER DID NOT HAVE THIS????
         tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
         tcph_.syn(true);
         tcph_.ack(true);
@@ -724,7 +724,6 @@ void TcpConnection::measure_rtt(const std::uint32_t ack_n)
         rtt_measurement_.rto_ms = std::max(rtt_measurement_.rto_ms, RttMeasurement::DEFAULT_RTO_MS);
 
         rtt_measurement_.rtt_ms = static_cast<std::uint32_t>(res);
-        assert(rtt_measurement_.rtt_ms);// it shouldn't be 0, otherwise "initial RTT measurement" is broken
 
         rtt_measurement_.send_at_.reset();
         std::println("RTT IS {}, SRTT IS {}, RTTVAR IS {}, RTO IS {}",
