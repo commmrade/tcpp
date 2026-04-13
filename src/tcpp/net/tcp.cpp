@@ -44,7 +44,7 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
                     accept_var_.notify_all();
                 }
             } else {
-                auto [conn_iter, inserted] = syn_recv_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_));
+                auto [conn_iter, inserted] = syn_recv_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_, std::make_unique<Clock>()));
                 assert(inserted);
                 conn_iter->second->accept(iph, tcph);
             }
@@ -113,7 +113,7 @@ Quad Tcp::connect(const std::uint32_t daddr, const std::uint16_t dport)
     // FIXME: Ugly
     Quad quad{ .src_addr = daddr, .src_port = dport, .dst_addr = s_addr, .dst_port = port };
 
-    auto [iter, inserted] = established_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_));
+    auto [iter, inserted] = established_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_, std::make_unique<Clock>()));
     assert(inserted);
     auto &conn = iter->second;
 

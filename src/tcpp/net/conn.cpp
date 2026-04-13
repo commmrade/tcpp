@@ -690,8 +690,7 @@ void TcpConnection::start_measure_rtt(const std::uint32_t seq_n)
 {
     if (!rtt_measurement_.send_at_.has_value()) {
         rtt_measurement_.send_seq_at_ = seq_n;
-        rtt_measurement_.send_at_ = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
+        rtt_measurement_.send_at_ = clock_->now();
         std::println("Send at: {}", rtt_measurement_.send_at_.value());
     }
 }
@@ -701,8 +700,7 @@ void TcpConnection::stop_measure_rtt() { rtt_measurement_.send_at_.reset(); }
 void TcpConnection::measure_rtt(const std::uint32_t ack_n)
 {
     if (rtt_measurement_.send_at_.has_value() && wrapping_gt(ack_n, rtt_measurement_.send_seq_at_)) {
-        const std::int64_t cur_time = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
+        const std::int64_t cur_time = clock_->now();
         const std::int64_t res = cur_time - rtt_measurement_.send_at_.value();// cur. rtt
 
         static constexpr std::uint32_t GRAN_MS = 1;
@@ -750,8 +748,7 @@ void TcpConnection::start_timer(const std::uint32_t seq_n,
     const Timer::TimerState start_state)
 {
     if (!timer_.timer_start.has_value()) {
-        const auto cur_time = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
+        const auto cur_time = clock_->now();
         timer_.timer_start.emplace(cur_time);// Start timer
         timer_.timer_expire_at = cur_time + static_cast<std::int64_t>(rto_ms);// It expires at RTO
         timer_.timer_start_seq_at = seq_n;
@@ -830,8 +827,7 @@ void TcpConnection::handle_timer_retransmit()
 void TcpConnection::update_timer(const std::uint32_t ack_n)
 {
     if (timer_.timer_start.has_value()) {
-        const auto cur_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
+        const auto cur_time_ms = clock_->now();
         if (ack_n >= send_.nxt && timer_.is_armed(Timer::TimerState::RETRANSMISSION)) {
             std::println("All outstanding data ACKED. Disable timer");
             // (5.2) When all outstanding data has been acknowledged, turn off the retransmission timer.

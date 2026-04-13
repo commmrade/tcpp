@@ -16,6 +16,8 @@
 #include <sys/types.h>
 #include <span>
 #include "common.hpp"
+#include "../clock.hpp"
+
 #include <netinet/in.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
@@ -84,8 +86,8 @@ class Tcp;
 class TcpConnection
 {
 public:
-    TcpConnection(TunInterface &tun)
-        : tun_(tun) {}
+    TcpConnection(TunInterface &tun, std::unique_ptr<ClockInterface> clock)
+        : tun_(tun), clock_(std::move(clock)) {}
 
     // Helpers
     [[nodiscard]] std::condition_variable &get_connect_var() { return conn_var_; }
@@ -205,6 +207,7 @@ private:
 
     // Retransmit. things (IN MS) -----
     Timer timer_;
+    std::unique_ptr<ClockInterface> clock_;
     // retransmissions -----
 };
 
