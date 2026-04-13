@@ -19,14 +19,14 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
-class TunInterface
+class IOInterface
 {
 public:
-    virtual ~TunInterface() = default;
+    virtual ~IOInterface() = default;
     virtual ssize_t write(const void* buf, const std::size_t buf_len) = 0;
 };
 
-class Tun final : public TunInterface
+class Tun final : public IOInterface
 {
 private:
     int tun_fd{};

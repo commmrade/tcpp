@@ -405,8 +405,7 @@ bool TcpConnection::handle_segment_other(const netparser::TcpHeaderView &tcph,
     return true;
 }
 
-void TcpConnection::on_packet(Tun &tun,
-    const netparser::TcpHeaderView &tcph,
+void TcpConnection::on_packet(const netparser::TcpHeaderView &tcph,
     std::span<const std::byte> payload)
 {
     switch (state_) {

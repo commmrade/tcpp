@@ -17,7 +17,6 @@
 #include <span>
 #include "common.hpp"
 #include "../clock.hpp"
-
 #include <netinet/in.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
@@ -86,7 +85,7 @@ class Tcp;
 class TcpConnection
 {
 public:
-    TcpConnection(TunInterface &tun, std::unique_ptr<ClockInterface> clock)
+    TcpConnection(IOInterface &tun, std::unique_ptr<ClockInterface> clock)
         : tun_(tun), clock_(std::move(clock)) {}
 
     // Helpers
@@ -108,6 +107,11 @@ public:
         return std::numeric_limits<std::uint16_t>::max() - send_buf_.size();
     }
 
+    // Testing functions
+    const ClockInterface& get_clock() const
+    {
+        return *clock_.get();
+    }
 private:
     void append_send_data(const std::span<const std::byte> data);
     void append_recv_data(const std::span<const std::byte> data);
@@ -128,8 +132,7 @@ private:
 
     bool handle_segment_syn_sent(const netparser::TcpHeaderView &tcph);
     bool handle_segment_other(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
-    void on_packet(Tun &tun,
-        const netparser::TcpHeaderView &tcph,
+    void on_packet(const netparser::TcpHeaderView &tcph,
         std::span<const std::byte> payload);
 
 
@@ -172,7 +175,7 @@ private:
 
     friend class Tcp;
 
-    TunInterface &tun_;
+    IOInterface &tun_;
 
     std::condition_variable recv_var_;// Notified when something is received
     std::condition_variable conn_var_;// Notified when 3 way handshake is done (both active and passive)
