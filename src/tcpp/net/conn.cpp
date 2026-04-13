@@ -452,6 +452,7 @@ bool TcpConnection::handle_send()
             send(send_.nxt, bytes_to_send);
         } else {
             std::println("Start SWS override timer: {} {} {}", usable_wnd, bytes_to_send, unsent);
+            // FIXME: I MAY NEED TO IMPL. TIMERS OTEHR WAY, SINCE SWS AND RETRANS SHOULD NOT BE SHARED
             start_timer(send_.nxt,
                 static_cast<std::uint32_t>(bytes_to_send),
                 RttMeasurement::SWS_OVERRIDE_MS,
@@ -826,6 +827,7 @@ void TcpConnection::update_timer(const std::uint32_t ack_n)
 {
     if (timer_.timer_start.has_value()) {
         const auto cur_time_ms = clock_->now();
+        std::println("Cur time ms is: {}", cur_time_ms);
         if (ack_n >= send_.nxt && timer_.is_armed(Timer::TimerState::RETRANSMISSION)) {
             std::println("All outstanding data ACKED. Disable timer");
             // (5.2) When all outstanding data has been acknowledged, turn off the retransmission timer.

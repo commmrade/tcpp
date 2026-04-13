@@ -108,16 +108,6 @@ public:
         return std::numeric_limits<std::uint16_t>::max() - send_buf_.size();
     }
 
-    // Testing functions
-    const ClockInterface& get_clock() const
-    {
-        return *clock_.get();
-    }
-    std::uint32_t get_send_iss() const
-    {
-        return send_.iss;
-    }
-
     // Check timers, all sorts of events and issue SENDs
     // TODO: Piggybacked ACKs should be here
     // Method is used for SENDs and TIMEOUTs and all other kinds of events except SEGMENT ARRIVES
@@ -183,7 +173,7 @@ private:
     void set_recv_wnd(const std::uint32_t wnd, const std::uint32_t nxt);
 
     friend class Tcp;
-    friend class TcpConnectionTest;
+    friend class TcpConnectionSenderSwsTest;
 
     IOInterface &tun_;
 

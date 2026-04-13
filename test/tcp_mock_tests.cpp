@@ -93,7 +93,7 @@ namespace helpers {
 
 } // namespace helpers
 
-class TcpConnectionTest : public testing::Test
+class TcpConnectionSenderSwsTest : public testing::Test
 {
 protected:
     static constexpr std::uint32_t PEER_IP  = 0x0A000001; // 10.0.0.1
@@ -102,9 +102,9 @@ protected:
     static constexpr std::uint16_t LOCAL_PORT = 8090;
     static constexpr std::uint32_t PEER_ISN  = 1000;
     MockTun mock_io_;
-    TcpConnection conn_{mock_io_, std::make_unique<Clock>()};
+    TcpConnection conn_{mock_io_, std::make_unique<FakeClock>()};
 
-    void do_handshake(const std::uint16_t send_wnd_size)
+    void do_handshake(const std::uint16_t send_wnd_size = std::numeric_limits<std::uint16_t>::max())
     {
         EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(44));
 
@@ -138,103 +138,95 @@ protected:
         Mock::VerifyAndClearExpectations(&mock_io_);
 
         ASSERT_EQ(conn_.send_.wnd, send_wnd_size);
+        ASSERT_EQ(conn_.get_state(), TcpState::ESTAB);
+    }
+
+    std::uint32_t get_send_iss() const
+    {
+        return conn_.send_.iss;
+    }
+    ClockInterface& get_clock()
+    {
+        return *conn_.clock_.get();
     }
 };
 
-TEST_F(TcpConnectionTest, HandshakeMock)
+TEST_F(TcpConnectionSenderSwsTest, Cond1)
 {
-    do_handshake(65535);
-    ASSERT_EQ(conn_.get_state(), TcpState::ESTAB);
-}
-
-TEST_F(TcpConnectionTest, SenderSws1)
-{
-    do_handshake(65535);
-    ASSERT_EQ(conn_.get_state(), TcpState::ESTAB);
-
+    do_handshake();
     char buf[536]{};
-    std::memset(buf, 'c', sizeof(buf));
-    // Now we shall expect, that the first SWS sender condition will fire
     const auto written = conn_.write(buf, sizeof(buf));
-    // At this point, a maximum sized segment can be sent, (536 is default)
-
     const auto send_size = sizeof(buf) + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE; // So payload + iph + tcph is sent and returned
+    // 1. MIN(D,U) => (536 >= Send MSS) => true
     EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
 }
 
-TEST_F(TcpConnectionTest, SenderSws2)
+TEST_F(TcpConnectionSenderSwsTest, Cond2)
 {
     do_handshake(400);
-    // FIXME: Factor out this assert to do_handshake()
-    ASSERT_EQ(conn_.get_state(), TcpState::ESTAB);
-
     char buf[200]{};
-    std::memset(buf, 'c', sizeof(buf));
     const auto written = conn_.write(buf, sizeof(buf));
-    // Second condition should fire, because (nagle)[SND.NXT == SND.UNA] && QUEUED_DATA_N <= USABLE_WINDOW_N and first cond min(D,U) < SEND_MSS (5360
     const auto send_size = sizeof(buf) + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
+    // 1. MIN(D,U) => (200 < Send MSS) => false
+    // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (200) <= USABLE_WND (400)) => true
     EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
 }
 
-TEST_F(TcpConnectionTest, SenderSws3)
+TEST_F(TcpConnectionSenderSwsTest, SenderSws3)
 {
     // send_wnd_max_ = 500, Fs * max = 0.5 * 500 = 250
     do_handshake(500);
-    ASSERT_EQ(conn_.get_state(), TcpState::ESTAB);
-
-    // First fails, since Min(d,u) is 500 and this < send.mss
-    // Second fails, because data_n > unsent_n
-    // Third works, because min(d,u) (500) >= 1/2 * 500 (250)
     char buf[600]{};
-    std::memset(buf, 'c', sizeof(buf));
     const auto sent = conn_.write(buf, sizeof(buf));
-
     const auto send_size = 500 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
+    // 1. MIN(D,U) => (200 < Send MSS) => false
+    // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (600) > USABLE_WND (500)) => false
+    // 3. ([SND.NXT = SND.UNA] && min(D, U) (500) >= (1/2 * MAX_WND_SIZE) (250) => true
     EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
 }
 
-TEST_F(TcpConnectionTest, SenderSws4)
+TEST_F(TcpConnectionSenderSwsTest, SenderSws4)
 {
     do_handshake(500);
-    // FIXME: Factor out this assert to do_handshake()
-    ASSERT_EQ(conn_.get_state(), TcpState::ESTAB);
-
     char buf[900]{};
-    std::memset(buf, 'c', sizeof(buf));
     const auto written = conn_.write(buf, 500);
-    // First fails, since Min(d,u) is 500 and this < send.mss
-    // Second doesn't fail, because data_n <= usable_wnd
-    // Third fails, because min(d,u) (300) < 1/2 * 300 (150)
     const auto send_size = 500 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
+    // 1. MIN(D,U) => (500 < Send MSS) => false
+    // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (500) <= USABLE_WND (500)) => true
     EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
-
     auto ack = helpers::make_tcp({
             .sport = PEER_PORT, .dport = LOCAL_PORT,
             .seqn  = PEER_ISN + 1,
-            .ackn  = conn_.get_send_iss() + 500, // size of packet we sent
+            .ackn  = get_send_iss() + 500, // size of packet we sent
             .ack   = true,
             .window = 100
     });
     const auto ack_data = ack.serialize();
     const netparser::TcpHeaderView ack_view{ack_data};
     conn_.on_packet(ack_view, {});
-
     const auto sent = conn_.write(buf, 200);
     const auto send_size2 = 200 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
-    // First fails, since Min(d,u) is 100 and this < send.mss
-    // Second fails, because data_n > usable_wnd
-    // Third fails, because min(d,u) (100) < 1/2 * 500 (250)
-
     // Make sure write isnt even called, since timer is supposed to start
+    // 1. MIN(D,U) => (100 < Send MSS) => false
+    // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (200) > USABLE_WND (100)) => false
+    // 3. ([SND.NXT = SND.UNA] && min(D, U) (100) >= (1/2 * MAX_WND_SIZE) (250) => false
+    // 4. Timer starts
     EXPECT_CALL(mock_io_, write(_, _)).Times(0);
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
+
+    // Make sure it fires after SWS_OVERRIDE_MS.
+    // FIXME: I MAY NEED TO IMPL. TIMERS OTEHR WAY, SINCE SWS AND RETRANS SHOULD NOT BE SHARED
+    // static_cast<FakeClock&>(get_clock()).advance(RttMeasurement::SWS_OVERRIDE_MS);
+    // EXPECT_CALL(mock_io_, write(_, _)).Times(1);
+    // conn_.on_tick();
+    // Mock::VerifyAndClearExpectations(&mock_io_);
 }
