@@ -219,6 +219,8 @@ void TcpConnection::update_send_window()
             const auto seq_num = send_.una;
             rtt_measurement_.rto_ms = RttMeasurement::DEFAULT_RTO_MS;
             std::println("START ZWP TIMER AGAIN");
+
+            r_timer_.stop(); // Retrans. timer should be suspended when ZWP is running
             z_timer_.start(seq_num, 1, rtt_measurement_.rto_ms, clock_->now());
 
             // TODO: do i really need old_wnd_size condition?
@@ -549,9 +551,11 @@ ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max
             // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
             rtt_measurement_.start(time_now, seqn_from);
         }
-        r_timer_.start(send_.una,
+        if (!z_timer_.is_armed()) { // Should not run while ZWP is active
+            r_timer_.start(send_.una,
             static_cast<std::uint32_t>(payload.size()),
             rtt_measurement_.rto_ms, time_now);
+        }
     }
 
     if (wrapping_gt(seqn_from + static_cast<std::uint32_t>(data_size), send_.nxt - 1)) {
@@ -805,10 +809,11 @@ void TcpConnection::update_timers()
         retransmit(z_timer_);
     }
     const bool should_sws = s_timer_.update(time_now);
-    if (should_sws) {
-        std::println("SWS TIMER FIRES");
-        retransmit(s_timer_);
-    }
+    // FIXME: this causes a segf because send buf idx is -100 idk why
+    // if (should_sws) {
+    //     std::println("SWS TIMER FIRES");
+    //     retransmit(s_timer_);
+    // }
 }
 
 void TcpConnection::set_send_wnd(const std::uint32_t wnd)
