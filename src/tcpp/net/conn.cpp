@@ -87,7 +87,7 @@ bool TcpConnection::handle_syn(const netparser::TcpHeaderView &tcph)
 
 bool TcpConnection::handle_ack(const netparser::TcpHeaderView &tcph)
 {
-    measure_rtt(tcph.ackn());
+    rtt_measurement_.measure(clock_->now(), tcph.ackn());
 
     std::println("Got ack n {}, SEND.NXT {}, UNA", tcph.ackn(), send_.nxt, send_.una);
     switch (state_) {
@@ -185,8 +185,7 @@ bool TcpConnection::handle_ack(const netparser::TcpHeaderView &tcph)
         break;
     }
 
-
-    update_timer(tcph.ackn());
+    update_timers();
     return true;
 }
 
@@ -215,20 +214,19 @@ void TcpConnection::update_send_window()
     // Stop probing when SND.WND has been updated and now TCP is about to send new data (in on_tick()).
     // So (unsent > 0) is safe for stopping ZWP scenario
     if (unsent > 0) {
-        if (send_.wnd == 0 && !timer_.is_armed(Timer::TimerState::ZWP)) {
+        if (send_.wnd == 0 && !z_timer_.is_armed()) {
             assert(!send_buf_.empty());
             const auto seq_num = send_.una;
             rtt_measurement_.rto_ms = RttMeasurement::DEFAULT_RTO_MS;
-            stop_timer();
             std::println("START ZWP TIMER AGAIN");
-            start_timer(seq_num, 1, rtt_measurement_.rto_ms, Timer::TimerState::ZWP);
+            z_timer_.start(seq_num, 1, rtt_measurement_.rto_ms, clock_->now());
 
             // TODO: do i really need old_wnd_size condition?
-        } else if (send_.wnd > 0 && timer_.is_armed(Timer::TimerState::ZWP)) {
-            stop_timer();
+        } else if (send_.wnd > 0 && z_timer_.is_armed()) {
+            z_timer_.stop();
 
             // Reset RTT variables, since they may be kinda wrong after probing packets
-            reset_rtt();
+            rtt_measurement_.reset();
             rtt_measurement_.rto_ms = RttMeasurement::DEFAULT_RTO_MS;
 
             // I think It is kinda logical to start sending from UNA after ZWP is finished
@@ -453,10 +451,9 @@ bool TcpConnection::handle_send()
         } else {
             std::println("Start SWS override timer: {} {} {}", usable_wnd, bytes_to_send, unsent);
             // FIXME: I MAY NEED TO IMPL. TIMERS OTEHR WAY, SINCE SWS AND RETRANS SHOULD NOT BE SHARED
-            start_timer(send_.nxt,
+            s_timer_.start(send_.nxt,
                 static_cast<std::uint32_t>(bytes_to_send),
-                RttMeasurement::SWS_OVERRIDE_MS,
-                Timer::TimerState::SWS_OVERRIDE);
+                RttMeasurement::SWS_OVERRIDE_MS, clock_->now());
         }
     }
     return true;
@@ -487,7 +484,7 @@ bool TcpConnection::handle_close()
 
 void TcpConnection::on_tick()
 {
-    update_timer(send_.una);
+    update_timers();
     // First, deal with window stuff (zero window, to be exact) and then handle send
     update_send_window();
 
@@ -547,15 +544,14 @@ ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max
     // If not measuring currently
     const auto data_size = payload.size() + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
     if (data_size > 0) {
+        const auto time_now = clock_->now();
         if (wrapping_gt(seqn_from, send_.nxt - 1)) {
             // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
-            start_measure_rtt(seqn_from);
+            rtt_measurement_.start(time_now, seqn_from);
         }
-        start_timer(send_.una,
+        r_timer_.start(send_.una,
             static_cast<std::uint32_t>(payload.size()),
-            rtt_measurement_.rto_ms,
-            Timer::TimerState::RETRANSMISSION);
-        // start_timer(send_.una, static_cast<std::uint32_t>(data_size), rtt_measurement_.rto_ms, Timer::TimerState::RETRANSMISSION);
+            rtt_measurement_.rto_ms, time_now);
     }
 
     if (wrapping_gt(seqn_from + static_cast<std::uint32_t>(data_size), send_.nxt - 1)) {
@@ -686,96 +682,95 @@ void TcpConnection::connect(const std::uint32_t saddr,
     state_ = TcpState::SYN_SENT;
 }
 
-void TcpConnection::start_measure_rtt(const std::uint32_t seq_n)
-{
-    if (!rtt_measurement_.send_at_.has_value()) {
-        rtt_measurement_.send_seq_at_ = seq_n;
-        rtt_measurement_.send_at_ = clock_->now();
-        std::println("Send at: {}", rtt_measurement_.send_at_.value());
-    }
-}
+// void TcpConnection::start_measure_rtt(const std::uint32_t seq_n)
+// {
+//     if (!rtt_measurement_.send_at_.has_value()) {
+//         rtt_measurement_.send_seq_at_ = seq_n;
+//         rtt_measurement_.send_at_ = clock_->now();
+//         std::println("Send at: {}", rtt_measurement_.send_at_.value());
+//     }
+// }
 
-void TcpConnection::stop_measure_rtt() { rtt_measurement_.send_at_.reset(); }
+// void TcpConnection::stop_measure_rtt() { rtt_measurement_.send_at_.reset(); }
 
-void TcpConnection::measure_rtt(const std::uint32_t ack_n)
-{
-    if (rtt_measurement_.send_at_.has_value() && wrapping_gt(ack_n, rtt_measurement_.send_seq_at_)) {
-        const std::int64_t cur_time = clock_->now();
-        const std::int64_t res = cur_time - rtt_measurement_.send_at_.value();// cur. rtt
+// void TcpConnection::measure_rtt(const std::uint32_t ack_n)
+// {
+//     if (rtt_measurement_.send_at_.has_value() && wrapping_gt(ack_n, rtt_measurement_.send_seq_at_)) {
+//         const std::int64_t cur_time = clock_->now();
+//         const std::int64_t res = cur_time - rtt_measurement_.send_at_.value();// cur. rtt
+//
+//         static constexpr std::uint32_t GRAN_MS = 1;
+//         if (rtt_measurement_.rtt_ms == 0) {
+//             // First measurement
+//             rtt_measurement_.srtt = static_cast<std::uint32_t>(res);
+//             rtt_measurement_.rttvar = static_cast<std::uint32_t>(res / 2);
+//         } else {
+//             // Following measurements
+//             static constexpr double ALPHA = 1.0 / 8.0;
+//             static constexpr double BETA = 1.0 / 4.0;
+//             rtt_measurement_.rttvar = static_cast<std::uint32_t>(
+//                 (1.0 - BETA) * static_cast<double>(rtt_measurement_.rttvar) + BETA * std::abs(
+//                     static_cast<double>(rtt_measurement_.srtt) - static_cast<double>(res)));
+//             rtt_measurement_.srtt = static_cast<std::uint32_t>(
+//                 (1.0 - ALPHA) * static_cast<double>(rtt_measurement_.srtt) + ALPHA * static_cast<double>(
+//                     res));
+//         }
+//         rtt_measurement_.rto_ms = rtt_measurement_.srtt + std::max(GRAN_MS, 4 * rtt_measurement_.rttvar);
+//         // Whenever RTO is computed, if it is less than 1 second,
+//         // then the RTO SHOULD be rounded up to 1 second
+//         rtt_measurement_.rto_ms = std::max(rtt_measurement_.rto_ms, RttMeasurement::DEFAULT_RTO_MS);
+//
+//         rtt_measurement_.rtt_ms = static_cast<std::uint32_t>(res);
+//
+//         rtt_measurement_.send_at_.reset();
+//         std::println("RTT IS {}, SRTT IS {}, RTTVAR IS {}, RTO IS {}",
+//             rtt_measurement_.rtt_ms,
+//             rtt_measurement_.srtt,
+//             rtt_measurement_.rttvar,
+//             rtt_measurement_.rto_ms);
+//     }
+// }
 
-        static constexpr std::uint32_t GRAN_MS = 1;
-        if (rtt_measurement_.rtt_ms == 0) {
-            // First measurement
-            rtt_measurement_.srtt = static_cast<std::uint32_t>(res);
-            rtt_measurement_.rttvar = static_cast<std::uint32_t>(res / 2);
-        } else {
-            // Following measurements
-            static constexpr double ALPHA = 1.0 / 8.0;
-            static constexpr double BETA = 1.0 / 4.0;
-            rtt_measurement_.rttvar = static_cast<std::uint32_t>(
-                (1.0 - BETA) * static_cast<double>(rtt_measurement_.rttvar) + BETA * std::abs(
-                    static_cast<double>(rtt_measurement_.srtt) - static_cast<double>(res)));
-            rtt_measurement_.srtt = static_cast<std::uint32_t>(
-                (1.0 - ALPHA) * static_cast<double>(rtt_measurement_.srtt) + ALPHA * static_cast<double>(
-                    res));
-        }
-        rtt_measurement_.rto_ms = rtt_measurement_.srtt + std::max(GRAN_MS, 4 * rtt_measurement_.rttvar);
-        // Whenever RTO is computed, if it is less than 1 second,
-        // then the RTO SHOULD be rounded up to 1 second
-        rtt_measurement_.rto_ms = std::max(rtt_measurement_.rto_ms, RttMeasurement::DEFAULT_RTO_MS);
+// void TcpConnection::reset_rtt()
+// {
+//     rtt_measurement_.rttvar = 0;
+//     rtt_measurement_.srtt = 0;
+// }
 
-        rtt_measurement_.rtt_ms = static_cast<std::uint32_t>(res);
+// void TcpConnection::start_timer(const std::uint32_t seq_n,
+//     const std::uint32_t data_len,
+//     const std::uint32_t rto_ms,
+//     const Timer::TimerState start_state)
+// {
+//     if (!timer_.timer_start.has_value()) {
+//         const auto cur_time = clock_->now();
+//         timer_.timer_start.emplace(cur_time);// Start timer
+//         timer_.timer_expire_at = cur_time + static_cast<std::int64_t>(rto_ms);// It expires at RTO
+//         timer_.timer_start_seq_at = seq_n;
+//         timer_.timer_data_length = data_len;
+//         timer_.state = start_state;
+//         std::println("Armed timer until {}. Now is {}. timer seq {}, state: {}",
+//             timer_.timer_expire_at,
+//             cur_time,
+//             timer_.timer_start_seq_at,
+//             static_cast<int>(timer_.state));
+//     }
+// }
 
-        rtt_measurement_.send_at_.reset();
-        std::println("RTT IS {}, SRTT IS {}, RTTVAR IS {}, RTO IS {}",
-            rtt_measurement_.rtt_ms,
-            rtt_measurement_.srtt,
-            rtt_measurement_.rttvar,
-            rtt_measurement_.rto_ms);
-    }
-}
+// void TcpConnection::stop_timer()
+// {
+//     timer_.timer_start.reset();
+//     // timer_.state = Timer::TimerState::RETRANSMISSION;
+// }
 
-void TcpConnection::reset_rtt()
-{
-    rtt_measurement_.rttvar = 0;
-    rtt_measurement_.srtt = 0;
-}
-
-void TcpConnection::start_timer(const std::uint32_t seq_n,
-    const std::uint32_t data_len,
-    const std::uint32_t rto_ms,
-    const Timer::TimerState start_state)
-{
-    if (!timer_.timer_start.has_value()) {
-        const auto cur_time = clock_->now();
-        timer_.timer_start.emplace(cur_time);// Start timer
-        timer_.timer_expire_at = cur_time + static_cast<std::int64_t>(rto_ms);// It expires at RTO
-        timer_.timer_start_seq_at = seq_n;
-        timer_.timer_data_length = data_len;
-        timer_.state = start_state;
-        std::println("Armed timer until {}. Now is {}. timer seq {}, state: {}",
-            timer_.timer_expire_at,
-            cur_time,
-            timer_.timer_start_seq_at,
-            static_cast<int>(timer_.state));
-    }
-}
-
-void TcpConnection::stop_timer()
-{
-    timer_.timer_start.reset();
-    // timer_.state = Timer::TimerState::RETRANSMISSION;
-}
-
-void TcpConnection::handle_timer_retransmit()
+void TcpConnection::retransmit(Timer& timer)
 {
     // Retransmission should happen
-    stop_measure_rtt();// Must not measure on retransmits
+    rtt_measurement_.stop_measure();// Must not measure on retransmits
 
     // (5.4) Retransmit the earliest segment that has not been acknowledged by the TCP receiver.
     tcph_.ack(true);
-    // TODO: this is some ugly shit, get rid of this
-    // if (retransmit_fin_test_) { tcph_.fin(true); }
+
     if (is_fin_state(state_)) { tcph_.fin(true); }
     if (is_syn_state(state_)) {
         tcph_.syn(true);
@@ -789,63 +784,30 @@ void TcpConnection::handle_timer_retransmit()
             break;
         }
     }
-    std::println("Timer sending: state: {}", static_cast<int>(timer_.state));
-    send(timer_.timer_start_seq_at, timer_.timer_data_length);
-    switch (timer_.state) {
-    case Timer::TimerState::SWS_OVERRIDE: {
-        // If it is a SWS override timer, it should not exp. backoff, it can only be in range 0,1...1,0
-        timer_.state = Timer::TimerState::RETRANSMISSION;
-        stop_timer();
-        return;
-    }
-    default:
-        break;
-    }
 
-    // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
-    // maximum value discussed in (2.5) above may be used to provide
-    // an upper bound to this doubling operation.
-    rtt_measurement_.rto_ms = rtt_measurement_.rto_ms * 2;
-
-    // These values are likely bogus after several backoffs (3)
-    constexpr std::uint32_t BACKOFF_THRESHOLD = 10000;
-    if (rtt_measurement_.rto_ms > BACKOFF_THRESHOLD) { reset_rtt(); }
-    rtt_measurement_.rto_ms = std::min(rtt_measurement_.rto_ms, RttMeasurement::MAX_RTO_MS);
-
-    std::println("TIMER EXPIRED with rto now: {}", rtt_measurement_.rto_ms);
-
-    //  (5.6) Start the retransmission timer, such that it expires after RTO
-    //  seconds
-    stop_timer();
-    start_timer(send_.una, timer_.timer_data_length, rtt_measurement_.rto_ms, timer_.state);
-
-    // TODO: handle 5.7 (ABOUT SYN SEGMENTS)
+    send(timer.timer_start_seq_at, timer.timer_data_length);
+    timer.retransmitted(send_.una, clock_->now());
 }
 
-
-void TcpConnection::update_timer(const std::uint32_t ack_n)
+void TcpConnection::update_timers()
 {
-    if (timer_.timer_start.has_value()) {
-        const auto cur_time_ms = clock_->now();
-        std::println("Cur time ms is: {}", cur_time_ms);
-        if (ack_n >= send_.nxt && timer_.is_armed(Timer::TimerState::RETRANSMISSION)) {
-            std::println("All outstanding data ACKED. Disable timer");
-            // (5.2) When all outstanding data has been acknowledged, turn off the retransmission timer.
-            stop_timer();
-        } else if (wrapping_gt(ack_n, timer_.timer_start_seq_at) && timer_.
-                   is_armed(Timer::TimerState::RETRANSMISSION)) {
-            // Window was moved, restart timer
-            // (5.3) When an ACK is received that acknowledges new data, restart the retransmission timer so that it will expire
-            // after RTO seconds (for the current value of RTO).
-            std::println("Window moved. Restart the timer");
 
-            // Restart
-            stop_timer();
-            start_timer(ack_n, timer_.timer_data_length, rtt_measurement_.rto_ms, timer_.state);
-        } else {
-            // timer is neither updated nor disabled
-            if (cur_time_ms >= timer_.timer_expire_at) { handle_timer_retransmit(); }
-        }
+    // TODO: retrans fires and breaks zwp and so on
+    const auto time_now = clock_->now();
+    const bool should_retrans = r_timer_.update(send_.nxt, send_.una, time_now, rtt_measurement_);
+    if (should_retrans) {
+        std::println("Retransmit fires");
+        retransmit(r_timer_);
+    }
+    const bool should_zwp = z_timer_.update(time_now);
+    if (should_zwp) {
+        std::println("zwp fires");
+        retransmit(z_timer_);
+    }
+    const bool should_sws = s_timer_.update(time_now);
+    if (should_sws) {
+        std::println("SWS TIMER FIRES");
+        retransmit(s_timer_);
     }
 }
 
