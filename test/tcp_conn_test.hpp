@@ -136,6 +136,26 @@ protected:
         ASSERT_EQ(conn_.get_state(), TcpState::ESTAB);
     }
 
+    void send_data_to_conn(const std::size_t size)
+    {
+        std::vector<std::byte> payload(size);
+
+        auto seg = helpers::make_tcp({
+            .sport = PEER_PORT, .dport = LOCAL_PORT,
+            .seqn  = PEER_ISN + 1,
+            .ackn  = get_send_iss() + 1,
+            .window = 65535,
+            .ack   = true,
+            .mss   = 0,
+        });
+        const auto seg_d = seg.serialize();
+        const netparser::TcpHeaderView seg_view{ seg_d };
+
+        EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(netparser::TCPH_MIN_SIZE + netparser::IPV4H_MIN_SIZE));
+        conn_.on_packet(seg_view, payload);
+        Mock::VerifyAndClearExpectations(&mock_io_);
+    }
+
     std::uint32_t get_send_iss() const
     {
         return conn_.send_.iss;

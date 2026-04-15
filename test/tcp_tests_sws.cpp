@@ -8,67 +8,98 @@
 using namespace testing;
 
 class TcpConnectionSenderSwsTest : public TcpConnectionTest {};
+
 class TcpConnectionReceiverSwsTest : public TcpConnectionTest {};
 
-TEST_F(TcpConnectionReceiverSwsTest, NotCond1) {
-    do_handshake();
 
-    auto data_seg = helpers::make_tcp({
-                    .sport = PEER_PORT, .dport = LOCAL_PORT,
-                    .seqn  = PEER_ISN + 1,
-                    .ackn  = get_send_iss(),
-                    .window = 65535,
-                    .ack   = true,
-                    .mss = 0,
-            });
-    const auto data_seg_d = data_seg.serialize();
-    const netparser::TcpHeaderView data_seg_view{data_seg_d};
-    std::array<std::byte, 500> payload{};
-    conn_.on_packet(data_seg_view, payload);
-    ASSERT_EQ(get_recv_win(), std::numeric_limits<std::uint16_t>::max() - payload.size());
-    // should not move the right edge
-    const auto right_edge_old = right_edge();
-    const auto rd = conn_.read(payload.data(), 20);
-    ASSERT_EQ(rd, 20);
+// Below threshold: no window update
+TEST_F(TcpConnectionReceiverSwsTest, BelowThreshold_NoWindowUpdate)
+{
+    do_handshake();
+    send_data_to_conn(1539); // fill buffer with 1539 bytes
+    const auto wnd_before = get_recv_win();
+
+    std::array<char, 64000> rd_buf{};
+    conn_.read(rd_buf.data(), 1539); // consume all: free_space grows by 1539, increment = 1539 < 1540
 
     conn_.on_tick();
     upd_recv_win();
-    ASSERT_EQ(get_recv_win(), std::numeric_limits<std::uint16_t>::max() - payload.size());
 
+    ASSERT_EQ(get_recv_win(), wnd_before); // no update
 }
 
-TEST_F(TcpConnectionReceiverSwsTest, Cond1) {
+// Exactly at threshold: window update fires
+TEST_F(TcpConnectionReceiverSwsTest, AtThreshold_WindowUpdated)
+{
     do_handshake();
+    send_data_to_conn(1540);
+    const auto wnd_before = get_recv_win();
 
-    auto data_seg = helpers::make_tcp({
-                    .sport = PEER_PORT, .dport = LOCAL_PORT,
-                    .seqn  = PEER_ISN + 1,
-                    .ackn  = get_send_iss(),
-                    .window = 65535,
-                    .ack   = true,
-                    .mss = 0,
-            });
-    const auto data_seg_d = data_seg.serialize();
-    const netparser::TcpHeaderView data_seg_view{data_seg_d};
-    std::array<std::byte, 500> payload{};
-    conn_.on_packet(data_seg_view, payload);
-    ASSERT_EQ(get_recv_win(), std::numeric_limits<std::uint16_t>::max() - payload.size());
-    // should not move the right edge
-    const auto rd = conn_.read(payload.data(), 500);
-    ASSERT_EQ(rd, 500);
-
+    std::array<char, 64000> rd_buf{};
+    conn_.read(rd_buf.data(), 1540); // increment == 1540 == threshold
     conn_.on_tick();
     upd_recv_win();
-    ASSERT_NE(get_recv_win(), std::numeric_limits<std::uint16_t>::max());
+
+    ASSERT_GT(get_recv_win(), wnd_before);
 }
 
+// Above threshold: window update fires
+TEST_F(TcpConnectionReceiverSwsTest, AboveThreshold_WindowUpdated)
+{
+    do_handshake();
+    send_data_to_conn(2000);
+    const auto wnd_before = get_recv_win();
+
+    std::array<char, 64000> rd_buf{};
+    conn_.read(rd_buf.data(), 2000);
+    conn_.on_tick();
+    upd_recv_win();
+
+    ASSERT_GT(get_recv_win(), wnd_before);
+}
+
+// Partial read below threshold: no update
+TEST_F(TcpConnectionReceiverSwsTest, PartialRead_BelowThreshold_NoUpdate)
+{
+    do_handshake();
+    send_data_to_conn(2000);
+    const auto wnd_before = get_recv_win();
+
+    std::array<char, 64000> rd_buf{};
+    conn_.read(rd_buf.data(), 500); // only 500 consumed, increment < 1540
+    conn_.on_tick();
+    upd_recv_win();
+
+    ASSERT_EQ(get_recv_win(), wnd_before);
+}
+
+// Buffer half-size threshold: when buf/2 < MSS, threshold = buf/2
+// Not applicable here since buf/2 = 32767 > MSS = 1540, so MSS always wins.
+// But test it anyway if buf size is ever changed.
+
+// Window already reflects free space (wnd_size == free_space): increment = 0, no update
+TEST_F(TcpConnectionReceiverSwsTest, NoConsumption_NoUpdate)
+{
+    do_handshake();
+    send_data_to_conn(1540);
+    conn_.on_tick();
+    upd_recv_win();
+    const auto wnd_after_recv = get_recv_win();
+
+    // No read, tick again
+    conn_.on_tick();
+    upd_recv_win();
+
+    ASSERT_EQ(get_recv_win(), wnd_after_recv);
+}
 
 TEST_F(TcpConnectionSenderSwsTest, Cond1)
 {
     do_handshake();
     std::array<char, 536> buf{};
     [[maybe_unused]] const auto written = conn_.write(buf.data(), buf.size());
-    const auto send_size = sizeof(buf) + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE; // So payload + iph + tcph is sent and returned
+    const auto send_size = sizeof(buf) + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
+    // So payload + iph + tcph is sent and returned
     // 1. MIN(D,U) => (536 >= Send MSS) => true
     EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
     conn_.on_tick();
@@ -115,15 +146,15 @@ TEST_F(TcpConnectionSenderSwsTest, SenderSws4)
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
     auto ack = helpers::make_tcp({
-            .sport = PEER_PORT, .dport = LOCAL_PORT,
-            .seqn  = PEER_ISN + 1,
-            .ackn  = get_send_iss() + 500, // size of packet we sent
-            .window = 100,
-            .ack   = true,
-            .mss = 0,
+        .sport = PEER_PORT, .dport = LOCAL_PORT,
+        .seqn = PEER_ISN + 1,
+        .ackn = get_send_iss() + 500,// size of packet we sent
+        .window = 100,
+        .ack = true,
+        .mss = 0,
     });
     const auto ack_data = ack.serialize();
-    const netparser::TcpHeaderView ack_view{ack_data};
+    const netparser::TcpHeaderView ack_view{ ack_data };
     conn_.on_packet(ack_view, {});
     const auto sent = conn_.write(buf.data(), 200);
     const auto send_size2 = 200 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
@@ -137,13 +168,13 @@ TEST_F(TcpConnectionSenderSwsTest, SenderSws4)
     Mock::VerifyAndClearExpectations(&mock_io_);
 
     // Make sure it fires after SWS_OVERRIDE_MS.
-    static_cast<FakeClock&>(get_clock()).advance(RttMeasurement::SWS_OVERRIDE_MS / 2);
+    static_cast<FakeClock &>(get_clock()).advance(RttMeasurement::SWS_OVERRIDE_MS / 2);
     EXPECT_CALL(mock_io_, write).Times(0);
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
 
-    static_cast<FakeClock&>(get_clock()).advance(RttMeasurement::SWS_OVERRIDE_MS / 2);
-    EXPECT_CALL(mock_io_, write).Times(1);
+    static_cast<FakeClock &>(get_clock()).advance(RttMeasurement::SWS_OVERRIDE_MS / 2);
+    EXPECT_CALL(mock_io_, write).Times(1).WillOnce(Return(139));
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
 }

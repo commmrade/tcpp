@@ -548,6 +548,7 @@ ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max
     if (written < 0) {
         throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno)));// NOLINT
     }
+    std::println("WRITTEN {} OFFSET {}", written, offset);
     assert(static_cast<std::size_t>(written) == offset);
     // i think it should be ok, if fails, then i have to rewrite "snd.nxt +" logic
 
