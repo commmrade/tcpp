@@ -228,6 +228,7 @@ void TcpConnection::update_send_window()
             z_timer_.stop();
 
             // Reset RTT variables, since they may be kinda wrong after probing packets
+            // FIXME: this is prolly unncesea since timers use rto 1 time
             rtt_measurement_.reset();
             rtt_measurement_.rto_ms = RttMeasurement::DEFAULT_RTO_MS;
 
@@ -338,6 +339,7 @@ bool TcpConnection::handle_segment_syn_sent(const netparser::TcpHeaderView &tcph
     if (tcph.syn()) {
         recv_.nxt = tcph.seqn() + 1;
         recv_.irs = tcph.seqn();
+        update_recv_window();
         if (tcph.ack()) { send_.una = tcph.ackn(); }
 
         if (send_.una > send_.iss /* SYN has been ACKed */) {
@@ -437,11 +439,17 @@ bool TcpConnection::handle_send()
         // const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n,
                                               // static_cast<std::size_t>(send_.wnd - in_flight_n) });
         const auto bytes_to_send = std::min<std::size_t>({send_mss_, unsent, usable_wnd});
+        if (bytes_to_send == 0) {
+            return true;
+        }
+
         // TODO: PUSH flag in segments
         // FIXME: SND.NXT == SND.UNA is a NAGLE condition. I should let user disable NAgle so this cond. isnt enforced
         bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd)
                         || (send_.nxt == send_.una && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
         if (can_send) {
+            s_timer_.stop(); // FIXME: should it be here?
+
             std::println("SWS SEnding: {} {} {} {}, flight: {}",
                 send_buf_.size(),
                 usable_wnd,
@@ -451,7 +459,7 @@ bool TcpConnection::handle_send()
             tcph_.ack(true);
             send(send_.nxt, bytes_to_send);
         } else {
-            std::println("Start SWS override timer: {} {} {}", usable_wnd, bytes_to_send, unsent);
+            std::println("Start SWS override timer. send nxt: {}, send una: {}, data len {}", send_.nxt, send_.una, bytes_to_send);
             // FIXME: I MAY NEED TO IMPL. TIMERS OTEHR WAY, SINCE SWS AND RETRANS SHOULD NOT BE SHARED
             s_timer_.start(send_.nxt,
                 static_cast<std::uint32_t>(bytes_to_send),
@@ -810,10 +818,10 @@ void TcpConnection::update_timers()
     }
     const bool should_sws = s_timer_.update(time_now);
     // FIXME: this causes a segf because send buf idx is -100 idk why
-    // if (should_sws) {
-    //     std::println("SWS TIMER FIRES");
-    //     retransmit(s_timer_);
-    // }
+    if (should_sws) {
+        std::println("SWS TIMER FIRES: send nxt: {}, send una: {}", send_.nxt, send_.una);
+        retransmit(s_timer_);
+    }
 }
 
 void TcpConnection::set_send_wnd(const std::uint32_t wnd)
