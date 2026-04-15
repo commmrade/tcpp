@@ -87,7 +87,7 @@ bool TcpConnection::handle_syn(const netparser::TcpHeaderView &tcph)
 
 bool TcpConnection::handle_ack(const netparser::TcpHeaderView &tcph)
 {
-    rtt_measurement_.measure(clock_->now(), tcph.ackn());
+    rtt_measurement_.update(clock_->now(), tcph.ackn());
 
     std::println("Got ack n {}, SEND.NXT {}, UNA", tcph.ackn(), send_.nxt, send_.una);
     switch (state_) {
@@ -217,20 +217,17 @@ void TcpConnection::update_send_window()
         if (send_.wnd == 0 && !z_timer_.is_armed()) {
             assert(!send_buf_.empty());
             const auto seq_num = send_.una;
-            rtt_measurement_.rto_ms = RttMeasurement::DEFAULT_RTO_MS;
-            std::println("START ZWP TIMER AGAIN");
+            rtt_measurement_.rto(RttMeasurement::DEFAULT_RTO_MS);
 
             r_timer_.stop(); // Retrans. timer should be suspended when ZWP is running
-            z_timer_.start(seq_num, 1, rtt_measurement_.rto_ms, clock_->now());
+            z_timer_.start(seq_num, 1, rtt_measurement_.rto(), clock_->now());
 
             // TODO: do i really need old_wnd_size condition?
         } else if (send_.wnd > 0 && z_timer_.is_armed()) {
             z_timer_.stop();
 
-            // Reset RTT variables, since they may be kinda wrong after probing packets
-            // FIXME: this is prolly unncesea since timers use rto 1 time
             rtt_measurement_.reset();
-            rtt_measurement_.rto_ms = RttMeasurement::DEFAULT_RTO_MS;
+            rtt_measurement_.rto(RttMeasurement::DEFAULT_RTO_MS);
 
             // I think It is kinda logical to start sending from UNA after ZWP is finished
             send_.nxt = send_.una;
@@ -548,7 +545,6 @@ ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max
     if (written < 0) {
         throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno)));// NOLINT
     }
-    std::println("WRITTEN {} OFFSET {}", written, offset);
     assert(static_cast<std::size_t>(written) == offset);
     // i think it should be ok, if fails, then i have to rewrite "snd.nxt +" logic
 
@@ -559,12 +555,12 @@ ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max
         const auto time_now = clock_->now();
         if (wrapping_gt(seqn_from, send_.nxt - 1)) {
             // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
-            rtt_measurement_.start(time_now, seqn_from);
+            rtt_measurement_.start_measure(time_now, seqn_from);
         }
         if (!z_timer_.is_armed()) { // Should not run while ZWP is active
             r_timer_.start(send_.una,
             static_cast<std::uint32_t>(payload.size()),
-            rtt_measurement_.rto_ms, time_now);
+            rtt_measurement_.rto(), time_now);
         }
     }
 
@@ -696,87 +692,6 @@ void TcpConnection::connect(const std::uint32_t saddr,
     state_ = TcpState::SYN_SENT;
 }
 
-// void TcpConnection::start_measure_rtt(const std::uint32_t seq_n)
-// {
-//     if (!rtt_measurement_.send_at_.has_value()) {
-//         rtt_measurement_.send_seq_at_ = seq_n;
-//         rtt_measurement_.send_at_ = clock_->now();
-//         std::println("Send at: {}", rtt_measurement_.send_at_.value());
-//     }
-// }
-
-// void TcpConnection::stop_measure_rtt() { rtt_measurement_.send_at_.reset(); }
-
-// void TcpConnection::measure_rtt(const std::uint32_t ack_n)
-// {
-//     if (rtt_measurement_.send_at_.has_value() && wrapping_gt(ack_n, rtt_measurement_.send_seq_at_)) {
-//         const std::int64_t cur_time = clock_->now();
-//         const std::int64_t res = cur_time - rtt_measurement_.send_at_.value();// cur. rtt
-//
-//         static constexpr std::uint32_t GRAN_MS = 1;
-//         if (rtt_measurement_.rtt_ms == 0) {
-//             // First measurement
-//             rtt_measurement_.srtt = static_cast<std::uint32_t>(res);
-//             rtt_measurement_.rttvar = static_cast<std::uint32_t>(res / 2);
-//         } else {
-//             // Following measurements
-//             static constexpr double ALPHA = 1.0 / 8.0;
-//             static constexpr double BETA = 1.0 / 4.0;
-//             rtt_measurement_.rttvar = static_cast<std::uint32_t>(
-//                 (1.0 - BETA) * static_cast<double>(rtt_measurement_.rttvar) + BETA * std::abs(
-//                     static_cast<double>(rtt_measurement_.srtt) - static_cast<double>(res)));
-//             rtt_measurement_.srtt = static_cast<std::uint32_t>(
-//                 (1.0 - ALPHA) * static_cast<double>(rtt_measurement_.srtt) + ALPHA * static_cast<double>(
-//                     res));
-//         }
-//         rtt_measurement_.rto_ms = rtt_measurement_.srtt + std::max(GRAN_MS, 4 * rtt_measurement_.rttvar);
-//         // Whenever RTO is computed, if it is less than 1 second,
-//         // then the RTO SHOULD be rounded up to 1 second
-//         rtt_measurement_.rto_ms = std::max(rtt_measurement_.rto_ms, RttMeasurement::DEFAULT_RTO_MS);
-//
-//         rtt_measurement_.rtt_ms = static_cast<std::uint32_t>(res);
-//
-//         rtt_measurement_.send_at_.reset();
-//         std::println("RTT IS {}, SRTT IS {}, RTTVAR IS {}, RTO IS {}",
-//             rtt_measurement_.rtt_ms,
-//             rtt_measurement_.srtt,
-//             rtt_measurement_.rttvar,
-//             rtt_measurement_.rto_ms);
-//     }
-// }
-
-// void TcpConnection::reset_rtt()
-// {
-//     rtt_measurement_.rttvar = 0;
-//     rtt_measurement_.srtt = 0;
-// }
-
-// void TcpConnection::start_timer(const std::uint32_t seq_n,
-//     const std::uint32_t data_len,
-//     const std::uint32_t rto_ms,
-//     const Timer::TimerState start_state)
-// {
-//     if (!timer_.timer_start.has_value()) {
-//         const auto cur_time = clock_->now();
-//         timer_.timer_start.emplace(cur_time);// Start timer
-//         timer_.timer_expire_at = cur_time + static_cast<std::int64_t>(rto_ms);// It expires at RTO
-//         timer_.timer_start_seq_at = seq_n;
-//         timer_.timer_data_length = data_len;
-//         timer_.state = start_state;
-//         std::println("Armed timer until {}. Now is {}. timer seq {}, state: {}",
-//             timer_.timer_expire_at,
-//             cur_time,
-//             timer_.timer_start_seq_at,
-//             static_cast<int>(timer_.state));
-//     }
-// }
-
-// void TcpConnection::stop_timer()
-// {
-//     timer_.timer_start.reset();
-//     // timer_.state = Timer::TimerState::RETRANSMISSION;
-// }
-
 void TcpConnection::retransmit(Timer& timer)
 {
     // Retransmission should happen
@@ -799,29 +714,23 @@ void TcpConnection::retransmit(Timer& timer)
         }
     }
 
-    send(timer.timer_start_seq_at, timer.timer_data_length);
+    send(timer.start_seq(), timer.data_len());
     timer.retransmitted(send_.una, clock_->now());
 }
 
 void TcpConnection::update_timers()
 {
-
-    // TODO: retrans fires and breaks zwp and so on
     const auto time_now = clock_->now();
-    const bool should_retrans = r_timer_.update(send_.nxt, send_.una, time_now, rtt_measurement_);
+    const bool should_retrans = r_timer_.update(send_.nxt, send_.una, time_now, rtt_measurement_.rto());
     if (should_retrans) {
-        std::println("Retransmit fires");
         retransmit(r_timer_);
     }
     const bool should_zwp = z_timer_.update(time_now);
     if (should_zwp) {
-        std::println("zwp fires");
         retransmit(z_timer_);
     }
     const bool should_sws = s_timer_.update(time_now);
-    // FIXME: this causes a segf because send buf idx is -100 idk why
     if (should_sws) {
-        std::println("SWS TIMER FIRES: send nxt: {}, send una: {}", send_.nxt, send_.una);
         retransmit(s_timer_);
     }
 }
