@@ -23,7 +23,7 @@ add_executable(tests
         tcp_tests.cpp
         ../src/tcpp/net/conn.hpp
         ../src/tcpp/net/conn.cpp
-        tcp_mock_tests.cpp)
+        tcp_tests_sws.cpp)
 
 set(SPDLOG_FMT_EXTERNAL ON)
 target_link_libraries(tests PRIVATE fmt::fmt)

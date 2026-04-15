@@ -1,8 +1,5 @@
-//
-// Created by klewy on 4/13/26.
-//
 
-// #include "../src/tcpp/clock.hpp"
+
 #include "../src/tcpp/clock.hpp"
 #include "../src/tcpp/tun.hpp"
 #include "../src/tcpp/net/conn.hpp"
@@ -13,14 +10,12 @@ using namespace testing;
 class MockTun : public IOInterface
 {
 public:
-    virtual ~MockTun() = default;
     MOCK_METHOD(ssize_t, write, (const void* buf, const std::size_t buf_size), (override));
 };
 
 class FakeClock : public ClockInterface
 {
 public:
-    virtual ~FakeClock() = default;
     std::int64_t now() const override { return now_ms_; }
     void advance(const std::int64_t adv_ms)
     {
@@ -93,7 +88,7 @@ namespace helpers {
 
 } // namespace helpers
 
-class TcpConnectionSenderSwsTest : public testing::Test
+class TcpConnectionTest : public testing::Test
 {
 protected:
     static constexpr std::uint32_t PEER_IP  = 0x0A000001; // 10.0.0.1
@@ -112,8 +107,8 @@ protected:
         auto syn  = helpers::make_tcp({
             .sport = PEER_PORT, .dport = LOCAL_PORT,
             .seqn  = PEER_ISN,
-            .syn   = true,
             .window = send_wnd_size,
+            .syn   = true,
         });
 
         auto iph_data = iph.serialize();
@@ -129,8 +124,8 @@ protected:
             .sport = PEER_PORT, .dport = LOCAL_PORT,
             .seqn  = PEER_ISN + 1,
             .ackn  = conn_.send_.iss + 1,
-            .ack   = true,
-            .window = send_wnd_size
+            .window = send_wnd_size,
+            .ack   = true
         });
         auto ack_data = ack.serialize();
         netparser::TcpHeaderView ack_view{ack_data};
@@ -149,84 +144,17 @@ protected:
     {
         return *conn_.clock_.get();
     }
+
+    std::uint32_t right_edge() const {
+        return conn_.right_wnd_edge_;
+    }
+    void upd_recv_win() {
+        conn_.update_recv_window();
+    }
+    std::uint32_t get_recv_win() const {
+        return conn_.get_recv_wnd();
+    }
+    void set_recv_wnd(const std::uint16_t wnd) {
+        conn_.set_recv_wnd(wnd, conn_.recv_.nxt);
+    }
 };
-
-TEST_F(TcpConnectionSenderSwsTest, Cond1)
-{
-    do_handshake();
-    char buf[536]{};
-    const auto written = conn_.write(buf, sizeof(buf));
-    const auto send_size = sizeof(buf) + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE; // So payload + iph + tcph is sent and returned
-    // 1. MIN(D,U) => (536 >= Send MSS) => true
-    EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
-    conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
-}
-
-TEST_F(TcpConnectionSenderSwsTest, Cond2)
-{
-    do_handshake(400);
-    char buf[200]{};
-    const auto written = conn_.write(buf, sizeof(buf));
-    const auto send_size = sizeof(buf) + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
-    // 1. MIN(D,U) => (200 < Send MSS) => false
-    // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (200) <= USABLE_WND (400)) => true
-    EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
-    conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
-}
-
-TEST_F(TcpConnectionSenderSwsTest, SenderSws3)
-{
-    // send_wnd_max_ = 500, Fs * max = 0.5 * 500 = 250
-    do_handshake(500);
-    char buf[600]{};
-    const auto sent = conn_.write(buf, sizeof(buf));
-    const auto send_size = 500 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
-    // 1. MIN(D,U) => (200 < Send MSS) => false
-    // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (600) > USABLE_WND (500)) => false
-    // 3. ([SND.NXT = SND.UNA] && min(D, U) (500) >= (1/2 * MAX_WND_SIZE) (250) => true
-    EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
-    conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
-}
-
-TEST_F(TcpConnectionSenderSwsTest, SenderSws4)
-{
-    do_handshake(500);
-    char buf[900]{};
-    const auto written = conn_.write(buf, 500);
-    const auto send_size = 500 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
-    // 1. MIN(D,U) => (500 < Send MSS) => false
-    // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (500) <= USABLE_WND (500)) => true
-    EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
-    conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
-    auto ack = helpers::make_tcp({
-            .sport = PEER_PORT, .dport = LOCAL_PORT,
-            .seqn  = PEER_ISN + 1,
-            .ackn  = get_send_iss() + 500, // size of packet we sent
-            .ack   = true,
-            .window = 100
-    });
-    const auto ack_data = ack.serialize();
-    const netparser::TcpHeaderView ack_view{ack_data};
-    conn_.on_packet(ack_view, {});
-    const auto sent = conn_.write(buf, 200);
-    const auto send_size2 = 200 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
-    // Make sure write isnt even called, since timer is supposed to start
-    // 1. MIN(D,U) => (100 < Send MSS) => false
-    // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (200) > USABLE_WND (100)) => false
-    // 3. ([SND.NXT = SND.UNA] && min(D, U) (100) >= (1/2 * MAX_WND_SIZE) (250) => false
-    // 4. Timer starts
-    EXPECT_CALL(mock_io_, write(_, _)).Times(0);
-    conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
-
-    // Make sure it fires after SWS_OVERRIDE_MS.
-    // FIXME: I MAY NEED TO IMPL. TIMERS OTEHR WAY, SINCE SWS AND RETRANS SHOULD NOT BE SHARED
-    // static_cast<FakeClock&>(get_clock()).advance(RttMeasurement::SWS_OVERRIDE_MS);
-    // EXPECT_CALL(mock_io_, write(_, _)).Times(1);
-    // conn_.on_tick();
-    // Mock::VerifyAndClearExpectations(&mock_io_);
-}

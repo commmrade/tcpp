@@ -496,6 +496,7 @@ void TcpConnection::on_tick()
 {
     update_timers();
     // First, deal with window stuff (zero window, to be exact) and then handle send
+    update_recv_window();
     update_send_window();
 
     if (!handle_send()) { return; }

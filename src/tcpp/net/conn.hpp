@@ -344,7 +344,7 @@ private:
     void set_recv_wnd(const std::uint32_t wnd, const std::uint32_t nxt);
 
     friend class Tcp;
-    friend class TcpConnectionSenderSwsTest;
+    friend class TcpConnectionTest;
 
     IOInterface &tun_;
 
