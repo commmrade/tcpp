@@ -19,14 +19,39 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
-class Tun
+class IOInterface
+{
+public:
+    virtual ~IOInterface() = default;
+    virtual ssize_t write(const void* buf, const std::size_t buf_len) = 0;
+};
+
+class Tun final : public IOInterface
 {
 private:
     int tun_fd{};
     std::string dev_name_;
-
 public:
     explicit Tun(std::string_view dev_name);
+
+    ~Tun() override { close(); }
+
+    Tun(const Tun&) = delete;
+
+    Tun& operator=(const Tun&) = delete;
+
+    Tun(Tun&& rhs) noexcept
+    {
+        std::swap(tun_fd, rhs.tun_fd);
+        std::swap(dev_name_, rhs.dev_name_);
+    }
+
+    Tun& operator=(Tun&& rhs) noexcept
+    {
+        std::swap(tun_fd, rhs.tun_fd);
+        std::swap(dev_name_, rhs.dev_name_);
+        return *this;
+    }
 
     int raw_fd() const { return tun_fd; }
 
@@ -36,11 +61,11 @@ public:
 
     void set_flags(short int flags);
 
-    ~Tun() { close(); }
+    void open(std::string_view dev_name);
 
     void close() { ::close(tun_fd); }
 
-    ssize_t write(const void *buf, const std::size_t buf_len)// NOLINT
+    ssize_t write(const void *buf, const std::size_t buf_len) override // NOLINT
     {
         return ::write(tun_fd, buf, buf_len);
     }

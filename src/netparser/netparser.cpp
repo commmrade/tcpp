@@ -1,9 +1,10 @@
 #include "netparser.hpp"
 #include <print>
 #include <iterator>
-#include <arpa/inet.h>
 #include <cassert>
 #include <stdexcept>
+#include <span>
+#include <cstring>
 //
 // Created by klewy on 3/6/26.
 //
@@ -33,15 +34,13 @@ std::uint8_t IpHeaderView::type_of_service() const
 
 std::uint16_t IpHeaderView::total_len() const
 {
-    std::uint16_t tot_len{};
-    std::memcpy(&tot_len, bytes_.data() + IPV4H_TOT_LEN_OFFSET, sizeof(tot_len));
+    const auto tot_len = details::extract_from_byte_sequence<std::uint16_t>(bytes_, IPV4H_TOT_LEN_OFFSET);
     return ntohs(tot_len);
 }
 
 std::uint16_t IpHeaderView::id() const
 {
-    std::uint16_t ident{};
-    std::memcpy(&ident, bytes_.data() + IPV4H_ID_OFFSET, sizeof(ident));
+    const auto ident = details::extract_from_byte_sequence<std::uint16_t>(bytes_, IPV4H_ID_OFFSET);
     return ntohs(ident);
 }
 
@@ -59,10 +58,9 @@ bool IpHeaderView::more_fragments() const
 
 std::uint16_t IpHeaderView::frag_offset() const
 {
-    std::uint16_t frag_off{};
-    std::memcpy(&frag_off, bytes_.data() + IPV4H_FRAG_OFFSET, sizeof(frag_off));
+    auto frag_off = details::extract_from_byte_sequence<std::uint16_t>(bytes_, IPV4H_FRAG_OFFSET);
     frag_off = ntohs(frag_off);
-    frag_off = frag_off & 0x1FFFU;// NOLINT
+    frag_off = frag_off & 0x1FFFU; //NOLINT
     return frag_off;
 }
 
@@ -74,8 +72,7 @@ std::uint8_t IpHeaderView::ttl() const
 
 std::uint16_t IpHeaderView::checksum() const
 {
-    std::uint16_t sum{};
-    std::memcpy(&sum, bytes_.data() + IPV4H_HDR_CHECKSUM_OFFSET, sizeof(sum));
+    const auto sum = details::extract_from_byte_sequence<std::uint16_t>(bytes_, IPV4H_HDR_CHECKSUM_OFFSET);
     return ntohs(sum);
 }
 
@@ -86,15 +83,13 @@ std::uint16_t IpHeaderView::checksum() const
 
 [[nodiscard]] std::uint32_t IpHeaderView::source_addr() const
 {
-    std::uint32_t addr{};
-    std::memcpy(&addr, bytes_.data() + IPV4H_SRC_ADDR_OFFSET, sizeof(addr));
+    const auto addr = details::extract_from_byte_sequence<std::uint32_t>(bytes_, IPV4H_SRC_ADDR_OFFSET);
     return addr;
 }
 
 [[nodiscard]] std::uint32_t IpHeaderView::dest_addr() const
 {
-    std::uint32_t addr{};
-    std::memcpy(&addr, bytes_.data() + IPV4H_DST_ADDR_OFFSET, sizeof(addr));
+    const auto addr = details::extract_from_byte_sequence<std::uint32_t>(bytes_, IPV4H_DST_ADDR_OFFSET);
     return addr;
 }
 
@@ -157,29 +152,29 @@ void IpHeader::calculate_checksum()
     // Zero out existing checksum before calculating
     hdr_.check = 0;
 
-    uint32_t sum = 0;
-    const uint16_t *ptr = reinterpret_cast<const uint16_t *>(&hdr_);
+    std::uint32_t sum = 0;
+    const auto*ptr = reinterpret_cast<const uint16_t *>(&hdr_);//NOLINT
     int length = hdr_.ihl * 4;// IHL field is in 32-bit words
 
     // Sum all 16-bit words in the header
     while (length > 1) {
-        sum += *ptr++;
+        sum += *ptr++; //NOLINT
         length -= 2;
     }
 
     // If odd byte remains, pad with zero and add
-    if (length == 1) { sum += *reinterpret_cast<const uint8_t *>(ptr); }
+    if (length == 1) { sum += *reinterpret_cast<const uint8_t *>(ptr); }//NOLINT
 
     // Fold 32-bit sum into 16 bits by adding carry bits
-    while (sum >> 16) { sum = (sum & 0xFFFF) + (sum >> 16); }
+    while (sum >> 16) { sum = (sum & 0xFFFF) + (sum >> 16); }//NOLINT
 
     // One's complement
     hdr_.check = static_cast<uint16_t>(~sum);
 }
 
-void IpHeader::source_addr(const std::uint32_t addr) { hdr_.saddr = addr; }
+void IpHeader::source_addr(const std::uint32_t addr) { hdr_.saddr = addr; }//NOLINT(cppcoreguidelines-pro-type-union-access)
 
-void IpHeader::dest_addr(const std::uint32_t addr) { hdr_.daddr = addr; }
+void IpHeader::dest_addr(const std::uint32_t addr) { hdr_.daddr = addr; }//NOLINT(cppcoreguidelines-pro-type-union-access)
 
 std::vector<std::byte> IpHeader::serialize() const
 {
@@ -221,9 +216,9 @@ std::uint16_t IpHeader::checksum() const { return ntohs(hdr_.check); }
 
 std::uint8_t IpHeader::protocol() const { return hdr_.protocol; }
 
-std::uint32_t IpHeader::source_addr() const { return hdr_.saddr; }
+std::uint32_t IpHeader::source_addr() const { return hdr_.saddr; }//NOLINT(cppcoreguidelines-pro-type-union-access)
 
-std::uint32_t IpHeader::dest_addr() const { return hdr_.daddr; }
+std::uint32_t IpHeader::dest_addr() const { return hdr_.daddr; }//NOLINT(cppcoreguidelines-pro-type-union-access)
 
 TcpHeaderView::TcpHeaderView(const std::span<const std::byte> bytes)
     : bytes_(bytes)
@@ -233,29 +228,25 @@ TcpHeaderView::TcpHeaderView(const std::span<const std::byte> bytes)
 
 std::uint16_t TcpHeaderView::source_port() const
 {
-    std::uint16_t port{};
-    std::memcpy(&port, bytes_.data() + TCPH_SRC_PORT_OFFSET, sizeof(port));
+    const auto port = details::extract_from_byte_sequence<std::uint16_t>(bytes_, TCPH_SRC_PORT_OFFSET);
     return ntohs(port);
 }
 
 std::uint16_t TcpHeaderView::dest_port() const
 {
-    std::uint16_t port{};
-    std::memcpy(&port, bytes_.data() + TCPH_DEST_PORT_OFFSET, sizeof(port));
+    const auto port = details::extract_from_byte_sequence<std::uint16_t>(bytes_, TCPH_DEST_PORT_OFFSET);
     return ntohs(port);
 }
 
 std::uint32_t TcpHeaderView::seqn() const
 {
-    std::uint32_t seq{};
-    std::memcpy(&seq, bytes_.data() + TCPH_SEQN_OFFSET, sizeof(seq));
+    const auto seq = details::extract_from_byte_sequence<std::uint32_t>(bytes_, TCPH_SEQN_OFFSET);
     return ntohl(seq);
 }
 
 std::uint32_t TcpHeaderView::ackn() const
 {
-    std::uint32_t ackn{};
-    std::memcpy(&ackn, bytes_.data() + TCPH_ACKN_OFFSET, sizeof(ackn));
+    const auto ackn = details::extract_from_byte_sequence<std::uint32_t>(bytes_, TCPH_ACKN_OFFSET);
     return ntohl(ackn);
 }
 
@@ -323,22 +314,19 @@ bool TcpHeaderView::fin() const
 
 std::uint16_t TcpHeaderView::window() const
 {
-    std::uint16_t wnd{};
-    std::memcpy(&wnd, bytes_.data() + TCPH_WIN_OFFSET, sizeof(wnd));
+    const auto wnd = details::extract_from_byte_sequence<std::uint16_t>(bytes_, TCPH_WIN_OFFSET);
     return ntohs(wnd);
 }
 
 std::uint16_t TcpHeaderView::checksum() const
 {
-    std::uint16_t cksum{};
-    std::memcpy(&cksum, bytes_.data() + TCPH_CKSUM_OFFSET, sizeof(cksum));
+    const auto cksum = details::extract_from_byte_sequence<std::uint16_t>(bytes_, TCPH_CKSUM_OFFSET);
     return ntohs(cksum);
 }
 
 std::uint16_t TcpHeaderView::urg_ptr() const
 {
-    std::uint16_t urgptr{};
-    std::memcpy(&urgptr, bytes_.data() + TCPH_URGPTR_OFFSET, sizeof(urgptr));
+    const auto urgptr = details::extract_from_byte_sequence<std::uint16_t>(bytes_, TCPH_URGPTR_OFFSET);
     return ntohs(urgptr);
 }
 
@@ -449,18 +437,18 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
         }
         case static_cast<std::byte>(TcpOptionKind::TIMESTAMP): {
             const auto subsp = options_bytes.subspan(offset);
-            details::TcpTimestampOptionInner ts{};
-            if (subsp.size() < sizeof(ts)) { throw std::runtime_error("Tcp options is ill-formed"); }
-            std::memcpy(&ts, subsp.data(), sizeof(ts));
+            details::TcpTimestampOptionInner tso{};
+            if (subsp.size() < sizeof(tso)) { throw std::runtime_error("Tcp options is ill-formed"); }
+            std::memcpy(&tso, subsp.data(), sizeof(tso));
 
             timestamp_option_.emplace();
             auto &temp_ts = timestamp_option_.value();
-            temp_ts.kind = ts.kind;
-            temp_ts.size = ts.size;
-            temp_ts.tv = ntohl(ts.tv);
-            temp_ts.tr = ntohl(ts.tr);
+            temp_ts.kind = tso.kind;
+            temp_ts.size = tso.size;
+            temp_ts.tv = ntohl(tso.tv);
+            temp_ts.tr = ntohl(tso.tr);
 
-            offset += sizeof(ts);
+            offset += sizeof(tso);
             break;
         }
         case static_cast<std::byte>(TcpOptionKind::END_OF_LIST): {
@@ -486,25 +474,25 @@ std::vector<std::byte> TcpOptions::serialize() const
     std::ptrdiff_t offset = 0;
     if (mss_option_.has_value()) {
         const auto &mss = mss_option_.value();
-        const details::TcpMssOptionInner inner{ mss.kind, mss.size, htons(mss.mss) };
+        const details::TcpMssOptionInner inner{ .kind = mss.kind, .size = mss.size, .mss = htons(mss.mss) };
         std::memcpy(bytes.data(), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
     if (win_scale_option_.has_value()) {
         const auto &wnscl = win_scale_option_.value();
-        const details::TcpWinScaleOptionInner inner{ wnscl.kind, wnscl.size, wnscl.shift_cnt };
+        const details::TcpWinScaleOptionInner inner{ .kind = wnscl.kind, .size = wnscl.size, .shift_cnt = wnscl.shift_cnt };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
     if (sack_perm_option_.has_value()) {
         const auto &sackperm = sack_perm_option_.value();
-        const details::TcpSackPermOptionInner inner{ sackperm.kind, sackperm.size };
+        const details::TcpSackPermOptionInner inner{ .kind = sackperm.kind, .size = sackperm.size };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
     if (timestamp_option_.has_value()) {
         const auto &timestamp = timestamp_option_.value();
-        const details::TcpTimestampOptionInner inner{ timestamp.kind, timestamp.size, htonl(timestamp.tv), htonl(timestamp.tr) };
+        const details::TcpTimestampOptionInner inner{ .kind = timestamp.kind, .size = timestamp.size, .tv = htonl(timestamp.tv), .tr = htonl(timestamp.tr) };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
@@ -536,7 +524,7 @@ TcpHeader::TcpHeader(const TcpHeaderView &tcph)
     assert(!data.empty());
     std::memcpy(&hdr_, data.data(), TCPH_MIN_SIZE);
 
-    auto options_size = data_off() * 4 - TCPH_MIN_SIZE;
+    auto options_size = (data_off() * 4UL) - TCPH_MIN_SIZE;
     const auto options_data = data.subspan(TCPH_MIN_SIZE, options_size);
     if (!options_data.empty()) { options_.parse(options_data); }
 }
@@ -635,18 +623,18 @@ void TcpHeader::calculate_checksum(const netparser::IpHeader &iph, std::span<con
         }
 
         // Odd trailing byte — pad with zero
-        if (length == 1) { sum += *reinterpret_cast<const uint8_t *>(ptr); }
+        if (length == 1) { sum += *reinterpret_cast<const uint8_t *>(ptr); } //NOLINT
     };
 
     const auto opt_bytes = options_.serialize();
     accumulate(&pseudo, sizeof(pseudo));
     accumulate(&hdr_, sizeof(tcphdr));
     accumulate(opt_bytes.data(), opt_bytes.size());
-    std::println("payload size: {}", payload.size());
+    std::println("payload size: {}, payload data: {}", payload.size(), (void*)payload.data());
     accumulate(payload.data(), payload.size());
 
     // Fold carries
-    while (sum >> 16) { sum = (sum & 0xFFFF) + (sum >> 16); }
+    while (sum >> 16) { sum = (sum & 0xFFFF) + (sum >> 16); }//NOLINT
 
     // One's complement
     hdr_.check = static_cast<uint16_t>(~sum);
@@ -669,7 +657,7 @@ std::vector<std::byte> TcpHeader::serialize()
     offset += TCPH_MIN_SIZE;
     if (!options_bytes.empty()) {
         std::memcpy(std::next(res.data(), offset), options_bytes.data(), options_bytes.size());
-        offset += options_bytes.size();
+        offset += static_cast<std::ptrdiff_t>(options_bytes.size());
     }
 
     return res;

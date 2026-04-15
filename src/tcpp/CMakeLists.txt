@@ -7,6 +7,9 @@ add_executable(main main.cpp
         net/conn.cpp
         net/conn.hpp
         net/common.hpp
+        clock.hpp
+        timer.cpp
+        timer.hpp
 )
 
 add_custom_target(setcap

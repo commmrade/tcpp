@@ -7,17 +7,7 @@
 Tun::Tun(std::string_view dev_name)
     : dev_name_(dev_name)
 {
-    tun_fd = open("/dev/net/tun", O_RDWR);
-    if (tun_fd < 0) { throw std::runtime_error("Could not open /dev/net/tun"); }
-
-    ifreq ifr{};
-    ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
-
-    if (!dev_name.empty()) { strcpy(ifr.ifr_name, dev_name.data()); }
-
-    if (const int r = ioctl(tun_fd, TUNSETIFF, static_cast<void *>(&ifr)); r < 0) {
-        throw std::runtime_error(std::format("Could not setup TUN interface: {}", std::strerror(errno)));
-    }
+    open(dev_name);
 }
 
 void Tun::set_addr(const std::string_view addr)
@@ -76,5 +66,20 @@ void Tun::set_flags(short int flags)
     ret = ioctl(sock_fd, SIOCSIFFLAGS, &ifr);// NOLINT
     if (ret < 0) {
         throw std::runtime_error(std::format("Failed to set flags: {}", std::strerror(errno)));// NOLINT
+    }
+}
+
+void Tun::open(std::string_view dev_name)
+{
+    tun_fd = ::open("/dev/net/tun", O_RDWR);
+    if (tun_fd < 0) { throw std::runtime_error("Could not open /dev/net/tun"); }
+
+    ifreq ifr{};
+    ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
+
+    if (!dev_name.empty()) { strcpy(ifr.ifr_name, dev_name.data()); }
+
+    if (const int r = ioctl(tun_fd, TUNSETIFF, static_cast<void *>(&ifr)); r < 0) {
+        throw std::runtime_error(std::format("Could not setup TUN interface: {}", std::strerror(errno)));
     }
 }

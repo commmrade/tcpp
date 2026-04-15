@@ -1,39 +1,29 @@
+# tests cmake:
 cmake_minimum_required(VERSION 3.15...3.23)
 
 project(CmakeConfigPackageTests
         VERSION ${PROJECT_VERSION}
         LANGUAGES CXX)
 
-# ---- Test as standalone project the exported config package ----
-
 if (PROJECT_IS_TOP_LEVEL OR TEST_INSTALLED_VERSION)
     enable_testing()
 
-    find_package(tcpp CONFIG REQUIRED) # for main, project_options, ...
+    find_package(tcpp CONFIG REQUIRED)
 
     if (NOT TARGET tcpp_options)
         message(FATAL_ERROR "Required config package not found!")
-        return() # be strictly paranoid for Template Janitor github action! CK
+        return()
     endif ()
 endif ()
 
-# ---- Dependencies ----
+include(GoogleTest)
 
-include(${Catch2_SOURCE_DIR}/extras/Catch.cmake)
-
-# Provide a simple smoke test to make sure that the CLI works and can display a --help message
-add_test(NAME cli.has_help COMMAND main --help)
-
-# Provide a test to verify that the version being reported from the application
-# matches the version given to CMake. This will be important once you package
-# your program. Real world shows that this is the kind of simple mistake that is easy
-# to make, but also easy to test for.
-add_test(NAME cli.version_matches COMMAND main --version)
-set_tests_properties(cli.version_matches PROPERTIES PASS_REGULAR_EXPRESSION "${PROJECT_VERSION}")
-
-add_executable(tests tests.cpp
+add_executable(tests
         ip_tests.cpp
-        tcp_tests.cpp)
+        tcp_tests.cpp
+        ../src/tcpp/net/conn.hpp
+        ../src/tcpp/net/conn.cpp
+        tcp_tests_sws.cpp)
 
 set(SPDLOG_FMT_EXTERNAL ON)
 target_link_libraries(tests PRIVATE fmt::fmt)
@@ -43,7 +33,8 @@ target_link_libraries(
         PRIVATE tcpp::tcpp_warnings
         tcpp::tcpp_options
         tcpp::netparser
-        Catch2::Catch2WithMain)
+        GTest::gtest_main
+        GTest::gmock)
 
 tcpp_configure_linker(tests)
 
@@ -55,18 +46,9 @@ if (WIN32 AND BUILD_SHARED_LIBS)
             COMMAND_EXPAND_LISTS)
 endif ()
 
-# automatically discover tests that are defined in catch based test files you can modify the unittests. Set TEST_PREFIX
-# to whatever you want, or use different for different binaries
-catch_discover_tests(
+gtest_discover_tests(
         tests
         TEST_PREFIX
         "unittests."
-        REPORTER
-        XML
-        OUTPUT_DIR
-        .
-        OUTPUT_PREFIX
-        "unittests."
-        OUTPUT_SUFFIX
-        .xml)
-
+        XML_OUTPUT_DIR
+        .)

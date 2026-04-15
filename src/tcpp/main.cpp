@@ -1,14 +1,15 @@
+#include <chrono>
 #include <print>
 #include "tun.hpp"
 #include "net/tcp.hpp"
 
 #include <mutex>
+#include <ratio>
 #include <thread>
 
 struct Context
 {
-    Tcp tcp{};
-    Tun tun;
+    Tcp tcp;
     std::mutex mx;// BEFORE ACCESSING ANY FIELD IT MUST BE LOCKED
 
     static Context &instance()
@@ -16,6 +17,8 @@ struct Context
         static Context ctx{ "tun1" };
         return ctx;
     }
+
+    ~Context() = default;
 
     Context(const Context &) = delete;
 
@@ -27,7 +30,7 @@ struct Context
 
 private:
     explicit Context(std::string_view dev_name)
-        : tun(dev_name) {}
+        : tcp(dev_name) {}
 };
 
 
@@ -43,7 +46,7 @@ struct TcpSocket
         std::uint32_t addr{};
         int ret = inet_pton(AF_INET, daddr.data(), &addr);
         if (ret < 0) { throw std::runtime_error("Ill formated address"); }
-        quad_ = ctx_.tcp.connect(ctx_.tun, addr, dport);
+        quad_ = ctx_.tcp.connect(addr, dport);
 
         auto &conn = ctx_.tcp.get_connection(quad_);
         conn.get_connect_var().wait(conn_lock);
@@ -63,10 +66,16 @@ struct TcpSocket
     ssize_t write(const void *buf, const std::size_t buf_sz)
     {
         auto &ctx = Context::instance();
-        std::unique_lock ctx_lock{ ctx.mx };
-        std::println("user: take lock to write");
-        auto &conn = ctx.tcp.get_connection(quad_);
-        return conn.write(buf, buf_sz);
+        std::size_t sent_total = 0;
+        while (sent_total < buf_sz) {
+            std::unique_lock send_lock{ ctx.mx };
+            auto &conn = ctx.tcp.get_connection(quad_);
+            conn.get_send_var().wait(send_lock, [&conn] { return conn.send_buf_free_space() > 0; });
+            const auto result = conn.write(buf, buf_sz);
+            if (result < 0) { throw std::runtime_error("Write error"); }
+            sent_total += static_cast<std::size_t>(result);
+        }
+        return static_cast<ssize_t>(sent_total);
     }
 
     // This will initiase a one-side close (send FIN)
@@ -105,10 +114,7 @@ public:
         ctx_.tcp.bind(port);
     }
 
-    void listen([[maybe_unused]] int backlog)
-    {
-
-    }
+    void listen([[maybe_unused]] int backlog) {}
 
     TcpSocket accept()
     {
@@ -128,14 +134,12 @@ public:
 std::jthread run_underlying_stuff()
 {
     auto &ctx = Context::instance();
-    ctx.tun.set_addr("10.0.0.1");
-    ctx.tun.set_mask("255.255.255.0");
-    ctx.tun.set_flags(IFF_UP | IFF_RUNNING);
+
     std::jthread tcp_thread{ [](std::stop_token tok) {
             while (!tok.stop_requested()) {// NOLINT
                 auto &ctx = Context::instance();
                 std::unique_lock lock{ ctx.mx };
-                ctx.tcp.process_packet(ctx.tun);
+                ctx.tcp.process_packet();
                 lock.unlock();
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));// Let other threads lock the mutex
             }
@@ -165,31 +169,51 @@ int main()
     //     }
     // }};
 
-    TcpListener listener{};
-    listener.bind(8090);
-    listener.listen(999);
-    std::println("user: bound and listening");
-    auto sock = listener.accept();
-    std::println("user: accepted");
-    // return -1;
+    sleep(3); // Wait for py test thing to start
+    TcpSocket sock{};
+    sock.connect("10.0.0.1", 8090);
+
     while (true) {
-        std::array<char, 512> buf{};
-        auto rd = sock.read(buf.data(), buf.size());
-        if (strncmp(buf.data(), "exit", 4) == 0) {
-            sock.close();
-            break;
-        }
-        if (rd == 0) {
-            std::println("user: DATA FINISHED, CLOSING...");
-            break;
-        } else {
-            std::println("user: got data {} bytes - '{}'",
-                rd,
-                std::string_view{ buf.data(), static_cast<std::size_t>(rd) });
-            auto wr = sock.write(buf.data(), static_cast<std::size_t>(rd));
-            // std::println("user: wrote {} bytes", wr);
-        }
+        std::array<char, 100> buf{};
+        std::memset(buf.data(), 'c', buf.size());
+        auto wr = sock.write(buf.data(), buf.size());
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+    // TcpListener listener{};
+    // listener.bind(8090);
+    // listener.listen(999);
+    // std::println("user: bound and listening");
+    // auto sock = listener.accept();
+    // std::println("user: accepted");
+    // // return -1;
+    // while (true) {
+    //     std::array<char, 512> buf{};
+    //     auto rd = sock.read(buf.data(), buf.size());
+    //     if (rd == 0) {
+    //         std::println("user: DATA FINISHED, CLOSING...");
+    //         break;
+    //     } else {
+    //         auto wr = sock.write(buf.data(), rd);
+    //     }
+    //     // sleep(10);
+    //     // auto rd = sock.read(buf.data(), buf.size());
+    //     //
+    //     // if (strncmp(buf.data(), "exit", 4) == 0) {
+    //     //     sock.close();
+    //     //     break;
+    //     // }
+    //     // if (rd == 0) {
+    //     //     std::println("user: DATA FINISHED, CLOSING...");
+    //     //     break;
+    //     // } else {
+    //     //     std::println("user: got data {} bytes - '{}'",
+    //     //         rd,
+    //     //         std::string_view{ buf.data(), static_cast<std::size_t>(rd) });
+    //     //     auto wr = sock.write(buf.data(), static_cast<std::size_t>(rd));
+    //     //     std::println("Wrote {} bytes", wr);
+    //     //     // std::println("user: wrote {} bytes", wr);
+    //     // }
+    // }
 
 
     // Test FIN
@@ -202,26 +226,19 @@ int main()
     // sock.shutdown(ShutdownType::WRITE);
 
 
-
     //
     // sleep(3); // Wait for py test thing to start
     // TcpSocket sock{};
     // sock.connect("10.0.0.1", 8090);
-    //
+
     // while (true) {
-    //     std::array<char, 512> buf{};
-    //
-    //     auto wr = sock.write("exit", 4);
-    //     std::println("user: written exit");
-    //
-    //     auto rd = sock.read(buf.data(), buf.size());
-    //     std::println("user: rd {}", rd);
-    //     if (rd == 0) {
-    //         std::println("user: FIN");
-    //         break;
-    //     }
+    //     std::array<char, 100> buf{};
+    //     std::memset(buf.data(), 'c', buf.size());
+    //     auto wr = sock.write(buf.data(), buf.size());
+    //     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     // }
 
+    sleep(2);
     net_thread.request_stop();
     net_thread.join();
     return 0;
