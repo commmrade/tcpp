@@ -11,7 +11,7 @@
 #include "conn.hpp"
 #include "../tun.hpp"
 
-constexpr std::string_view SRC_IP = "10.0.0.2";
+constexpr std::string_view SRC_IP = "172.16.0.2";
 
 class Tcp
 {
@@ -19,8 +19,8 @@ public:
     Tcp(std::string_view dev_name)
         : tun_(dev_name)
     {
-        tun_.set_addr("10.0.0.1");
-        tun_.set_mask("255.255.255.0");
+        tun_.set_addr("172.16.0.0");
+        tun_.set_mask("255.255.0.0");
         tun_.set_flags(IFF_UP | IFF_RUNNING);
     }
 

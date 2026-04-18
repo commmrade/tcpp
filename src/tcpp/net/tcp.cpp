@@ -35,7 +35,7 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
         } else if (bound_.contains(quad.dst_port)) {
             if (auto riter = syn_recv_connections_.find(quad); riter != syn_recv_connections_.end()) {
                 auto &conn = riter->second;
-                conn->on_packet(tcph, {});
+                conn->on_packet(tcph, {}); // ACK for SYNACK cannot contain data
                 if (conn->get_state() == TcpState::ESTAB) {
                     // Now its fully estab conn, also check for any states besides "opening" states (is_synchronized)
                     established_connections_.emplace(quad, std::unique_ptr<TcpConnection>(conn.release()));
@@ -46,7 +46,7 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
             } else {
                 auto [conn_iter, inserted] = syn_recv_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_, std::make_unique<Clock>()));
                 assert(inserted);
-                conn_iter->second->accept(iph, tcph);
+                conn_iter->second->open_passive(iph, tcph);
             }
         } else {
             // Send RST
@@ -117,7 +117,7 @@ Quad Tcp::connect(const std::uint32_t daddr, const std::uint16_t dport)
     assert(inserted);
     auto &conn = iter->second;
 
-    conn->connect(s_addr, port, daddr, dport);
+    conn->open_active(s_addr, port, daddr, dport);
     return quad;
 }
 

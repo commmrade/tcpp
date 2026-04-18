@@ -23,6 +23,7 @@ add_executable(tests
         tcp_tests.cpp
         ../src/tcpp/net/conn.hpp
         ../src/tcpp/net/conn.cpp
+        ../src/tcpp/timer.cpp
         tcp_tests_sws.cpp)
 
 set(SPDLOG_FMT_EXTERNAL ON)

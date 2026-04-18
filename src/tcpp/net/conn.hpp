@@ -116,8 +116,8 @@ private:
     ssize_t send(const std::uint32_t seqn_from, [[maybe_unused]] const std::size_t max_size);
 
     // Conn. establishment functions
-    void accept(const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph);
-    void connect(const std::uint32_t saddr,
+    void open_passive(const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph);
+    void open_active(const std::uint32_t saddr,
         const std::uint16_t sport,
         const std::uint32_t daddr,
         const std::uint16_t dport);
@@ -128,6 +128,24 @@ private:
     void set_send_wnd(const std::uint32_t wnd);
     [[nodiscard]] std::uint32_t get_recv_wnd() const { return right_wnd_edge_ - recv_.nxt; }
     void set_recv_wnd(const std::uint32_t wnd, const std::uint32_t nxt);
+
+    void init_headers(const std::uint32_t src_addr, const std::uint32_t dst_addr,
+            const std::uint16_t src_port, const std::uint16_t dst_port,
+            const std::uint32_t iss) {
+        iph_.version(4);
+        iph_.ihl(5);
+        iph_.dont_fragment(true);
+        iph_.more_fragments(false);
+        iph_.ttl(64);
+        iph_.protocol(IPPROTO_TCP);
+        iph_.source_addr(src_addr);
+        iph_.dest_addr(dst_addr);
+
+        tcph_.source_port(src_port);
+        tcph_.dest_port(dst_port);
+
+
+            }
 
     friend class Tcp;
     friend class TcpConnectionTest;

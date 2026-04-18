@@ -576,26 +576,9 @@ ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max
     return written;
 }
 
-void TcpConnection::accept(const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
+void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
 {
-    iph_.version(iph.version());
-    iph_.ihl(iph.ihl());
-    iph_.total_len(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE);
-    // It is just that, since IP and TCP do not support options for now.
-    iph_.id(0);
-    iph_.dont_fragment(iph.dont_fragment());
-    iph_.more_fragments(iph.more_fragments());
-    iph_.frag_offset(iph.frag_offset());
-    iph_.ttl(iph.ttl());
-    iph_.protocol(iph.protocol());
-    iph_.source_addr(iph.dest_addr());
-    iph_.dest_addr(iph.source_addr());
-    iph_.calculate_checksum();
-
-    tcph_.source_port(tcph.dest_port());
-    tcph_.dest_port(tcph.source_port());
-    tcph_.data_off(5);// SIZE OF HEADER (INCLUDING OPTIONS)
-
+    init_headers(iph.dest_addr(), iph.source_addr(), tcph.dest_port(), tcph.source_port(), 0);
 
     // 3.10.7.2. LISTEN STATE
     // First, check for a RST: (TODO: Make RST work)
@@ -646,7 +629,7 @@ void TcpConnection::accept(const netparser::IpHeaderView &iph, const netparser::
     }
 }
 
-void TcpConnection::connect(const std::uint32_t saddr,
+void TcpConnection::open_active(const std::uint32_t saddr,
     const std::uint16_t sport,
     const std::uint32_t daddr,
     const std::uint16_t dport)
@@ -657,36 +640,19 @@ void TcpConnection::connect(const std::uint32_t saddr,
         std::numeric_limits<std::uint32_t>::max());
 
     const auto iss = dis(gen);
-    // recv_.wnd = recv_mss_ * 3;
-    set_recv_wnd(std::numeric_limits<std::uint16_t>::max(), recv_.nxt);
 
-    iph_.version(4);
-    iph_.ihl(5);// 5 * 4 = 20 bytes (no options)
-    iph_.type_of_service(0);
-    iph_.id(0);
-    iph_.dont_fragment(true);
-    iph_.more_fragments(false);
-    iph_.frag_offset(0);
-    iph_.ttl(64);
-    iph_.protocol(IPPROTO_TCP);// 6
-    iph_.source_addr(saddr);// already in network byte order from inet_pton
-    iph_.dest_addr(daddr);// assumed network byte order
-    iph_.calculate_checksum();
+    init_headers(saddr, daddr, sport, dport, iss);
 
-    tcph_.source_port(sport);// ephemeral port, pick randomly or track in connections
-    tcph_.dest_port(dport);// destination port, you'll need to pass this into connect()
-    tcph_.seqn(iss);
-    tcph_.ackn(0);// 0 on SYN
-    tcph_.options().mss(recv_mss_);// data_off is set in send()
-    tcph_.syn(true);
-    tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
-    tcph_.urg_ptr(0);
+    tcph_.options().mss(recv_mss_);
+    tcph_.syn(true); // We are doing an active open
 
     send_.iss = iss;
     send_.una = send_.iss;
     send_.nxt = send_.iss;// +1 is in send()
-    // send_.wnd = send_mss_;// Update this after we get a SYNACK. Default is 536
+
+    set_recv_wnd(std::numeric_limits<std::uint16_t>::max(), recv_.nxt);
     set_send_wnd(send_mss_);
+
     send(iss, 0);
 
     state_ = TcpState::SYN_SENT;
