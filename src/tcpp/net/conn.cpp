@@ -220,7 +220,7 @@ void TcpConnection::update_send_window()
             rtt_measurement_.rto(RttMeasurement::DEFAULT_RTO_MS);
 
             r_timer_.stop(); // Retrans. timer should be suspended when ZWP is running
-            z_timer_.start(seq_num, 1, rtt_measurement_.rto(), clock_->now());
+            z_timer_.start(clock_->now(), rtt_measurement_.rto(), seq_num, 1);
 
             // TODO: do i really need old_wnd_size condition?
         } else if (send_.wnd > 0 && z_timer_.is_armed()) {
@@ -448,9 +448,8 @@ bool TcpConnection::handle_send()
         } else {
             std::println("Start SWS override timer. send nxt: {}, send una: {}, data len {}", send_.nxt, send_.una, bytes_to_send);
             // FIXME: I MAY NEED TO IMPL. TIMERS OTEHR WAY, SINCE SWS AND RETRANS SHOULD NOT BE SHARED
-            s_timer_.start(send_.nxt,
-                static_cast<std::uint32_t>(bytes_to_send),
-                RttMeasurement::SWS_OVERRIDE_MS, clock_->now());
+            s_timer_.start(clock_->now(), RttMeasurement::SWS_OVERRIDE_MS, send_.nxt,
+                static_cast<std::uint32_t>(bytes_to_send));
         }
     }
     return true;
@@ -545,12 +544,11 @@ ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max
         const auto time_now = clock_->now();
         if (wrapping_gt(seqn_from, send_.nxt - 1)) {
             // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
-            rtt_measurement_.start_measure(time_now, seqn_from);
+            rtt_measurement_.start(time_now, seqn_from);
         }
         if (!z_timer_.is_armed()) { // Should not run while ZWP is active
-            r_timer_.start(send_.una,
-            static_cast<std::uint32_t>(payload.size()),
-            rtt_measurement_.rto(), time_now);
+            r_timer_.start(time_now, rtt_measurement_.rto(), send_.una,
+            static_cast<std::uint32_t>(payload.size()));
         }
     }
 
@@ -651,7 +649,7 @@ void TcpConnection::open_active(const std::uint32_t saddr,
 void TcpConnection::retransmit(Timer& timer)
 {
     // Retransmission should happen
-    rtt_measurement_.stop_measure();// Must not measure on retransmits
+    rtt_measurement_.stop();// Must not measure on retransmits
 
     // (5.4) Retransmit the earliest segment that has not been acknowledged by the TCP receiver.
     tcph_.ack(true);

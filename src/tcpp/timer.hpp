@@ -18,12 +18,11 @@ public:
 
     void reset();
 
-    void start_measure(const std::int64_t now_ms, const std::uint32_t seq_n);
-    void stop_measure() { send_at_.reset(); }
+    void start(const std::int64_t now_ms, const std::uint32_t seq_n);
+    void stop() { send_at_.reset(); }
+    void update(const std::int64_t now_ms, const std::uint32_t ack_n);
 
-    void update(const std::int64_t cur_time, const std::uint32_t ack_n);
-
-    std::uint32_t rto() const
+    [[nodiscard]] std::uint32_t rto() const
     {
         return rto_ms_;
     }
@@ -33,7 +32,7 @@ public:
     }
 private:
     std::optional<std::int64_t> send_at_;// Time at which oldest UNACKed segment was sent.
-    std::uint32_t send_seq_at_;// Seq n at which send_at_ segmetn was sent
+    std::uint32_t send_seq_at_{};// Seq n at which send_at_ segmetn was sent
 
     std::uint32_t rtt_ms_{};
     std::uint32_t srtt_{};// Smothed round-trip time
@@ -48,27 +47,27 @@ public:
 
     [[nodiscard]] bool is_armed() const { return start_time_.has_value(); }
 
-    void start(const std::uint32_t seq_n,
-     const std::uint32_t data_len,
-     const std::uint32_t rto_ms,
-     const std::int64_t cur_time);
+    void start(const std::int64_t cur_time,
+        const std::uint32_t rto_ms,
+        const std::uint32_t seq_n,
+        const std::uint32_t data_len);
     void stop();
 
     virtual void retransmitted(const std::uint32_t send_una, const std::int64_t cur_time) = 0;
 
-    std::uint32_t start_seq() const
+    [[nodiscard]] std::uint32_t start_seq() const
     {
         return start_seq_at_;
     }
-    std::uint32_t data_len() const
+    [[nodiscard]] std::uint32_t data_len() const
     {
         return data_length_;
     }
 protected:
-    std::optional<std::int64_t> start_time_{};
+    std::optional<std::int64_t> start_time_;
     std::uint32_t start_seq_at_{};
     std::uint32_t data_length_{};// Payload length
-    std::int64_t expire_at_time_{ -1 };
+    std::optional<int64_t> expire_at_time_;
     std::optional<std::uint32_t> rto_ms_;
 };
 

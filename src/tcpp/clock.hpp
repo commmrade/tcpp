@@ -11,12 +11,12 @@ class ClockInterface
 {
 public:
     virtual ~ClockInterface() = default;
-    virtual std::int64_t now() const = 0;
+    [[nodiscard]] virtual std::int64_t now() const = 0;
 };
 
 class Clock : public ClockInterface
 {
-    std::int64_t now() const override
+    [[nodiscard]] std::int64_t now() const override
     {
         return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     }
