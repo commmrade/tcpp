@@ -65,10 +65,11 @@ void Timer::stop() {
     expire_at_time_.reset();
 }
 
-bool RetransTimer::update(const std::uint32_t send_nxt,
-    const std::uint32_t ack_n,
+bool RetransTimer::update(
     const std::int64_t cur_time_ms,
-    const std::uint32_t rto_ms) {
+    const std::uint32_t rto_ms,
+    const std::uint32_t send_nxt,
+    const std::uint32_t ack_n) {
     if (start_time_.has_value()) {
         if (ack_n >= send_nxt && is_armed()) {
             std::println("All outstanding data ACKED. Disable timer");
@@ -95,7 +96,7 @@ bool RetransTimer::update(const std::uint32_t send_nxt,
     return false;
 }
 
-void RetransTimer::retransmitted(const std::uint32_t send_una, const std::int64_t cur_time) {
+void RetransTimer::retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) {
     // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
     // maximum value discussed in (2.5) above may be used to provide
     // an upper bound to this doubling operation.
@@ -122,7 +123,7 @@ bool ZwpTimer::update(const std::int64_t cur_time_ms) {
     return false;
 }
 
-void ZwpTimer::retransmitted(const std::uint32_t send_una, const std::int64_t cur_time) {
+void ZwpTimer::retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) {
     // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
     // maximum value discussed in (2.5) above may be used to provide
     // an upper bound to this doubling operation.
@@ -149,7 +150,7 @@ bool SwsTimer::update(const std::int64_t cur_time_ms) {
     return false;
 }
 
-void SwsTimer::retransmitted(const std::uint32_t send_una, const std::int64_t cur_time) {
+void SwsTimer::retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) {
     // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
     // maximum value discussed in (2.5) above may be used to provide
     // an upper bound to this doubling operation.

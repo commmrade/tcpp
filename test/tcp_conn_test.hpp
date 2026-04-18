@@ -116,7 +116,7 @@ protected:
 
         netparser::IpHeaderView iph_view{iph_data};
         netparser::TcpHeaderView tcph_view{tcph_data};
-        conn_.accept(iph_view, tcph_view);
+        conn_.open_passive(iph_view, tcph_view);
         Mock::VerifyAndClearExpectations(&mock_io_);
 
         EXPECT_CALL(mock_io_, write(_, _)).Times(0);

@@ -53,7 +53,7 @@ public:
         const std::uint32_t data_len);
     void stop();
 
-    virtual void retransmitted(const std::uint32_t send_una, const std::int64_t cur_time) = 0;
+    virtual void retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) = 0;
 
     [[nodiscard]] std::uint32_t start_seq() const
     {
@@ -73,22 +73,20 @@ protected:
 
 struct RetransTimer : public Timer
 {
-    bool update(const std::uint32_t send_nxt, const std::uint32_t ack_n, const std::int64_t cur_time_ms, const std::uint32_t rto_ms);
-    void retransmitted(const std::uint32_t send_una, const std::int64_t cur_time) override;
+    bool update(const std::int64_t cur_time_ms, const std::uint32_t rto_ms, const std::uint32_t send_nxt, const std::uint32_t ack_n);
+    void retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) override;
 };
 
 struct ZwpTimer : public Timer
 {
     bool update(const std::int64_t cur_time_ms);
-    void retransmitted(const std::uint32_t send_una, const std::int64_t cur_time) override;
+    void retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) override;
 };
 
 struct SwsTimer : public Timer
 {
     bool update(const std::int64_t cur_time_ms);
-    void retransmitted(const std::uint32_t send_una, const std::int64_t cur_time) override;
+    void retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) override;
 };
-
-
 
 #endif //TCPP_TIMER_HPP

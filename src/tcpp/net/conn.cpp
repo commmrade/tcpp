@@ -669,13 +669,13 @@ void TcpConnection::retransmit(Timer& timer)
     }
 
     send(timer.start_seq(), timer.data_len());
-    timer.retransmitted(send_.una, clock_->now());
+    timer.retransmitted(clock_->now(), send_.una);
 }
 
 void TcpConnection::update_timers()
 {
     const auto time_now = clock_->now();
-    const bool should_retrans = r_timer_.update(send_.nxt, send_.una, time_now, rtt_measurement_.rto());
+    const bool should_retrans = r_timer_.update(time_now, rtt_measurement_.rto(), send_.nxt, send_.una);
     if (should_retrans) {
         retransmit(r_timer_);
     }
