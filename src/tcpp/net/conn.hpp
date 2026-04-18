@@ -101,8 +101,8 @@ private:
     void update_recv_window();
     void update_send_window();
 
-    bool handle_segment_syn_sent(const netparser::TcpHeaderView &tcph);
-    bool handle_segment_other(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
+    bool segment_arrived_syn_sent(const netparser::TcpHeaderView &tcph);
+    bool segment_arrived_other(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
 
 
 

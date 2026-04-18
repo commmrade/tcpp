@@ -305,20 +305,16 @@ bool TcpConnection::handle_fin()
     return true;
 }
 
-bool TcpConnection::handle_segment_syn_sent(const netparser::TcpHeaderView &tcph)
+bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcph)
 {
-    bool is_ack_acceptable = false;
     if (tcph.ack()) {
-        std::println("{} {}. {} {}", tcph.ackn() - 1, send_.iss, tcph.ackn(), send_.nxt);
         if (wrapping_lt(tcph.ackn() - 1, send_.iss) || tcph.ackn() > send_.nxt) {
             tcph_.rst(true);
-            std::println("SENDING RST IN SYN SENT");
             send(tcph.ackn(), 0);
             return false;// return from processing
         }
-        if (is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
-            // ACK is acceptable
-            is_ack_acceptable = true;
+        if (!is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) { // Otherwise ACK is acceptable
+            return false; // No point in going on if ACK is not acceptable
         }
     }
     if (tcph.rst()) {
@@ -331,7 +327,6 @@ bool TcpConnection::handle_segment_syn_sent(const netparser::TcpHeaderView &tcph
         // Otherwise (no ACK), drop the segment and return
     }
 
-    assert((is_ack_acceptable || !tcph.ack()) && !tcph.rst());
     // This step should be reached only if the ACK is ok, or there is no ACK, and the segment did not contain a RST.
     if (tcph.syn()) {
         recv_.nxt = tcph.seqn() + 1;
@@ -369,7 +364,7 @@ bool TcpConnection::handle_segment_syn_sent(const netparser::TcpHeaderView &tcph
     return true;
 }
 
-bool TcpConnection::handle_segment_other(const netparser::TcpHeaderView &tcph,
+bool TcpConnection::segment_arrived_other(const netparser::TcpHeaderView &tcph,
     std::span<const std::byte> payload)
 {
     // First, check sequence number
@@ -407,15 +402,10 @@ bool TcpConnection::handle_segment_other(const netparser::TcpHeaderView &tcph,
 void TcpConnection::on_packet(const netparser::TcpHeaderView &tcph,
     std::span<const std::byte> payload)
 {
-    switch (state_) {
-    case TcpState::SYN_SENT: {
-        if (!handle_segment_syn_sent(tcph)) { return; }
-        break;
-    }
-    default: {
-        if (!handle_segment_other(tcph, payload)) { return; }
-        break;
-    }
+    if (TcpState::SYN_SENT == state_) {
+        segment_arrived_syn_sent(tcph);
+    } else {
+        segment_arrived_other(tcph, payload);
     }
 }
 
