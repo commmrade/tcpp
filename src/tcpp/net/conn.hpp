@@ -69,7 +69,7 @@ public:
     void shutdown(ShutdownType sht);
     void close();
     [[nodiscard]] ssize_t read(void *buf, const std::size_t buf_size);
-    [[nodiscard]] ssize_t write(const void *buf, const std::size_t buf_size);
+    [[nodiscard]] ssize_t write(std::span<const std::byte> buf);
 
     [[nodiscard]] std::size_t send_buf_free_space() const
     {
@@ -143,9 +143,7 @@ private:
 
         tcph_.source_port(src_port);
         tcph_.dest_port(dst_port);
-
-
-            }
+    }
 
     friend class Tcp;
     friend class TcpConnectionTest;

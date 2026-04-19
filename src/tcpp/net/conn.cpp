@@ -435,7 +435,7 @@ bool TcpConnection::handle_send()
         bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd)
                         || (send_.nxt == send_.una && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
         if (can_send) {
-            s_timer_.stop(); // FIXME: should it be here?
+            s_timer_.stop();
 
             std::println("SWS SEnding: {} {} {} {}, flight: {}",
                 send_buf_.size(),
@@ -728,15 +728,15 @@ ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
     return static_cast<ssize_t>(bytes_copy);
 }
 
-ssize_t TcpConnection::write(const void *buf, const std::size_t buf_size)
+ssize_t TcpConnection::write(std::span<const std::byte> buf)
 {
-    const auto insert_bytes_n = std::min(send_buf_free_space(), buf_size);
+    const auto insert_bytes_n = std::min(send_buf_free_space(), buf.size());
     switch (state_) {
     case TcpState::SYN_SENT:
     case TcpState::SYN_RCVD:
     case TcpState::ESTAB:
     case TcpState::CLOSE_WAIT: {
-        const std::span<const std::byte> data{ static_cast<const std::byte *>(buf), insert_bytes_n };
+        std::span<const std::byte> data{buf.data(), insert_bytes_n};
         append_send_data(data);
         break;
     }
