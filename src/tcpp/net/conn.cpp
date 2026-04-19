@@ -530,7 +530,7 @@ ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max
         offset += payload.size();
     }
 
-    const auto written = tun_.write(buf.data(), offset);
+    const auto written = tun_.write(std::span<const std::byte>(buf.data(), offset));
     if (written < 0) {
         throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno)));// NOLINT
     }

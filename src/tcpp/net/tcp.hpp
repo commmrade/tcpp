@@ -19,8 +19,8 @@ public:
     Tcp(std::string_view dev_name)
         : tun_(dev_name)
     {
-        tun_.set_addr("172.16.0.1");
-        tun_.set_mask("255.255.0.0");
+        tun_.set_addr("10.0.0.1");
+        tun_.set_mask("255.255.255.0");
         tun_.set_flags(IFF_UP | IFF_RUNNING);
     }
 
@@ -41,7 +41,7 @@ private:
     // Accept a SYN packet
     void dispatch_packet(const std::span<const std::byte> buf);
 
-    // A set of ports that are bound and unaccepted conns
+    // A set of ports that are bound and unaccepted conns (that are in "syn_recv_connections_")
     std::unordered_map<std::uint16_t, std::deque<Quad>> bound_;
 
     // Connections that are in SYN_RCVD state

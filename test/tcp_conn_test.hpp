@@ -10,7 +10,7 @@ using namespace testing;
 class MockTun : public IOInterface
 {
 public:
-    MOCK_METHOD(ssize_t, write, (const void* buf, const std::size_t buf_size), (override));
+    MOCK_METHOD(ssize_t, write, (std::span<const std::byte> payload), (override));
 };
 
 class FakeClock : public ClockInterface
@@ -101,7 +101,7 @@ protected:
 
     void do_handshake(const std::uint16_t send_wnd_size = std::numeric_limits<std::uint16_t>::max())
     {
-        EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(44));
+        EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(44));
 
         auto iph = helpers::make_ip({.src = PEER_IP, .dst = LOCAL_IP});
         auto syn  = helpers::make_tcp({
@@ -119,7 +119,7 @@ protected:
         conn_.open_passive(iph_view, tcph_view);
         Mock::VerifyAndClearExpectations(&mock_io_);
 
-        EXPECT_CALL(mock_io_, write(_, _)).Times(0);
+        EXPECT_CALL(mock_io_, write(_)).Times(0);
         auto ack = helpers::make_tcp({
             .sport = PEER_PORT, .dport = LOCAL_PORT,
             .seqn  = PEER_ISN + 1,
@@ -151,7 +151,7 @@ protected:
         const auto seg_d = seg.serialize();
         const netparser::TcpHeaderView seg_view{ seg_d };
 
-        EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(netparser::TCPH_MIN_SIZE + netparser::IPV4H_MIN_SIZE));
+        EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(netparser::TCPH_MIN_SIZE + netparser::IPV4H_MIN_SIZE));
         conn_.on_packet(seg_view, payload);
         Mock::VerifyAndClearExpectations(&mock_io_);
     }

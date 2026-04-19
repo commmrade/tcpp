@@ -36,13 +36,14 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
             if (auto riter = syn_recv_connections_.find(quad); riter != syn_recv_connections_.end()) {
                 auto &conn = riter->second;
                 conn->on_packet(tcph, {}); // ACK for SYNACK cannot contain data
-                if (conn->get_state() == TcpState::ESTAB) {
-                    // Now its fully estab conn, also check for any states besides "opening" states (is_synchronized)
-                    established_connections_.emplace(quad, std::unique_ptr<TcpConnection>(conn.release()));
-                    syn_recv_connections_.erase(riter);
-                    bound_.find(quad.dst_port)->second.push_back(quad);
-                    accept_var_.notify_all();
-                }
+                assert(conn->get_state() == TcpState::ESTAB); // It can't really be in other states
+
+                std::unique_ptr<TcpConnection> conn_ptr{conn.release()};
+                syn_recv_connections_.erase(riter);
+
+                established_connections_.emplace(quad, std::move(conn_ptr));
+                bound_.find(quad.dst_port)->second.push_back(quad);
+                accept_var_.notify_all();
             } else {
                 auto [conn_iter, inserted] = syn_recv_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_, std::make_unique<Clock>()));
                 assert(inserted);
@@ -93,7 +94,6 @@ bool Tcp::has_conn_on_port(const std::uint16_t port) const { return !bound_.find
 Quad Tcp::pop_conn(const std::uint16_t port)
 {
     auto iter = bound_.find(port);
-
     auto quad = iter->second.front();
     iter->second.pop_front();
     return quad;
@@ -110,7 +110,6 @@ Quad Tcp::connect(const std::uint32_t daddr, const std::uint16_t dport)
     std::uniform_int_distribution<std::uint16_t> dist(1024, std::numeric_limits<std::uint16_t>::max());
     const auto port = static_cast<std::uint16_t>(dist(gen));
 
-    // FIXME: Ugly
     Quad quad{ .src_addr = daddr, .src_port = dport, .dst_addr = s_addr, .dst_port = port };
 
     auto [iter, inserted] = established_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_, std::make_unique<Clock>()));

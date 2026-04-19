@@ -101,7 +101,7 @@ TEST_F(TcpConnectionSenderSwsTest, Cond1)
     const auto send_size = sizeof(buf) + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
     // So payload + iph + tcph is sent and returned
     // 1. MIN(D,U) => (536 >= Send MSS) => true
-    EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
+    EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(send_size));
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
 }
@@ -114,7 +114,7 @@ TEST_F(TcpConnectionSenderSwsTest, Cond2)
     const auto send_size = sizeof(buf) + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
     // 1. MIN(D,U) => (200 < Send MSS) => false
     // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (200) <= USABLE_WND (400)) => true
-    EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
+    EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(send_size));
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
 }
@@ -129,7 +129,7 @@ TEST_F(TcpConnectionSenderSwsTest, SenderSws3)
     // 1. MIN(D,U) => (200 < Send MSS) => false
     // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (600) > USABLE_WND (500)) => false
     // 3. ([SND.NXT = SND.UNA] && min(D, U) (500) >= (1/2 * MAX_WND_SIZE) (250) => true
-    EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
+    EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(send_size));
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
 }
@@ -142,7 +142,7 @@ TEST_F(TcpConnectionSenderSwsTest, SenderSws4)
     const auto send_size = 500 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
     // 1. MIN(D,U) => (500 < Send MSS) => false
     // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (500) <= USABLE_WND (500)) => true
-    EXPECT_CALL(mock_io_, write(_, _)).WillOnce(Return(send_size));
+    EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(send_size));
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
     auto ack = helpers::make_tcp({
@@ -163,7 +163,7 @@ TEST_F(TcpConnectionSenderSwsTest, SenderSws4)
     // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (200) > USABLE_WND (100)) => false
     // 3. ([SND.NXT = SND.UNA] && min(D, U) (100) >= (1/2 * MAX_WND_SIZE) (250) => false
     // 4. Timer starts
-    EXPECT_CALL(mock_io_, write(_, _)).Times(0);
+    EXPECT_CALL(mock_io_, write(_)).Times(0);
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
 
