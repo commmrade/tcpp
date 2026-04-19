@@ -168,8 +168,38 @@ private:
     std::uint32_t right_wnd_edge_{};
     Buffer recv_buf_;// First element is SND.UNA, last is SND.UNA + SND.WND
 
-
+    // TODO: state should kinda  lool like this
+    class State
+    {
+    public:
+        virtual ~State() = default;
+        virtual bool on_ack(TcpConnection& conn, const netparser::TcpHeaderView &tcph)
+        {
+            // no op
+            return true;
+        }
+        virtual bool on_segment(TcpConnection& conn, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+        {
+            // no op
+            return true;
+        }
+    };
+    class StateSynRcvd : public State
+    {
+        virtual bool on_ack(TcpConnection& conn, const netparser::TcpHeaderView &tcph)
+        {
+            return true;
+        }
+        virtual bool on_segment(TcpConnection& conn, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
+        {
+            // no op
+            return true;
+        }
+    };
     TcpState state_{};
+
+
+
     // My MSS (what this host can send)
     std::uint16_t send_mss_{ SENDER_DEF_MSS };
     // Their MSS (what that host can send
