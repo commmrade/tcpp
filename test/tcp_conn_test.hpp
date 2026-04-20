@@ -123,7 +123,7 @@ protected:
         auto ack = helpers::make_tcp({
             .sport = PEER_PORT, .dport = LOCAL_PORT,
             .seqn  = PEER_ISN + 1,
-            .ackn  = conn_.send_.iss + 1,
+            .ackn  = conn_.send_.iss() + 1,
             .window = send_wnd_size,
             .ack   = true
         });
@@ -132,7 +132,7 @@ protected:
         conn_.on_packet(ack_view, {});
         Mock::VerifyAndClearExpectations(&mock_io_);
 
-        ASSERT_EQ(conn_.send_.wnd, send_wnd_size);
+        ASSERT_EQ(conn_.send_.wnd(), send_wnd_size);
         ASSERT_EQ(conn_.get_state(), TcpState::ESTAB);
     }
 
@@ -158,7 +158,7 @@ protected:
 
     std::uint32_t get_send_iss() const
     {
-        return conn_.send_.iss;
+        return conn_.send_.iss();
     }
     ClockInterface& get_clock()
     {
@@ -172,9 +172,9 @@ protected:
         conn_.update_recv_window();
     }
     std::uint32_t get_recv_win() const {
-        return conn_.get_recv_wnd();
+        return conn_.recv_.wnd();
     }
     void set_recv_wnd(const std::uint16_t wnd) {
-        conn_.set_recv_wnd(wnd, conn_.recv_.nxt);
+        conn_.recv_.set_wnd(wnd);
     }
 };

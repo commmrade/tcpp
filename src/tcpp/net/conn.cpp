@@ -25,15 +25,15 @@ void TcpConnection::erase_recv_data(const std::size_t bytes_n)
 
 bool TcpConnection::validate_seq_n(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) const
 {
-    if (payload.size() == 0 && recv_.wnd == 0 && tcph.seqn() == recv_.nxt) { return true; } else if (
-        payload.size() == 0 && recv_.wnd > 0 &&
-        is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd)) { return true; } else if (
-        payload.size() > 0 && recv_.wnd == 0) { return false; } else if (
-        payload.size() > 0 && recv_.wnd > 0 && (
-            is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd) || is_between_wrapped(
-                recv_.nxt - 1,
+    if (payload.size() == 0 && recv_.wnd() == 0 && tcph.seqn() == recv_.nxt()) { return true; } else if (
+        payload.size() == 0 && recv_.wnd()> 0 &&
+        is_between_wrapped(recv_.nxt() - 1, tcph.seqn(), recv_.nxt() + recv_.wnd())) { return true; } else if (
+        payload.size() > 0 && recv_.wnd()== 0) { return false; } else if (
+        payload.size() > 0 && recv_.wnd()> 0 && (
+            is_between_wrapped(recv_.nxt() - 1, tcph.seqn(), recv_.nxt() + recv_.wnd()) || is_between_wrapped(
+                recv_.nxt() - 1,
                 static_cast<std::uint32_t>(tcph.seqn() + payload.size() - 1),
-                recv_.nxt + recv_.wnd))) { return true; }
+                recv_.nxt() + recv_.wnd()))) { return true; }
     return false;
 }
 
@@ -41,13 +41,13 @@ bool TcpConnection::handle_rst(const netparser::TcpHeaderView &tcph)
 {
     // from 3.10.7.4. Other States later TODO
 
-    if (!is_between_wrapped(recv_.nxt - 1, tcph.seqn(), recv_.nxt + recv_.wnd)) {
+    if (!is_between_wrapped(recv_.nxt() - 1, tcph.seqn(), recv_.nxt() + recv_.wnd())) {
         // Outside the window
         return false;// Just drop the segment
-    } else if (tcph.seqn() != recv_.nxt) {
+    } else if (tcph.seqn() != recv_.nxt()) {
         // Inside window
         tcph_.ack(true);
-        send(send_.nxt, 0);// Challenge ACK
+        send(send_.nxt(), 0);// Challenge ACK
         return false;
     }
 
@@ -89,12 +89,12 @@ bool TcpConnection::handle_ack(const netparser::TcpHeaderView &tcph)
 {
     rtt_measurement_.update(clock_->now(), tcph.ackn());
 
-    std::println("Got ack n {}, SEND.NXT {}, UNA", tcph.ackn(), send_.nxt, send_.una);
+    std::println("Got ack n {}, SEND.NXT {}, UNA", tcph.ackn(), send_.nxt(), send_.una());
     switch (state_) {
     case TcpState::SYN_RCVD: {
         // got ACK for our SYNACK
-        std::println("Ack is invalid: una {} < ackn {} <= nxt {}", send_.una, tcph.ackn(), send_.nxt);
-        if (!is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
+        std::println("Ack is invalid: una {} < ackn {} <= nxt {}", send_.una(), tcph.ackn(), send_.nxt());
+        if (!is_between_wrapped(send_.una(), tcph.ackn(), send_.nxt() + 1)) {
             std::println("ACK IS NOT VALID. RST SET HERE");
             tcph_.rst(true);
             send(tcph.ackn(), 0);
@@ -102,9 +102,9 @@ bool TcpConnection::handle_ack(const netparser::TcpHeaderView &tcph)
 
         conn_var_.notify_all();
         state_ = TcpState::ESTAB;
-        set_send_wnd(tcph.window());
-        send_.wl1 = tcph.seqn();
-        send_.wl2 = tcph.ackn();
+        send_.set_wnd(tcph.window());
+        send_.set_wl1(tcph.seqn());
+        send_.set_wl2(tcph.ackn());
 
         [[fallthrough]];
     }
@@ -115,36 +115,36 @@ bool TcpConnection::handle_ack(const netparser::TcpHeaderView &tcph)
     case TcpState::ESTAB: {
         // TODO: this handling is used for other states besides ESTABLISHED, like FIN_WAIT_1 and FIN_WAIT_2, CLOSING
         // TODO: HANDLE ACK FOR SYn/FIN
-        if (tcph.seqn() == recv_.nxt - 1 && recv_.wnd == 0) {
+        if (tcph.seqn() == recv_.nxt() - 1 && recv_.wnd()== 0) {
             // It is a window probe probably (at least Linux Net. Stack one)
             tcph_.ack(true);
-            send(send_.nxt, 0);
+            send(send_.nxt(), 0);
         }
-        if (is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) {
-            const auto acked_bytes_n = tcph.ackn() - send_.una;// This wraps fine
+        if (is_between_wrapped(send_.una(), tcph.ackn(), send_.nxt() + 1)) {
+            const auto acked_bytes_n = tcph.ackn() - send_.una();// This wraps fine
             if (!send_buf_.empty()) {
                 assert(acked_bytes_n <= send_buf_.size());// Just in case
                 // if empty, probably means that SYN/FIN was ACKed
                 erase_send_data(acked_bytes_n);
             }
-            send_.una = tcph.ackn();
-        } else if (wrapping_lt(tcph.ackn(), send_.una + 1)) {
+            send_.set_una(tcph.ackn());
+        } else if (wrapping_lt(tcph.ackn(), send_.una() + 1)) {
             // duplicate ACK
             // Ignore
-        } else if (wrapping_gt(tcph.ackn(), send_.nxt)) {
+        } else if (wrapping_gt(tcph.ackn(), send_.nxt())) {
             tcph_.ack(true);
-            send(send_.nxt, 0);
+            send(send_.nxt(), 0);
             return false;// Drop the segment and return
         }
 
-        if (is_between_wrapped(send_.una - 1, tcph.ackn(), send_.nxt + 1)) {
+        if (is_between_wrapped(send_.una() - 1, tcph.ackn(), send_.nxt() + 1)) {
             // Update window
-            if (wrapping_lt(send_.wl1, tcph.seqn()) || (send_.wl1 == tcph.seqn() && wrapping_lt(send_.wl2,
+            if (wrapping_lt(send_.wl1(), tcph.seqn()) || (send_.wl1() == tcph.seqn() && wrapping_lt(send_.wl2(),
                                                             tcph.ackn() + 1))) {
                 // send_.wnd = tcph.window();
-                set_send_wnd(tcph.window());
-                send_.wl1 = tcph.seqn();
-                send_.wl2 = tcph.ackn();
+                send_.set_wnd(tcph.window());
+                send_.set_wl1(tcph.seqn());
+                send_.set_wl2(tcph.ackn());
             }
         }
 
@@ -195,42 +195,42 @@ void TcpConnection::update_recv_window()
     const auto free_space = buffer_size - recv_buf_.size();
 
     if (free_space == 0) {
-        set_recv_wnd(0, recv_.nxt);
+        recv_.set_wnd(0);
         return;
     }
 
-    const auto wnd_size = get_recv_wnd();
+    const auto wnd_size = recv_.wnd();
     const auto increment = free_space > wnd_size ? free_space - wnd_size : 0;
     if (increment >= std::min(buffer_size / 2, static_cast<std::size_t>(recv_mss_))) {
-        set_recv_wnd(static_cast<std::uint32_t>(free_space), recv_.nxt);
+        recv_.set_wnd(static_cast<const std::uint32_t>(free_space));
     }
 }
 
 void TcpConnection::update_send_window()
 {
-    const auto in_flight_n = send_.nxt - send_.una;
+    const auto in_flight_n = send_.nxt() - send_.una();
     const auto unsent = static_cast<std::uint32_t>(send_buf_.size()) - in_flight_n;
     // Start probing only if there is data to send, otherwise it is useless
     // Stop probing when SND.WND has been updated and now TCP is about to send new data (in on_tick()).
     // So (unsent > 0) is safe for stopping ZWP scenario
     if (unsent > 0) {
-        if (send_.wnd == 0 && !z_timer_.is_armed()) {
+        if (send_.wnd() == 0 && !z_timer_.is_armed()) {
             assert(!send_buf_.empty());
-            const auto seq_num = send_.una;
+            const auto seq_num = send_.una();
             rtt_measurement_.rto(RttMeasurement::DEFAULT_RTO_MS);
 
             r_timer_.stop(); // Retrans. timer should be suspended when ZWP is running
             z_timer_.start(clock_->now(), rtt_measurement_.rto(), seq_num, 1);
 
             // TODO: do i really need old_wnd_size condition?
-        } else if (send_.wnd > 0 && z_timer_.is_armed()) {
+        } else if (send_.wnd() > 0 && z_timer_.is_armed()) {
             z_timer_.stop();
 
             rtt_measurement_.reset();
             rtt_measurement_.rto(RttMeasurement::DEFAULT_RTO_MS);
 
             // I think It is kinda logical to start sending from UNA after ZWP is finished
-            send_.nxt = send_.una;
+            send_.set_nxt(send_.una());
         }
     }
 
@@ -245,23 +245,23 @@ bool TcpConnection::handle_seg_text(const netparser::TcpHeaderView &tcph,
     case TcpState::FIN_WAIT_2: {
         // A TCP implementation MAY send an ACK segment acknowledging RCV.NXT
         // when a valid segment arrives that is in the window but not at the left window edge
-        if (tcph.seqn() != recv_.nxt) {
+        if (tcph.seqn() != recv_.nxt()) {
             tcph_.ack(true);
-            send(send_.nxt, 0);
+            send(send_.nxt(), 0);
             return true;
         }
 
         // This should not be done in ZWP state
-        if (recv_.wnd != 0) {
-            const auto payload_size = payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
+        if (recv_.wnd()!= 0) {
+            const std::uint32_t payload_size = static_cast<std::uint32_t>(payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0));
             append_recv_data(payload);
-            recv_.nxt += payload_size;// FIN is handled in handle_fin()
+            recv_.set_nxt(recv_.nxt() + payload_size);// FIN is handled in handle_fin()
         }
 
         // FIN is gonna be handled in handle_fin()
         if (!tcph_.fin()) {
             tcph_.ack(true);
-            send(send_.nxt, 0);// TODO: piggyback this
+            send(send_.nxt(), 0);// TODO: piggyback this
             recv_var_.notify_all();
         }
         break;
@@ -308,12 +308,12 @@ bool TcpConnection::handle_fin()
 bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcph)
 {
     if (tcph.ack()) {
-        if (wrapping_lt(tcph.ackn() - 1, send_.iss) || tcph.ackn() > send_.nxt) {
+        if (wrapping_lt(tcph.ackn() - 1, send_.iss()) || tcph.ackn() > send_.nxt()) {
             tcph_.rst(true);
             send(tcph.ackn(), 0);
             return false;// return from processing
         }
-        if (!is_between_wrapped(send_.una, tcph.ackn(), send_.nxt + 1)) { // Otherwise ACK is acceptable
+        if (!is_between_wrapped(send_.una(), tcph.ackn(), send_.nxt() + 1)) { // Otherwise ACK is acceptable
             return false; // No point in going on if ACK is not acceptable
         }
     }
@@ -329,16 +329,17 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
 
     // This step should be reached only if the ACK is ok, or there is no ACK, and the segment did not contain a RST.
     if (tcph.syn()) {
-        recv_.nxt = tcph.seqn() + 1;
-        recv_.irs = tcph.seqn();
-        update_recv_window();
-        if (tcph.ack()) { send_.una = tcph.ackn(); }
+        recv_.set_nxt(tcph.seqn() + 1);
+        recv_.set_irs(tcph.seqn());
 
-        if (send_.una > send_.iss /* SYN has been ACKed */) {
+        update_recv_window();
+        if (tcph.ack()) { send_.set_una(tcph.ackn()); }
+
+        if (send_.una() > send_.iss() /* SYN has been ACKed */) {
             state_ = TcpState::ESTAB;
 
             tcph_.ack(true);
-            send(send_.nxt, 0);
+            send(send_.nxt(), 0);
 
             // 3 way handshake is done at this point
             conn_var_.notify_all();
@@ -348,14 +349,14 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
 
             tcph_.ack(true);
             tcph_.syn(true);
-            send(send_.iss, 0);
+            send(send_.iss(), 0);
         }
 
         if (auto opt = tcph.mss(); opt.has_value()) { send_mss_ = opt.value().mss; }
         // send_.wnd = tcph.window();
-        set_send_wnd(tcph.window());
-        send_.wl1 = tcph.seqn();
-        send_.wl2 = tcph.ackn();
+        send_.set_wnd(tcph.window());
+        send_.set_wl1(tcph.seqn());
+        send_.set_wl2(tcph.ackn());
     }
 
     if (!tcph.syn() && !tcph.rst()) {
@@ -368,13 +369,13 @@ bool TcpConnection::segment_arrived_other(const netparser::TcpHeaderView &tcph,
     std::span<const std::byte> payload)
 {
     // First, check sequence number
-    if (!validate_seq_n(tcph, payload) && recv_.wnd != 0) {
+    if (!validate_seq_n(tcph, payload) && recv_.wnd() != 0) {
         // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
         // If an incoming segment is not acceptable, an acknowledgment should be sent in reply (unless the RST bit is set, if so drop the segment and return):
         if (tcph.rst()) { return false; }
 
         tcph_.ack(true);
-        send(send_.nxt, 0);
+        send(send_.nxt(), 0);
         return false;
     }
 
@@ -411,7 +412,7 @@ void TcpConnection::on_packet(const netparser::TcpHeaderView &tcph,
 
 bool TcpConnection::handle_send()
 {
-    const auto in_flight_n = send_.nxt - send_.una;
+    const auto in_flight_n = send_.nxt() - send_.una();
 
     // FIXME: This happens on SYN and FIN, can't fix it unless I implement segments
     if (in_flight_n > send_buf_.size()) {
@@ -420,9 +421,9 @@ bool TcpConnection::handle_send()
     }
 
     const auto unsent = static_cast<std::uint32_t>(send_buf_.size()) - in_flight_n;
-    if (unsent > 0 && send_.wnd > 0) {
+    if (unsent > 0 && send_.wnd() > 0) {
         // Sender SWS
-        const auto usable_wnd = send_.wnd - in_flight_n;
+        const auto usable_wnd = send_.wnd() - in_flight_n;
         // const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n,
                                               // static_cast<std::size_t>(send_.wnd - in_flight_n) });
         const auto bytes_to_send = std::min<std::size_t>({send_mss_, unsent, usable_wnd});
@@ -432,8 +433,8 @@ bool TcpConnection::handle_send()
 
         // TODO: PUSH flag in segments
         // FIXME: SND.NXT == SND.UNA is a NAGLE condition. I should let user disable NAgle so this cond. isnt enforced
-        bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt == send_.una && unsent <= usable_wnd)
-                        || (send_.nxt == send_.una && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
+        bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt() == send_.una() && unsent <= usable_wnd)
+                        || (send_.nxt() == send_.una() && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
         if (can_send) {
             s_timer_.stop();
 
@@ -444,11 +445,11 @@ bool TcpConnection::handle_send()
                 unsent,
                 in_flight_n);
             tcph_.ack(true);
-            send(send_.nxt, bytes_to_send);
+            send(send_.nxt(), bytes_to_send);
         } else {
-            std::println("Start SWS override timer. send nxt: {}, send una: {}, data len {}", send_.nxt, send_.una, bytes_to_send);
+            std::println("Start SWS override timer. send nxt: {}, send una: {}, data len {}", send_.nxt(), send_.una(), bytes_to_send);
             // FIXME: I MAY NEED TO IMPL. TIMERS OTEHR WAY, SINCE SWS AND RETRANS SHOULD NOT BE SHARED
-            s_timer_.start(clock_->now(), RttMeasurement::SWS_OVERRIDE_MS, send_.nxt,
+            s_timer_.start(clock_->now(), RttMeasurement::SWS_OVERRIDE_MS, send_.nxt(),
                 static_cast<std::uint32_t>(bytes_to_send));
         }
     }
@@ -460,7 +461,7 @@ bool TcpConnection::handle_close()
     if (should_send_fin_ && send_buf_.empty()) {
         tcph_.fin(true);
         tcph_.ack(true);
-        send(send_.nxt, 0);
+        send(send_.nxt(), 0);
         should_send_fin_ = false;
 
         switch (state_) {
@@ -491,7 +492,7 @@ void TcpConnection::on_tick()
 
 ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max_size)
 {
-    const auto send_buf_idx = static_cast<std::int64_t>(seqn_from) - static_cast<std::int64_t>(send_.una);
+    const auto send_buf_idx = static_cast<std::int64_t>(seqn_from) - static_cast<std::int64_t>(send_.una());
     std::println("Send buf idx: {}, send buf size: {}, send size: {}", send_buf_idx, send_buf_.size(), max_size);
     // assert(static_cast<std::size_t>(send_buf_idx) <= send_buf_.size());
 
@@ -505,10 +506,10 @@ ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max
     const auto ip_data = iph_.serialize();
 
     tcph_.seqn(seqn_from);
-    tcph_.ackn(recv_.nxt);
+    tcph_.ackn(recv_.nxt());
 
     update_recv_window();
-    const auto wnd_to_advertise = static_cast<std::uint16_t>(get_recv_wnd());
+    const auto wnd_to_advertise = static_cast<std::uint16_t>(recv_.wnd());
     tcph_.window(wnd_to_advertise);
     const auto tcph_size = static_cast<std::uint8_t>(netparser::TCPH_MIN_SIZE + tcph_.options().options_size());
     tcph_.data_off(tcph_size / 4);
@@ -542,18 +543,18 @@ ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max
     const auto data_size = payload.size() + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
     if (data_size > 0) {
         const auto time_now = clock_->now();
-        if (wrapping_gt(seqn_from, send_.nxt - 1)) {
+        if (wrapping_gt(seqn_from, send_.nxt() - 1)) {
             // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
             rtt_measurement_.start(time_now, seqn_from);
         }
         if (!z_timer_.is_armed()) { // Should not run while ZWP is active
-            r_timer_.start(time_now, rtt_measurement_.rto(), send_.una,
+            r_timer_.start(time_now, rtt_measurement_.rto(), send_.una(),
             static_cast<std::uint32_t>(payload.size()));
         }
     }
 
-    if (wrapping_gt(seqn_from + static_cast<std::uint32_t>(data_size), send_.nxt - 1)) {
-        send_.nxt += seqn_from + data_size - send_.nxt;// maybe + 1?
+    if (wrapping_gt(seqn_from + static_cast<std::uint32_t>(data_size), send_.nxt() - 1)) {
+        send_.set_nxt(send_.nxt() + (seqn_from + static_cast<std::uint32_t>(data_size) - send_.nxt()));
     }
 
     tcph_.syn(false);
@@ -586,14 +587,14 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
 
     // Third, check for a SYN
     if (tcph.syn()) {
-        recv_.nxt = tcph.seqn() + 1;
-        recv_.irs = tcph.seqn();
-        // recv_.wnd = recv_mss_ * 3;
-        set_recv_wnd(std::numeric_limits<std::uint16_t>::max(), recv_.nxt);
+        recv_.set_nxt(tcph.seqn() + 1);
+        recv_.set_irs(tcph.seqn());
+        // recv_.wnd()= recv_mss_ * 3;
+        recv_.set_wnd(std::numeric_limits<std::uint16_t>::max());
 
         if (auto opt = tcph.mss(); opt.has_value()) { send_mss_ = opt.value().mss; }
         // send_.wnd = tcph.window();
-        set_send_wnd(tcph.window());
+        send_.set_wnd(tcph.window());
 
         // SEt ISS
         std::random_device rnd;
@@ -603,14 +604,14 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
         auto iss = dis(gen);
         // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
         tcph_.options().mss(recv_mss_); // FIXME: SHOULD I SEND IT IF THAT PEER DID NOT HAVE THIS????
-        tcph_.window(static_cast<std::uint16_t>(recv_.wnd));
+        tcph_.window(static_cast<std::uint16_t>(recv_.wnd()));
         tcph_.syn(true);
         tcph_.ack(true);
 
 
-        send_.iss = iss;
-        send_.una = send_.iss;
-        send_.nxt = send_.iss;// 1 goes for SYN (in send()), since it uses up a SEQ number
+        send_.set_iss(iss);
+        send_.set_una(iss);
+        send_.set_nxt(iss);// 1 goes for SYN (in send()), since it uses up a SEQ number
         send(iss, 0);
 
         state_ = TcpState::SYN_RCVD;
@@ -634,12 +635,12 @@ void TcpConnection::open_active(const std::uint32_t saddr,
     tcph_.options().mss(recv_mss_);
     tcph_.syn(true); // We are doing an active open
 
-    send_.iss = iss;
-    send_.una = send_.iss;
-    send_.nxt = send_.iss;// +1 is in send()
+    send_.set_iss(iss);
+    send_.set_una(iss);
+    send_.set_nxt(iss);// +1 is in send()
 
-    set_recv_wnd(std::numeric_limits<std::uint16_t>::max(), recv_.nxt);
-    set_send_wnd(send_mss_);
+    recv_.set_wnd(std::numeric_limits<std::uint16_t>::max());
+    send_.set_wnd(send_mss_);
 
     send(iss, 0);
 
@@ -669,13 +670,13 @@ void TcpConnection::retransmit(Timer& timer)
     }
 
     send(timer.start_seq(), timer.data_len());
-    timer.retransmitted(clock_->now(), send_.una);
+    timer.retransmitted(clock_->now(), send_.una());
 }
 
 void TcpConnection::update_timers()
 {
     const auto time_now = clock_->now();
-    const bool should_retrans = r_timer_.update(time_now, rtt_measurement_.rto(), send_.nxt, send_.una);
+    const bool should_retrans = r_timer_.update(time_now, rtt_measurement_.rto(), send_.nxt(), send_.una());
     if (should_retrans) {
         retransmit(r_timer_);
     }
@@ -687,18 +688,6 @@ void TcpConnection::update_timers()
     if (should_sws) {
         retransmit(s_timer_);
     }
-}
-
-void TcpConnection::set_send_wnd(const std::uint32_t wnd)
-{
-    send_wnd_max_ = std::max(send_.wnd, wnd);
-    send_.wnd = wnd;
-}
-
-void TcpConnection::set_recv_wnd(const std::uint32_t wnd, const std::uint32_t nxt)
-{
-    recv_.wnd = wnd;
-    right_wnd_edge_ = nxt + wnd;
 }
 
 void TcpConnection::shutdown(ShutdownType sht)

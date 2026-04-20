@@ -28,25 +28,109 @@ using Buffer = std::vector<std::byte>;
 constexpr static inline std::uint32_t SENDER_DEF_MSS = 536;
 constexpr static inline std::uint32_t RECEIVER_DEF_MSS = 1440;
 
-struct SendSequence
+class SendSequence
 {
-    std::uint32_t una;// send unack'ed
-    std::uint32_t nxt;// send next
-    std::uint32_t wnd;// send window size. It is recommended to use 32 bit int for WND
-    std::uint16_t up;// urgent pointer
-    std::uint32_t wl1;// segment sequence number used for last window update
-    std::uint32_t wl2;// segment acknowledgment number used for last window update
-    std::uint32_t iss;// initial sequence number
+public:
+    [[nodiscard]] std::uint32_t wnd() const
+    {
+        return wnd_;
+    }
+    void set_wnd(const std::uint32_t wnd)
+    {
+        wnd_max_ = std::max(wnd_max_, wnd);
+        wnd_ = wnd;
+    }
+
+    [[nodiscard]] std::uint32_t nxt() const
+    {
+        return nxt_;
+    }
+    void set_nxt(const std::uint32_t nxt)
+    {
+        nxt_ = nxt;
+    }
+
+    [[nodiscard]] std::uint32_t una() const
+    {
+        return una_;
+    }
+    void set_una(const std::uint32_t una)
+    {
+        una_ = una;
+    }
+
+    [[nodiscard]] std::uint32_t iss() const
+    {
+        return iss_;
+    }
+    void set_iss(const std::uint32_t iss)
+    {
+        iss_ = iss;
+    }
+
+    [[nodiscard]] std::uint32_t wl1() const
+    {
+        return wl1_;
+    }
+    void set_wl1(const std::uint32_t wl1)
+    {
+        wl1_ = wl1;
+    }
+
+    [[nodiscard]] std::uint32_t wl2() const
+    {
+        return wl2_;
+    }
+    void set_wl2(const std::uint32_t wl2)
+    {
+        wl2_ = wl2;
+    }
+private:
+    std::uint32_t una_;// send unack'ed
+    std::uint32_t nxt_;// send next
+    std::uint32_t wnd_;// send window size. It is recommended to use 32 bit int for WND
+    std::uint16_t up_;// urgent pointer
+    std::uint32_t wl1_;// segment sequence number used for last window update
+    std::uint32_t wl2_;// segment acknowledgment number used for last window update
+    std::uint32_t iss_;// initial sequence number
+
+    std::uint32_t wnd_max_;
 };
 
 struct ReceiveSequence
 {
-    std::uint32_t nxt;// next to receive, which is +1 byte. so this equals to the next seqn that is expected
-    std::uint32_t wnd;// receiver window size. It is recommended to use 32 bit int for WND
-    std::uint16_t up;// urgent pointer
-    std::uint32_t irs;// initial receiver seq n
-};
+public:
+    void set_wnd(const std::uint32_t wnd)
+    {
+        wnd_ = wnd;
+        right_wnd_edge_ = nxt_ + wnd;
+    }
 
+    [[nodiscard]] std::uint32_t wnd() const
+    {
+        return right_wnd_edge_ - nxt_;
+    }
+    [[nodiscard]] std::uint32_t nxt() const
+    {
+        return nxt_;
+    }
+    void set_nxt(const std::uint32_t nxt)
+    {
+        nxt_ = nxt;
+    }
+
+    void set_irs(const std::uint32_t irs)
+    {
+        irs_ = irs;
+    }
+private:
+    std::uint32_t nxt_;// next to receive, which is +1 byte. so this equals to the next seqn that is expected
+    std::uint32_t wnd_;// receiver window size. It is recommended to use 32 bit int for WND
+    std::uint16_t up_;// urgent pointer
+    std::uint32_t irs_;// initial receiver seq n
+
+    std::uint32_t right_wnd_edge_;
+};
 
 class Tcp;
 class TcpConnectionTest;
@@ -98,18 +182,14 @@ private:
     bool handle_seg_text(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
     bool handle_fin();
 
-    void update_recv_window();
-    void update_send_window();
-
     bool segment_arrived_syn_sent(const netparser::TcpHeaderView &tcph);
     bool segment_arrived_other(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
-
-
 
     bool handle_send();
     bool handle_close();
 
-
+    void update_recv_window();
+    void update_send_window();
 
     /// @param seqn_from first sequence number to send
     /// @param max_size how many bytes of payload it is allowed to send at most.
@@ -124,10 +204,6 @@ private:
 
     void retransmit(Timer& timer);
     void update_timers();
-
-    void set_send_wnd(const std::uint32_t wnd);
-    [[nodiscard]] std::uint32_t get_recv_wnd() const { return right_wnd_edge_ - recv_.nxt; }
-    void set_recv_wnd(const std::uint32_t wnd, const std::uint32_t nxt);
 
     void init_headers(const std::uint32_t src_addr, const std::uint32_t dst_addr,
             const std::uint16_t src_port, const std::uint16_t dst_port,
@@ -169,36 +245,7 @@ private:
     Buffer recv_buf_;// First element is SND.UNA, last is SND.UNA + SND.WND
 
     // TODO: state should kinda  lool like this
-    class State
-    {
-    public:
-        virtual ~State() = default;
-        virtual bool on_ack(TcpConnection& conn, const netparser::TcpHeaderView &tcph)
-        {
-            // no op
-            return true;
-        }
-        virtual bool on_segment(TcpConnection& conn, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
-        {
-            // no op
-            return true;
-        }
-    };
-    class StateSynRcvd : public State
-    {
-        virtual bool on_ack(TcpConnection& conn, const netparser::TcpHeaderView &tcph)
-        {
-            return true;
-        }
-        virtual bool on_segment(TcpConnection& conn, const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload)
-        {
-            // no op
-            return true;
-        }
-    };
     TcpState state_{};
-
-
 
     // My MSS (what this host can send)
     std::uint16_t send_mss_{ SENDER_DEF_MSS };
