@@ -161,10 +161,8 @@ public:
     }
 
     // Check timers, all sorts of events and issue SENDs
-    // TODO: Piggybacked ACKs should be here
     // Method is used for SENDs and TIMEOUTs and all other kinds of events except SEGMENT ARRIVES
     void on_tick();
-
     void on_packet(const netparser::TcpHeaderView &tcph,
         std::span<const std::byte> payload);
 private:
@@ -173,14 +171,12 @@ private:
     void erase_send_data(const std::size_t bytes_n);
     void erase_recv_data(const std::size_t bytes_n);
 
-    [[nodiscard]] bool validate_seq_n(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) const;
-
     // lile false if it should return
-    bool handle_rst(const netparser::TcpHeaderView &tcph);
-    bool handle_syn(const netparser::TcpHeaderView &tcph);
-    bool handle_ack(const netparser::TcpHeaderView &tcph);
-    bool handle_seg_text(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
-    bool handle_fin();
+    bool on_rst(const netparser::TcpHeaderView &tcph);
+    bool on_syn(const netparser::TcpHeaderView &tcph);
+    bool on_ack(const netparser::TcpHeaderView &tcph);
+    bool on_data(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
+    bool on_fin();
 
     bool segment_arrived_syn_sent(const netparser::TcpHeaderView &tcph);
     bool segment_arrived_other(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);

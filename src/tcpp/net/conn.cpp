@@ -23,21 +23,21 @@ void TcpConnection::erase_recv_data(const std::size_t bytes_n)
     recv_buf_.erase(recv_buf_.begin(), recv_buf_.begin() + static_cast<const std::ptrdiff_t>(bytes_n));
 }
 
-bool TcpConnection::validate_seq_n(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload) const
+static bool validate_seq_n(const std::uint32_t seq_n, std::size_t payload_size, const std::uint32_t recv_wnd, const std::uint32_t recv_nxt)
 {
-    if (payload.size() == 0 && recv_.wnd() == 0 && tcph.seqn() == recv_.nxt()) { return true; } else if (
-        payload.size() == 0 && recv_.wnd()> 0 &&
-        is_between_wrapped(recv_.nxt() - 1, tcph.seqn(), recv_.nxt() + recv_.wnd())) { return true; } else if (
-        payload.size() > 0 && recv_.wnd()== 0) { return false; } else if (
-        payload.size() > 0 && recv_.wnd()> 0 && (
-            is_between_wrapped(recv_.nxt() - 1, tcph.seqn(), recv_.nxt() + recv_.wnd()) || is_between_wrapped(
-                recv_.nxt() - 1,
-                static_cast<std::uint32_t>(tcph.seqn() + payload.size() - 1),
-                recv_.nxt() + recv_.wnd()))) { return true; }
+    if (payload_size == 0 && recv_wnd == 0 && seq_n == recv_nxt) { return true; } else if (
+        payload_size == 0 && recv_wnd > 0 &&
+        is_between_wrapped(recv_nxt - 1, seq_n, recv_nxt + recv_wnd)) { return true; } else if (
+        payload_size > 0 && recv_wnd == 0) { return false; } else if (
+        payload_size > 0 && recv_wnd > 0 && (
+            is_between_wrapped(recv_nxt - 1, seq_n, recv_nxt + recv_wnd) || is_between_wrapped(
+                recv_nxt - 1,
+                static_cast<std::uint32_t>(seq_n + payload_size - 1),
+                recv_nxt + recv_wnd))) { return true; }
     return false;
 }
 
-bool TcpConnection::handle_rst(const netparser::TcpHeaderView &tcph)
+bool TcpConnection::on_rst(const netparser::TcpHeaderView &tcph)
 {
     // from 3.10.7.4. Other States later TODO
 
@@ -79,13 +79,13 @@ bool TcpConnection::handle_rst(const netparser::TcpHeaderView &tcph)
     return true;
 }
 
-bool TcpConnection::handle_syn(const netparser::TcpHeaderView &tcph)
+bool TcpConnection::on_syn(const netparser::TcpHeaderView &tcph)
 {
     // TODO: Challenge ACK in synchronized states <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
     return true;
 }
 
-bool TcpConnection::handle_ack(const netparser::TcpHeaderView &tcph)
+bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
 {
     rtt_measurement_.update(clock_->now(), tcph.ackn());
 
@@ -236,7 +236,7 @@ void TcpConnection::update_send_window()
 
 }
 
-bool TcpConnection::handle_seg_text(const netparser::TcpHeaderView &tcph,
+bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
     std::span<const std::byte> payload)
 {
     switch (state_) {
@@ -280,7 +280,7 @@ bool TcpConnection::handle_seg_text(const netparser::TcpHeaderView &tcph,
     return true;
 }
 
-bool TcpConnection::handle_fin()
+bool TcpConnection::on_fin()
 {
     is_finished_ = true;
     recv_var_.notify_all();// Notify socekts about a read, now they should check is_finished
@@ -369,7 +369,7 @@ bool TcpConnection::segment_arrived_other(const netparser::TcpHeaderView &tcph,
     std::span<const std::byte> payload)
 {
     // First, check sequence number
-    if (!validate_seq_n(tcph, payload) && recv_.wnd() != 0) {
+    if (!validate_seq_n(tcph.seqn(), payload.size(), recv_.wnd(), recv_.nxt()) && recv_.wnd() != 0) {
         // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
         // If an incoming segment is not acceptable, an acknowledgment should be sent in reply (unless the RST bit is set, if so drop the segment and return):
         if (tcph.rst()) { return false; }
@@ -380,22 +380,22 @@ bool TcpConnection::segment_arrived_other(const netparser::TcpHeaderView &tcph,
     }
 
     // False signals, that a handler wants to return (usually in drop-and-return situations)
-    if (tcph.rst()) { if (!handle_rst(tcph)) { return false; } }
+    if (tcph.rst()) { if (!on_rst(tcph)) { return false; } }
 
     // Fourth
-    if (tcph.syn()) { if (!handle_syn(tcph)) { return false; } }// NOLINT
+    if (tcph.syn()) { if (!on_syn(tcph)) { return false; } }// NOLINT
 
     // Fifth, check the ACK field
     if (!tcph.ack()) { return false; }
-    if (!handle_ack(tcph)) { return false; }
+    if (!on_ack(tcph)) { return false; }
 
     // Ignore URG bit
 
     const auto payload_size = payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
-    if (payload_size > 0) { if (!handle_seg_text(tcph, payload)) { return false; } }
+    if (payload_size > 0) { if (!on_data(tcph, payload)) { return false; } }
 
     // TODO: Check FIN bit
-    if (tcph.fin()) { if (!handle_fin()) { return false; } }// NOLINT
+    if (tcph.fin()) { if (!on_fin()) { return false; } }// NOLINT
 
     return true;
 }
