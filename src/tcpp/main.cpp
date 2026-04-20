@@ -123,7 +123,6 @@ public:
     {
         auto &ctx_ = Context::instance();
 
-        // TODO: maybe make it in 1 step some time later
         std::unique_lock accept_lock{ ctx_.mx };
         ctx_.tcp.get_accept_var().wait(accept_lock,
             [this, &ctx_] { return ctx_.tcp.has_conn_on_port(port_); });
@@ -172,23 +171,13 @@ int main()
     //     }
     // }};
 
-    // sleep(3); // Wait for py test thing to start
-    // TcpSocket sock{};
-    // sock.connect("10.0.0.1", 8090);
 
-    // while (true) {
-    //     std::array<char, 100> buf{};
-    //     std::memset(buf.data(), 'c', buf.size());
-    //     auto wr = sock.write(buf.data(), buf.size());
-    //     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    // }
     TcpListener listener{};
     listener.bind(8090);
     listener.listen(999);
     std::println("user: bound and listening");
     auto sock = listener.accept();
     std::println("user: accepted");
-    // return -1;
     while (true) {
         std::array<std::byte, 512> buf{};
         auto rd = sock.read(buf.data(), buf.size());
@@ -215,11 +204,11 @@ int main()
     // sleep(3); // Wait for py test thing to start
     // TcpSocket sock{};
     // sock.connect("10.0.0.1", 8090);
-
+    //
     // while (true) {
-    //     std::array<char, 100> buf{};
+    //     std::array<std::byte, 100> buf{};
     //     std::memset(buf.data(), 'c', buf.size());
-    //     auto wr = sock.write(buf.data(), buf.size());
+    //     auto wr = sock.write(buf);
     //     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     // }
 

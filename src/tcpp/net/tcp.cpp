@@ -19,8 +19,8 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
                                         buf.size() - static_cast<std::size_t>(rd_offset) } };
 
         rd_offset += static_cast<std::ptrdiff_t>(tcph.data_off() * 4);
-        const Quad quad{ .src_addr = iph.source_addr(), .src_port = tcph.source_port(), .dst_addr = iph.dest_addr(),
-                         .dst_port = tcph.dest_port() };
+        const Quad quad{ .src_addr = iph.dest_addr(), .src_port = tcph.dest_port(), .dst_addr = iph.source_addr(),
+                         .dst_port = tcph.source_port() };
 
 
         if (auto eiter = established_connections_.find(quad); eiter != established_connections_.end()) {
@@ -32,7 +32,7 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
                 std::println("DELETED CONNECTION");
                 established_connections_.erase(eiter);
             }
-        } else if (bound_.contains(quad.dst_port)) {
+        } else if (bound_.contains(quad.src_port)) {
             if (auto riter = syn_recv_connections_.find(quad); riter != syn_recv_connections_.end()) {
                 auto &conn = riter->second;
                 conn->on_packet(tcph, {}); // ACK for SYNACK cannot contain data
@@ -42,7 +42,7 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
                 syn_recv_connections_.erase(riter);
 
                 established_connections_.emplace(quad, std::move(conn_ptr));
-                bound_.find(quad.dst_port)->second.push_back(quad);
+                bound_.find(quad.src_port)->second.push_back(quad);
                 accept_var_.notify_all();
             } else {
                 auto [conn_iter, inserted] = syn_recv_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_, std::make_unique<Clock>()));
@@ -110,7 +110,7 @@ Quad Tcp::connect(const std::uint32_t daddr, const std::uint16_t dport)
     std::uniform_int_distribution<std::uint16_t> dist(1024, std::numeric_limits<std::uint16_t>::max());
     const auto port = static_cast<std::uint16_t>(dist(gen));
 
-    Quad quad{ .src_addr = daddr, .src_port = dport, .dst_addr = s_addr, .dst_port = port };
+    Quad quad{ .src_addr = s_addr, .src_port = port, .dst_addr = daddr, .dst_port = dport };
 
     auto [iter, inserted] = established_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_, std::make_unique<Clock>()));
     assert(inserted);

@@ -26,7 +26,6 @@ IpHeaderView::IpHeaderView(const std::span<const std::byte> bytes)
     return std::to_integer<std::uint8_t>(bytes_[IPV4H_IHL_OFFSET]) & 0x0F;// NOLINT
 }
 
-// TODO: Make it work propely
 std::uint8_t IpHeaderView::type_of_service() const
 {
     return std::to_integer<std::uint8_t>(bytes_[IPV4H_TYPE_OF_SERVICE_OFFSET]);

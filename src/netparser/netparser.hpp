@@ -83,8 +83,6 @@ private:
 
 public:
     explicit IpHeaderView(const std::span<const std::byte> bytes);
-    // TOOD: all constructors/desctructors
-    // TODO: ONLY IMPL WHAT I NEED FOR TCPP
 
     [[nodiscard]] std::uint8_t version() const;
     [[nodiscard]] std::uint8_t ihl() const;
