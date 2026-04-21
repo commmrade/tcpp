@@ -240,7 +240,6 @@ private:
     std::uint32_t right_wnd_edge_{};
     Buffer recv_buf_;// First element is SND.UNA, last is SND.UNA + SND.WND
 
-    // TODO: state should kinda  lool like this
     TcpState state_{};
 
     // My MSS (what this host can send)
@@ -248,7 +247,7 @@ private:
     // Their MSS (what that host can send
     std::uint16_t recv_mss_{ RECEIVER_DEF_MSS };
     // Buffers and stuff
-    bool should_send_fin_{ false };// TODO: Get rid of this. This should be sent after all data in buffers is sent
+    bool should_send_fin_{ false }; // This won't be really used once I have segmentation
     bool is_finished_{ false };
 
     // Timer things (all in MS) ----

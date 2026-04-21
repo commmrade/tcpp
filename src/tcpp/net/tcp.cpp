@@ -12,8 +12,6 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
         std::span<const std::byte>{ buf.data(), buf.size() - static_cast<std::size_t>(rd_offset) } };
     rd_offset += static_cast<std::ptrdiff_t>(iph.ihl() * 4);
     if (iph.protocol() == IPPROTO_TCP) {// NOLINT
-        // TODO: calculate ipv4h and tcph proper
-
         const netparser::TcpHeaderView tcph{
             std::span<const std::byte>{ std::next(buf.data(), rd_offset),
                                         buf.size() - static_cast<std::size_t>(rd_offset) } };

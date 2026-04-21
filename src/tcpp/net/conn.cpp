@@ -392,7 +392,7 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
             // 3 way handshake is done at this point
             conn_var_.notify_all();
         } else {
-            // TODO: how to handle this in terms of *conn_var_*?
+            // TODO: how to handle this in terms of *conn_var_*? Simultaneous open
             state_ = TcpState::SYN_RCVD;// Sim. open things
 
             tcph_.ack(true);
@@ -442,7 +442,6 @@ bool TcpConnection::segment_arrived_other(const netparser::TcpHeaderView &tcph,
     const auto payload_size = payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
     if (payload_size > 0) { if (!on_data(tcph, payload)) { return false; } }
 
-    // TODO: Check FIN bit
     if (tcph.fin()) { if (!on_fin()) { return false; } }// NOLINT
 
     return true;
@@ -584,10 +583,7 @@ ssize_t TcpConnection::send(const std::uint32_t seqn_from, const std::size_t max
         throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno)));// NOLINT
     }
     assert(static_cast<std::size_t>(written) == offset);
-    // i think it should be ok, if fails, then i have to rewrite "snd.nxt +" logic
 
-    // Measure once per RTT. // TODO: factor out in a separate function
-    // If not measuring currently
     const auto data_size = payload.size() + (tcph_.fin() ? 1 : 0) + (tcph_.syn() ? 1 : 0);
     if (data_size > 0) {
         const auto time_now = clock_->now();
@@ -618,7 +614,6 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
     init_headers(iph.dest_addr(), iph.source_addr(), tcph.dest_port(), tcph.source_port(), 0);
 
     // 3.10.7.2. LISTEN STATE
-    // First, check for a RST: (TODO: Make RST work)
     if (tcph.rst()) {
         // RST should be ignored at this point, since connection doesn't even exist yet. So this RST is a creepy one :/
         return;
@@ -740,7 +735,6 @@ void TcpConnection::update_timers()
 
 void TcpConnection::shutdown(ShutdownType sht)
 {
-    // TODO: It should buffer FIN at the end of send buffer
     if (sht == ShutdownType::WRITE) { should_send_fin_ = true; } else {
         throw std::runtime_error("This shutdown type is not impl");
     }
@@ -748,7 +742,6 @@ void TcpConnection::shutdown(ShutdownType sht)
 
 void TcpConnection::close()
 {
-    // TODO: it should buffer FIN
     should_send_fin_ = true;
 }
 
