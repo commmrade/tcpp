@@ -55,17 +55,27 @@ bool TcpConnection::on_rst(const netparser::TcpHeaderView &tcph)
     // then TCP endpoints MUST reset the connection in the manner prescribed below according to the connection state
     switch (state_) {
     case TcpState::SYN_RCVD: {
-        // TODO: how to handle?
+        // This should be returned to LISTEN state, which is basically CLOSED. Then when a packet comes it is gonna just create a new conn.
+        state_ = TcpState::CLOSED;
+
         // If the connection was initiated with a passive OPEN,
         // then return this connection to the LISTEN state and return.
         // Otherwise, handle per the directions for synchronized states below.
+        break;
+    }
+    case TcpState::SYN_SENT: {
+        // This should signal "connection refused" to the user.
+
+        // TODO: signal state, impl. errno variable
+        state_ = TcpState::CLOSED;
         break;
     }
     case TcpState::ESTAB:
     case TcpState::FIN_WAIT_1:
     case TcpState::FIN_WAIT_2:
     case TcpState::CLOSE_WAIT:
-        // TODO: any outstanding RECEIVEs and SEND should receive "reset" responses. All segment queues should be flushed. Users should also receive an unsolicited general "connection reset" signal
+        // TODO: signal "connection reset" errno
+
         state_ = TcpState::CLOSED;
         break;
     case TcpState::CLOSING:
@@ -82,6 +92,35 @@ bool TcpConnection::on_rst(const netparser::TcpHeaderView &tcph)
 bool TcpConnection::on_syn(const netparser::TcpHeaderView &tcph)
 {
     // TODO: Challenge ACK in synchronized states <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
+
+    switch (state_) {
+        case TcpState::SYN_RCVD: {
+            // Return to LISTEn and return from processing
+            state_ = TcpState::CLOSED;
+
+            return false; // Signal that we shall return.
+        }
+        case TcpState::ESTAB:
+        case TcpState::FIN_WAIT_1:
+        case TcpState::FIN_WAIT_2:
+        case TcpState::CLOSE_WAIT:
+        case TcpState::CLOSING:
+        case TcpState::LAST_ACK:
+        case TcpState::TIME_WAIT: {
+            // Since we follow RFC 793 in this case, not RFC 5961
+            // We shall send a RST
+            // In RFC 5961 it is told to send a "challenge ACK".
+
+            // This should only be done if SEGMENT is in window, but if it wasn't in window, it would have never gotten here because of "SEQN check".
+            tcph_.rst(true);
+            send(send_.nxt(), 0);
+            state_ = TcpState::CLOSED;
+
+            // TODO: "connection reset" error errno
+
+            return false; // Signal that we should return, then delete TCB.
+        }
+    }
     return true;
 }
 
