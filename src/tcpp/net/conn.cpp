@@ -91,8 +91,6 @@ bool TcpConnection::on_rst(const netparser::TcpHeaderView &tcph)
 
 bool TcpConnection::on_syn(const netparser::TcpHeaderView &tcph)
 {
-    // TODO: Challenge ACK in synchronized states <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
-
     switch (state_) {
         case TcpState::SYN_RCVD: {
             // Return to LISTEn and return from processing
@@ -119,6 +117,10 @@ bool TcpConnection::on_syn(const netparser::TcpHeaderView &tcph)
             // TODO: "connection reset" error errno
 
             return false; // Signal that we should return, then delete TCB.
+        }
+        default: {
+            // Just ignore
+            break;
         }
     }
     return true;
@@ -152,8 +154,6 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
     case TcpState::CLOSE_WAIT:
     case TcpState::CLOSING:
     case TcpState::ESTAB: {
-        // TODO: this handling is used for other states besides ESTABLISHED, like FIN_WAIT_1 and FIN_WAIT_2, CLOSING
-        // TODO: HANDLE ACK FOR SYn/FIN
         if (tcph.seqn() == recv_.nxt() - 1 && recv_.wnd()== 0) {
             // It is a window probe probably (at least Linux Net. Stack one)
             tcph_.ack(true);
@@ -195,6 +195,11 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
         state_ = TcpState::CLOSED;
         break;
     }
+    case TcpState::TIME_WAIT: {
+        // The only thing that can arrive is retr. of remote FIN
+        // ACK it and restart 2 MSL timeout
+        break;
+    }
     default:
         break;// TODO
     }
@@ -211,7 +216,7 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
     case TcpState::FIN_WAIT_2: {
         // if the retrans. queue is empty, then closing is done
         if (send_buf_.empty()) {
-            // acknowledge user close
+            // acknowledge user close, but do not close conn.
         }
         break;
     }
