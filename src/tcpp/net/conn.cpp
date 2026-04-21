@@ -265,8 +265,6 @@ void TcpConnection::update_send_window()
 
             r_timer_.stop(); // Retrans. timer should be suspended when ZWP is running
             z_timer_.start(clock_->now(), rtt_measurement_.rto(), seq_num, 1);
-
-            // TODO: do i really need old_wnd_size condition?
         } else if (send_.wnd() > 0 && z_timer_.is_armed()) {
             z_timer_.stop();
 
@@ -339,7 +337,7 @@ bool TcpConnection::on_fin()
         // WE got a FIN from the other side, now switch to time_wait
         state_ = TcpState::TIME_WAIT;
         // TODO: start wait timer and then close
-        // But for now, just close at once
+
         state_ = TcpState::CLOSED;
         break;
     }
@@ -362,13 +360,19 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
         }
     }
     if (tcph.rst()) {
-        // TODO: IDC about it right now
-        // implementation that supports the mitigation described in RFC 5961 SHOULD first check that
-        // the sequence number exactly matches RCV.NXT prior to executing the action in the next paragraph
+        // ACK is acceptable at this point
+        // Notice: If we are ever to follow RFC 5961, then it is all different
 
-        //If the ACK was acceptable, then signal to the user
-        // "error: connection reset", drop the segment, enter CLOSED state, delete TCB, and return.
-        // Otherwise (no ACK), drop the segment and return
+        if (tcph.ack()) {
+            // If ACK: Drop the segment, return, delete TCB
+
+            // TODO: Signal "error: conn. reset"
+            state_ = TcpState::CLOSED;
+            return false;
+        } else {
+            // Else: drop the segment and return
+            return false;
+        }
     }
 
     // This step should be reached only if the ACK is ok, or there is no ACK, and the segment did not contain a RST.
