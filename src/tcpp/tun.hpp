@@ -23,13 +23,14 @@ class IOInterface
 {
 public:
     virtual ~IOInterface() = default;
-    virtual ssize_t write(const void* buf, const std::size_t buf_len) = 0;
+    virtual ssize_t write(std::span<const std::byte> payload) = 0;
 };
 
 class Tun final : public IOInterface
 {
 private:
-    int tun_fd{};
+    int tun_fd_{};
+    int tun_sock_fd_{};
     std::string dev_name_;
 public:
     explicit Tun(std::string_view dev_name);
@@ -42,18 +43,18 @@ public:
 
     Tun(Tun&& rhs) noexcept
     {
-        std::swap(tun_fd, rhs.tun_fd);
+        std::swap(tun_fd_, rhs.tun_fd_);
         std::swap(dev_name_, rhs.dev_name_);
     }
 
     Tun& operator=(Tun&& rhs) noexcept
     {
-        std::swap(tun_fd, rhs.tun_fd);
+        std::swap(tun_fd_, rhs.tun_fd_);
         std::swap(dev_name_, rhs.dev_name_);
         return *this;
     }
 
-    int raw_fd() const { return tun_fd; }
+    int raw_fd() const { return tun_fd_; }
 
     void set_addr(const std::string_view addr);
 
@@ -63,14 +64,14 @@ public:
 
     void open(std::string_view dev_name);
 
-    void close() { ::close(tun_fd); }
+    void close();
 
-    ssize_t write(const void *buf, const std::size_t buf_len) override // NOLINT
+    ssize_t write(std::span<const std::byte> payload) override // NOLINT
     {
-        return ::write(tun_fd, buf, buf_len);
+        return ::write(tun_fd_, static_cast<const void*>(payload.data()), payload.size());
     }
 
-    [[nodiscard]] ssize_t read(void *buf, const std::size_t buf_len) const { return ::read(tun_fd, buf, buf_len); }
+    [[nodiscard]] ssize_t read(void *buf, const std::size_t buf_len) const { return ::read(tun_fd_, buf, buf_len); }
 
     template<typename T, std::size_t N> [[nodiscard]] ssize_t read(std::array<T, N> &buf) const
     {

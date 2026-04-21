@@ -12,15 +12,13 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
         std::span<const std::byte>{ buf.data(), buf.size() - static_cast<std::size_t>(rd_offset) } };
     rd_offset += static_cast<std::ptrdiff_t>(iph.ihl() * 4);
     if (iph.protocol() == IPPROTO_TCP) {// NOLINT
-        // TODO: calculate ipv4h and tcph proper
-
         const netparser::TcpHeaderView tcph{
             std::span<const std::byte>{ std::next(buf.data(), rd_offset),
                                         buf.size() - static_cast<std::size_t>(rd_offset) } };
 
         rd_offset += static_cast<std::ptrdiff_t>(tcph.data_off() * 4);
-        const Quad quad{ .src_addr = iph.source_addr(), .src_port = tcph.source_port(), .dst_addr = iph.dest_addr(),
-                         .dst_port = tcph.dest_port() };
+        const Quad quad{ .src_addr = iph.dest_addr(), .src_port = tcph.dest_port(), .dst_addr = iph.source_addr(),
+                         .dst_port = tcph.source_port() };
 
 
         if (auto eiter = established_connections_.find(quad); eiter != established_connections_.end()) {
@@ -32,21 +30,22 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
                 std::println("DELETED CONNECTION");
                 established_connections_.erase(eiter);
             }
-        } else if (bound_.contains(quad.dst_port)) {
+        } else if (bound_.contains(quad.src_port)) {
             if (auto riter = syn_recv_connections_.find(quad); riter != syn_recv_connections_.end()) {
                 auto &conn = riter->second;
-                conn->on_packet(tcph, {});
-                if (conn->get_state() == TcpState::ESTAB) {
-                    // Now its fully estab conn, also check for any states besides "opening" states (is_synchronized)
-                    established_connections_.emplace(quad, std::unique_ptr<TcpConnection>(conn.release()));
-                    syn_recv_connections_.erase(riter);
-                    bound_.find(quad.dst_port)->second.push_back(quad);
-                    accept_var_.notify_all();
-                }
+                conn->on_packet(tcph, {}); // ACK for SYNACK cannot contain data
+                assert(conn->get_state() == TcpState::ESTAB); // It can't really be in other states
+
+                std::unique_ptr<TcpConnection> conn_ptr{conn.release()};
+                syn_recv_connections_.erase(riter);
+
+                established_connections_.emplace(quad, std::move(conn_ptr));
+                bound_.find(quad.src_port)->second.push_back(quad);
+                accept_var_.notify_all();
             } else {
                 auto [conn_iter, inserted] = syn_recv_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_, std::make_unique<Clock>()));
                 assert(inserted);
-                conn_iter->second->accept(iph, tcph);
+                conn_iter->second->open_passive(iph, tcph);
             }
         } else {
             // Send RST
@@ -93,7 +92,6 @@ bool Tcp::has_conn_on_port(const std::uint16_t port) const { return !bound_.find
 Quad Tcp::pop_conn(const std::uint16_t port)
 {
     auto iter = bound_.find(port);
-
     auto quad = iter->second.front();
     iter->second.pop_front();
     return quad;
@@ -110,14 +108,13 @@ Quad Tcp::connect(const std::uint32_t daddr, const std::uint16_t dport)
     std::uniform_int_distribution<std::uint16_t> dist(1024, std::numeric_limits<std::uint16_t>::max());
     const auto port = static_cast<std::uint16_t>(dist(gen));
 
-    // FIXME: Ugly
-    Quad quad{ .src_addr = daddr, .src_port = dport, .dst_addr = s_addr, .dst_port = port };
+    Quad quad{ .src_addr = s_addr, .src_port = port, .dst_addr = daddr, .dst_port = dport };
 
     auto [iter, inserted] = established_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_, std::make_unique<Clock>()));
     assert(inserted);
     auto &conn = iter->second;
 
-    conn->connect(s_addr, port, daddr, dport);
+    conn->open_active(s_addr, port, daddr, dport);
     return quad;
 }
 

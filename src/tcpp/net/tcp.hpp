@@ -41,7 +41,7 @@ private:
     // Accept a SYN packet
     void dispatch_packet(const std::span<const std::byte> buf);
 
-    // A set of ports that are bound and unaccepted conns
+    // A set of ports that are bound and unaccepted conns (that are in "syn_recv_connections_")
     std::unordered_map<std::uint16_t, std::deque<Quad>> bound_;
 
     // Connections that are in SYN_RCVD state

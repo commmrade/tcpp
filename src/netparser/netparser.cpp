@@ -2,6 +2,7 @@
 #include <print>
 #include <iterator>
 #include <cassert>
+#include <spdlog/common.h>
 #include <stdexcept>
 #include <span>
 #include <cstring>
@@ -26,7 +27,6 @@ IpHeaderView::IpHeaderView(const std::span<const std::byte> bytes)
     return std::to_integer<std::uint8_t>(bytes_[IPV4H_IHL_OFFSET]) & 0x0F;// NOLINT
 }
 
-// TODO: Make it work propely
 std::uint8_t IpHeaderView::type_of_service() const
 {
     return std::to_integer<std::uint8_t>(bytes_[IPV4H_TYPE_OF_SERVICE_OFFSET]);
@@ -364,16 +364,23 @@ std::pair<bool, std::size_t> TcpHeaderView::has_option_inner(const TcpOptionKind
                                                     options_size };
 
     std::size_t offset = 0;
-    while (offset < options_bytes.size()) {
-        auto kind_byte = options_bytes[offset];
-        if (static_cast<TcpOptionKind>(kind_byte) == kind) { return { true, offset }; }
+    while (offset < options_bytes.size_bytes()) {
+        const auto kind_byte = options_bytes[offset];
+        const auto kind_type = static_cast<TcpOptionKind>(kind_byte);
 
-        if (static_cast<int>(kind_byte) == 0 || static_cast<int>(kind_byte) == 1) { offset += 1; } else {
-            offset += 1;
-            if (offset >= options_bytes.size()) { break; }
-            std::uint8_t size{};
-            std::memcpy(&size, std::next(options_bytes.data(), static_cast<std::ptrdiff_t>(offset)), sizeof(size));
-            offset += sizeof(size) + (size - sizeof(kind_byte) - sizeof(size));
+        if (kind_type == kind) {
+            return std::pair{true, offset};
+        }
+
+        if (kind_type == TcpOptionKind::NO_OP || kind_type == TcpOptionKind::END_OF_LIST) {
+            offset += 1; // move past this option
+        } else {
+            const auto subsp = options_bytes.subspan(offset);
+            if (subsp.size_bytes() < 2) {
+                break; // Should exit the loop since TCP options are kind of ill-formed
+            }
+            const auto size = static_cast<const std::uint8_t>(subsp[1]);
+            offset += size; // We are at "kind" byte, so to get past current TCP option, we need to increment offset by size
         }
     }
     return { false, 0 };
@@ -453,12 +460,19 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
         }
         case static_cast<std::byte>(TcpOptionKind::END_OF_LIST): {
             // Stop parsing
-            offset = std::numeric_limits<std::size_t>::max();
+            offset = std::numeric_limits<std::size_t>::max(); // Exit the while loop
             break;
         }
         default: {
-            // TODO: skip this based on SIZE field
-            throw std::runtime_error("Not impl option. idk what to do");
+            // At this point offset points to "kind", this kind is likely to be unknown
+            const auto subsp = options_bytes.subspan(offset);
+            if (subsp.size() < 2) { // 1 for "kind", 1 for "size"
+                throw std::runtime_error("Option is weird");
+            }
+
+            const auto size = static_cast<const std::uint8_t>(options_bytes[1]);
+            offset += size; // Skip unknown option
+            // If it is really big, then it will just exit out of the loop
         }
         }
     }

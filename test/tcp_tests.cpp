@@ -277,3 +277,95 @@ TEST(TcpHeaderTest, RoundTripWithOptions) {
     EXPECT_TRUE(view.has_option(netparser::TcpOptionKind::TIMESTAMP));
     EXPECT_TRUE(view.has_option(netparser::TcpOptionKind::WIN_SCALE));
 }
+
+TEST(TcpHeaderTest, UnknownOption) {
+    // Unknown option (kind=0xFD, len=4) preceding MSS — parser must skip it
+    // and correctly parse the following known option.
+    constexpr std::array<std::byte, 32> tcp_with_unknown_then_mss{
+        std::byte{0x00}, std::byte{0x50},
+        std::byte{0x1F}, std::byte{0x90},
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x01},
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x02},
+        std::byte{0x80}, // doff=8 → total header = 32 bytes
+        std::byte{0x02},
+        std::byte{0xFF}, std::byte{0xFF},
+        std::byte{0x00}, std::byte{0x00},
+        std::byte{0x00}, std::byte{0x00},
+        // options: unknown(kind=0xFD, len=4, 2 data bytes) + MSS(1460) + 4x NOP
+        std::byte{0xFD}, std::byte{0x04}, std::byte{0xAB}, std::byte{0xCD},
+        std::byte{0x02}, std::byte{0x04}, std::byte{0x05}, std::byte{0xb4},
+        std::byte{0x01}, std::byte{0x01}, std::byte{0x01}, std::byte{0x01},
+    };
+
+    // TcpHeader parses options eagerly via TcpOptions::parse
+    const netparser::TcpHeaderView view{tcp_with_unknown_then_mss};
+    EXPECT_NO_THROW({
+        const netparser::TcpHeader tcph{view};
+        const auto& opts = tcph.options();
+
+        // MSS after the unknown option must be found
+        EXPECT_TRUE(opts.has_option(netparser::TcpOptionKind::MSS));
+        auto mss = opts.mss();
+        ASSERT_TRUE(mss.has_value());
+        EXPECT_EQ(mss->mss, 1460);
+    });
+
+    // TcpHeaderView lazy parser must also skip the unknown option
+    EXPECT_TRUE(view.has_option(netparser::TcpOptionKind::MSS));
+    auto mss = view.mss();
+    ASSERT_TRUE(mss.has_value());
+    EXPECT_EQ(mss->mss, 1460);
+}
+
+TEST(TcpHeaderTest, UnknownOptionOnly) {
+    // Header with only an unknown option — no known options, no crash.
+    constexpr std::array<std::byte, 28> tcp_unknown_only{
+        std::byte{0x00}, std::byte{0x50},
+        std::byte{0x1F}, std::byte{0x90},
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x01},
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x02},
+        std::byte{0x70}, // doff=7 → total header = 28 bytes
+        std::byte{0x02},
+        std::byte{0xFF}, std::byte{0xFF},
+        std::byte{0x00}, std::byte{0x00},
+        std::byte{0x00}, std::byte{0x00},
+        // options: unknown(kind=0xFD, len=4, 2 data bytes) + 4x NOP
+        std::byte{0xFD}, std::byte{0x04}, std::byte{0xAB}, std::byte{0xCD},
+        std::byte{0x01}, std::byte{0x01}, std::byte{0x01}, std::byte{0x01},
+    };
+
+    const netparser::TcpHeaderView view{tcp_unknown_only};
+    EXPECT_NO_THROW({
+        const netparser::TcpHeader tcph{view};
+        const auto& opts = tcph.options();
+        EXPECT_FALSE(opts.has_option(netparser::TcpOptionKind::MSS));
+        EXPECT_FALSE(opts.has_option(netparser::TcpOptionKind::TIMESTAMP));
+        EXPECT_FALSE(opts.mss().has_value());
+    });
+
+    EXPECT_FALSE(view.has_option(netparser::TcpOptionKind::MSS));
+}
+
+TEST(TcpHeaderTest, TruncatedUnknownOptionThrows) {
+    // Unknown option claims len=6 but only 2 bytes remain after kind+size.
+    // TcpOptions::parse will walk offset past the buffer end — behavior
+    // depends on subspan bounds checking. At minimum it must not silently
+    // corrupt state; ideally it throws.
+    constexpr std::array<std::byte, 24> tcp_truncated_unknown{
+        std::byte{0x00}, std::byte{0x50},
+        std::byte{0x1F}, std::byte{0x90},
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x01},
+        std::byte{0x00}, std::byte{0x00}, std::byte{0x00}, std::byte{0x02},
+        std::byte{0x60}, // doff=6 → total header = 24 bytes → 4 option bytes
+        std::byte{0x02},
+        std::byte{0xFF}, std::byte{0xFF},
+        std::byte{0x00}, std::byte{0x00},
+        std::byte{0x00}, std::byte{0x00},
+        // options: unknown claims len=8 but only 4 bytes available
+        std::byte{0xFD}, std::byte{0x08}, std::byte{0xAB}, std::byte{0xCD},
+    };
+
+    const netparser::TcpHeaderView view{tcp_truncated_unknown};
+    // TcpHeader constructor calls TcpOptions::parse — must not crash, may throw
+    EXPECT_NO_THROW(netparser::TcpHeader{view});
+}

@@ -9,16 +9,16 @@ void RttMeasurement::reset() {
     srtt_ = 0;
 }
 
-void RttMeasurement::start_measure(const std::int64_t now_ms, const std::uint32_t seq_n) {
+void RttMeasurement::start(const std::int64_t now_ms, const std::uint32_t seq_n) {
     if (!send_at_.has_value()) {
         send_seq_at_ = seq_n;
         send_at_ = now_ms;
     }
 }
 
-void RttMeasurement::update(const std::int64_t cur_time, const std::uint32_t ack_n) {
+void RttMeasurement::update(const std::int64_t now_ms, const std::uint32_t ack_n) {
     if (send_at_.has_value() && wrapping_gt(ack_n, send_seq_at_)) {
-        const std::int64_t res = cur_time - send_at_.value();// cur. rtt
+        const std::int64_t res = now_ms - send_at_.value();// cur. rtt
 
         static constexpr std::uint32_t GRAN_MS = 1;
         if (rtt_ms_ == 0) {
@@ -47,13 +47,13 @@ void RttMeasurement::update(const std::int64_t cur_time, const std::uint32_t ack
     }
 }
 
-void Timer::start(const std::uint32_t seq_n,
-    const std::uint32_t data_len,
-    const std::uint32_t rto_ms,
-    const std::int64_t cur_time) {
+void Timer::start(const std::int64_t cur_time,
+        const std::uint32_t rto_ms,
+        const std::uint32_t seq_n,
+        const std::uint32_t data_len) {
     if (!start_time_.has_value()) {
         start_time_.emplace(cur_time);// Start timer
-        expire_at_time_ = cur_time + static_cast<std::int64_t>(rto_ms);// It expires at RTO
+        expire_at_time_.emplace(cur_time + static_cast<std::int64_t>(rto_ms));// It expires at RTO
         start_seq_at_ = seq_n;
         data_length_ = data_len;
         rto_ms_.emplace(rto_ms);
@@ -62,12 +62,14 @@ void Timer::start(const std::uint32_t seq_n,
 
 void Timer::stop() {
     start_time_.reset();
+    expire_at_time_.reset();
 }
 
-bool RetransTimer::update(const std::uint32_t send_nxt,
-    const std::uint32_t ack_n,
+bool RetransTimer::update(
     const std::int64_t cur_time_ms,
-    const std::uint32_t rto_ms) {
+    const std::uint32_t rto_ms,
+    const std::uint32_t send_nxt,
+    const std::uint32_t ack_n) {
     if (start_time_.has_value()) {
         if (ack_n >= send_nxt && is_armed()) {
             std::println("All outstanding data ACKED. Disable timer");
@@ -82,10 +84,10 @@ bool RetransTimer::update(const std::uint32_t send_nxt,
 
             // Restart
             stop();
-            start(ack_n, data_length_, rto_ms, cur_time_ms);
+            start(cur_time_ms, rto_ms, ack_n, data_length_);
         } else {
             // timer is neither updated nor disabled
-            if (cur_time_ms >= expire_at_time_) {
+            if (cur_time_ms >= expire_at_time_.value()) {
                 // handle_timer_retransmit();
                 return true; // should retransmit
             }
@@ -94,7 +96,7 @@ bool RetransTimer::update(const std::uint32_t send_nxt,
     return false;
 }
 
-void RetransTimer::retransmitted(const std::uint32_t send_una, const std::int64_t cur_time) {
+void RetransTimer::retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) {
     // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
     // maximum value discussed in (2.5) above may be used to provide
     // an upper bound to this doubling operation.
@@ -107,13 +109,13 @@ void RetransTimer::retransmitted(const std::uint32_t send_una, const std::int64_
     //  (5.6) Start the retransmission timer, such that it expires after RTO
     //  seconds
     stop();
-    start(send_una, data_length_, rto_ms_.value(), cur_time);
+    start(cur_time, rto_ms_.value(), send_una, data_length_);
 }
 
 bool ZwpTimer::update(const std::int64_t cur_time_ms) {
     if (start_time_.has_value()) {
         // timer is neither updated nor disabled
-        if (cur_time_ms >= expire_at_time_) {
+        if (cur_time_ms >= expire_at_time_.value()) {
             // handle_timer_retransmit();
             return true; // should retransmit
         }
@@ -121,7 +123,7 @@ bool ZwpTimer::update(const std::int64_t cur_time_ms) {
     return false;
 }
 
-void ZwpTimer::retransmitted(const std::uint32_t send_una, const std::int64_t cur_time) {
+void ZwpTimer::retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) {
     // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
     // maximum value discussed in (2.5) above may be used to provide
     // an upper bound to this doubling operation.
@@ -134,13 +136,13 @@ void ZwpTimer::retransmitted(const std::uint32_t send_una, const std::int64_t cu
     //  (5.6) Start the retransmission timer, such that it expires after RTO
     //  seconds
     stop();
-    start(send_una, data_length_, rto_ms_.value(), cur_time);
+    start(cur_time, rto_ms_.value(),  send_una, data_length_);
 }
 
 bool SwsTimer::update(const std::int64_t cur_time_ms) {
     if (start_time_.has_value()) {
         // timer is neither updated nor disabled
-        if (cur_time_ms >= expire_at_time_) {
+        if (cur_time_ms >= expire_at_time_.value()) {
             // handle_timer_retransmit();
             return true; // should retransmit
         }
@@ -148,7 +150,7 @@ bool SwsTimer::update(const std::int64_t cur_time_ms) {
     return false;
 }
 
-void SwsTimer::retransmitted(const std::uint32_t send_una, const std::int64_t cur_time) {
+void SwsTimer::retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) {
     // (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
     // maximum value discussed in (2.5) above may be used to provide
     // an upper bound to this doubling operation.
