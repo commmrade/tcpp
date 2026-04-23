@@ -10,6 +10,8 @@ add_executable(main main.cpp
         clock.hpp
         timer.cpp
         timer.hpp
+        net/buffer.cpp
+        net/buffer.hpp
 )
 
 add_custom_target(setcap
