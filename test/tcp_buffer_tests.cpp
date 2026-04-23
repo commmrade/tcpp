@@ -244,6 +244,17 @@ TEST(TcpBuffer, ConsumeAll)
     EXPECT_TRUE(buf.empty());
 }
 
+TEST(TcpBuffer, ConsumeSYNSegment)
+{
+    TcpBuffer buf;
+    buf.insert(TcpSegment{1000, {}, true, false});
+
+    ASSERT_EQ(buf.size(), 1);
+
+    buf.consume(1001); // SYN seq. num. is 1000
+    EXPECT_TRUE(buf.empty());
+}
+
 TEST(TcpBuffer, ConsumeNone)
 {
     TcpBuffer buf;
