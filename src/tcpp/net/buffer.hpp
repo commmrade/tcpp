@@ -5,9 +5,12 @@
 #ifndef TCPP_BUFFER_HPP
 #define TCPP_BUFFER_HPP
 #include <cassert>
+#include <cstddef>
 #include <list>
 #include <cstdint>
+#include <iostream>
 #include <cstring>
+#include <print>
 #include <vector>
 #include <span>
 
@@ -126,6 +129,7 @@ public:
                 const auto to_idx = to_seq_n - old_iter->seq_start();
                 const auto payload_size = old_iter->payload_size();
 
+                // FIXME: I think handling SYN/FIN requires special care, what if to_seq_n points to a no-data segment, but with SYN/FIN
                 const auto to_erase_n = std::min<std::size_t>(to_idx, payload_size); // In case this segment contains SYN/FIN
                 old_iter->erase(to_erase_n);
                 old_iter->set_seq_start(to_seq_n);
@@ -136,30 +140,54 @@ public:
     std::vector<std::byte> read(const std::uint32_t seq_n, const std::size_t len)
     {
         std::vector<std::byte> res;
+        res.reserve(len);
 
         auto iter = segs_.cbegin();
 
-        auto read_total = len;
-        auto next_seq = seq_n;
-        while (iter != segs_.cend()) {
-            if (next_seq >= iter->seq_start() && next_seq < iter->seq_start() + iter->payload_size() && read_total > 0) {
-                const auto idx = seq_n - iter->seq_start();
-                const auto to_read_n = std::min(len, iter->payload_size() - idx);
-                res.resize(to_read_n);
+        auto to_read = len;
+        auto seq_read = seq_n;
+        while (iter != segs_.cend() && to_read > 0) {
+            // FIXME: also make sure next segment starts at expected SEQN in case of out of order stuff
+            std::println(std::cerr, "seq_read {}, seq start: {}. seq + pl {}", seq_read, iter->seq_start(), iter->seq_start() + iter->payload_size());
+            if (seq_read >= iter->seq_start() && seq_read < iter->seq_start() + iter->payload_size()) {
+                const auto idx = seq_read - iter->seq_start();
+                const auto read_n = std::min(to_read, iter->payload_size() - idx);
 
-                const auto payload = iter->payload();
+                const auto pload = iter->payload();
+                const auto from = pload.begin() + idx;
+                const auto to = from + static_cast<std::ptrdiff_t>(read_n);
+                std::copy(from, to, std::back_inserter(res));
 
-                const auto from = payload.begin() + idx;
-                const auto to = from + static_cast<std::ptrdiff_t>(to_read_n);
-                std::copy(from, to, res.begin());
+                to_read -= read_n;
+                seq_read += read_n;
 
-                read_total -= to_read_n;
-                next_seq += to_read_n;
-                // MAKE IT WORK, ReadTwoSegments fails
+                std::println(std::cerr, "to read: {}, seq read: {}", to_read, seq_read);
             }
-            // TODO: Make it stop reading after its done reading several segments
+
             ++iter;
         }
+
+        // auto read_total = len;
+        // auto next_seq = seq_n;
+        // while (iter != segs_.cend()) {
+        //     if (next_seq >= iter->seq_start() && next_seq < iter->seq_start() + iter->payload_size() && read_total > 0) {
+        //         const auto idx = seq_n - iter->seq_start();
+        //         const auto to_read_n = std::min(len, iter->payload_size() - idx);
+        //         res.resize(to_read_n);
+
+        //         const auto payload = iter->payload();
+
+        //         const auto from = payload.begin() + idx;
+        //         const auto to = from + static_cast<std::ptrdiff_t>(to_read_n);
+        //         std::copy(from, to, res.begin());
+
+        //         read_total -= to_read_n;
+        //         next_seq += to_read_n;
+        //         // MAKE IT WORK, ReadTwoSegments fails
+        //     }
+        //     // TODO: Make it stop reading after its done reading several segments
+        //     ++iter;
+        // }
 
         return res;
     }

@@ -319,6 +319,20 @@ TEST(TcpBuffer, ReadTwoSegments)
     ASSERT_EQ(data.size(), 200);
 }
 
+TEST(TcpBuffer, ReadTwoAndHalfSegments)
+{
+    TcpBuffer buf;
+    auto p = make_payload(100, std::byte{0x42});
+    buf.insert(TcpSegment{1000, p});
+    buf.insert(TcpSegment{1100, p});
+    buf.insert(TcpSegment{1200, p});
+
+    ASSERT_EQ(buf.size(), 3);
+
+    auto data = buf.read(1000, 250);
+    ASSERT_EQ(data.size(), 250);
+}
+
 TEST(TcpBuffer, ReadFromMidSegment)
 {
     TcpBuffer buf;
