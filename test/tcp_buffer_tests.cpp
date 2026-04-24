@@ -311,7 +311,7 @@ TEST(TcpBuffer, ReadExactSegment)
     auto p = make_payload(100, std::byte{0x42});
     buf.insert(TcpSegment{1000, p});
 
-    auto data = buf.read(1000, 100);
+    auto data = buf.read(100);
     ASSERT_EQ(data.size(), 100u);
     for (auto b : data)
         EXPECT_EQ(b, std::byte{0x42});
@@ -326,7 +326,7 @@ TEST(TcpBuffer, ReadTwoSegments)
 
     ASSERT_EQ(buf.size(), 2);
 
-    auto data = buf.read(1000, 200);
+    auto data = buf.read(200);
     ASSERT_EQ(data.size(), 200);
 }
 
@@ -340,7 +340,7 @@ TEST(TcpBuffer, ReadTwoAndHalfSegments)
 
     ASSERT_EQ(buf.size(), 3);
 
-    auto data = buf.read(1000, 250);
+    auto data = buf.read(250);
     ASSERT_EQ(data.size(), 250);
 }
 
@@ -350,38 +350,68 @@ TEST(TcpBuffer, ReadFromMidSegment)
     auto p = make_payload(100, std::byte{0xFF});
     buf.insert(TcpSegment{1000, p});
 
-    // seq_n=1050 попадает внутрь сегмента [1000, 1100)
-    auto data = buf.read(1050, 50);
+    auto data = buf.read(50);
     EXPECT_FALSE(data.empty());
-}
-
-TEST(TcpBuffer, ReadMissReturnsEmpty)
-{
-    TcpBuffer buf;
-    auto p = make_payload(100);
-    buf.insert(TcpSegment{1000, p});
-
-    auto data = buf.read(2000, 100); // нет такого сегмента
-    EXPECT_TRUE(data.empty());
-}
-
-TEST(TcpBuffer, ReadFromSecondSegment)
-{
-    TcpBuffer buf;
-    auto p1 = make_payload(100, std::byte{0x01});
-    auto p2 = make_payload(100, std::byte{0x02});
-    buf.insert(TcpSegment{1000, p1});
-    buf.insert(TcpSegment{1100, p2});
-
-    auto data = buf.read(1100, 100);
-    ASSERT_EQ(data.size(), 100u);
-    for (auto b : data)
-        EXPECT_EQ(b, std::byte{0x02});
 }
 
 TEST(TcpBuffer, ReadEmptyBuffer)
 {
     TcpBuffer buf;
-    auto data = buf.read(0, 100);
+    auto data = buf.read(100);
     EXPECT_TRUE(data.empty());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TcpBuffer — append
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST(TcpBuffer, AppendLessThanMss)
+{
+    TcpBuffer buf;
+
+    auto p = make_payload(50);
+    auto big_p = make_payload(1000);
+    buf.insert(TcpSegment{1000, p});
+
+
+    constexpr auto MSS = 536;
+    if (buf.back().size_in_seq() < 536) {
+        const auto space_left = MSS - buf.back().size_in_seq();
+        const auto to_write_n = std::min(space_left, big_p.size());
+
+        buf.append_back(std::span{big_p.data(), to_write_n});
+        ASSERT_EQ(buf.size(), 1);
+
+        auto iter = buf.inner().cbegin();
+        EXPECT_EQ(iter->size_in_seq(), 536);
+        EXPECT_EQ(iter->payload_size(), 536);
+    }
+}
+
+TEST(TcpBuffer, AppendFailsWhenEmpty)
+{
+    TcpBuffer buf;
+    const auto pl = make_payload(100);
+    EXPECT_ANY_THROW(buf.append_back(pl));
+}
+
+// ========
+// TcpBuffer - Flags
+// ========
+
+TEST(TcpBuffer, EnableDisableFin)
+{
+    const auto pl = make_payload(100);
+
+    TcpSegment seg{1000, pl};
+    ASSERT_EQ(seg.seq_end(), 1100);
+    seg.set_fin(true);
+    ASSERT_EQ(seg.seq_end(), 1101);
+    seg.set_fin(true);
+    ASSERT_EQ(seg.seq_end(), 1101);
+
+    seg.set_fin(false);
+    ASSERT_EQ(seg.seq_end(), 1100);
+    seg.set_fin(false);
+    ASSERT_EQ(seg.seq_end(), 1100);
 }

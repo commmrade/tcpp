@@ -26,15 +26,43 @@ public:
         end_seq_n_ = seq_n_ + static_cast<std::uint32_t>(payload.size()) + (fin ? 1 : 0) + (syn ? 1 : 0);
     }
 
+    void set_syn(bool val)
+    {
+        if (!syn_ && val) {
+            ++end_seq_n_;
+        } else if (syn_ && !val) {
+            --end_seq_n_;
+        }
+
+        syn_ = val;
+    }
+
+    void set_fin(bool val)
+    {
+        if (!fin_ && val) {
+            ++end_seq_n_;
+        } else if (fin_ && !val) {
+            --end_seq_n_;
+        }
+
+        fin_ = val;
+    }
+
+    void append(std::span<const std::byte> payload)
+    {
+        payload_.append_range(payload);
+        end_seq_n_ += payload.size();
+    }
     void erase(const std::size_t range_to)
     {
         assert(range_to <= payload_.size());
         payload_.erase(payload_.begin(), payload_.begin() + static_cast<std::ptrdiff_t>(range_to));
+        end_seq_n_ -= range_to;
     }
 
     std::size_t size_in_seq() const
     {
-        return payload_.size() + (syn_ ? 1 : 0) + (fin_ ? 1 : 0);
+        return end_seq_n_ - seq_n_;
     }
     std::size_t payload_size() const
     {
@@ -73,6 +101,9 @@ public:
         return {payload_};
     }
 private:
+
+
+
     bool ack_{};
     bool rst_{};
     bool syn_{};
@@ -88,84 +119,19 @@ private:
 
 class TcpBuffer
 {
+    // TODO: I would kinda like to make it a base class and then derive TcpReceiveBuf and TcpSendBuf, because each have diff. logic in some places
 public:
-    void insert(const TcpSegment& seg)
-    {
-        // 1. Iterate through segments and compare sequence numbers
-        // 2. If it is THE segment, append data
 
-        // TODO: Make sure seg.seq_end is < next_iter->seq_start
-        const auto seq_n = seg.seq_start();
-        auto iter = segs_.begin();
-        while (iter != segs_.end()) {
-            // It is usually the case for Receiver Queue
-            if (seq_n < iter->seq_start()) {
-                // Inserts before
-                segs_.insert(iter, seg);
-                break;
-            } else if (seq_n == iter->seq_start()) {
-                return; // Such segment already exists, wtf?
-            }
-            ++iter;
-        }
+    // Appends bytes to the last node
+    void append_back(std::span<const std::byte> payload);
 
-        if (iter == segs_.end()) { // We did not find a place for this segment, which means it is in-order
-            segs_.push_back(seg);
-            // Insert a new one
-        }
-    }
+    // Inserts a new node
+    // TODO: Out-of-order inserts
+    void insert(const TcpSegment& seg);
+    void consume(const std::uint32_t range_to);
 
-    void consume(const std::uint32_t to_seq_n)
-    {
-        auto iter = segs_.begin();
-        while (iter != segs_.end()) {
-            auto old_iter = iter;
-            ++iter;
-
-            if (to_seq_n >= old_iter->seq_end()) {
-                segs_.erase(old_iter);
-            } else if (to_seq_n >= old_iter->seq_start() && to_seq_n < old_iter->seq_end()) {
-                // Erase inside a segment
-                const auto to_idx = to_seq_n - old_iter->seq_start();
-                const auto payload_size = old_iter->payload_size();
-                // Since we use payload_size() special handling for SYN/FIN is not needed, if this is a data segment,
-                // to_erase_n will be empty, so all good.
-
-                // FIXME: I think handling SYN/FIN requires special care, what if to_seq_n points to a no-data segment, but with SYN/FIN
-                const auto to_erase_n = std::min<std::size_t>(to_idx, payload_size); // In case this segment contains SYN/FIN
-                old_iter->erase(to_erase_n);
-                old_iter->set_seq_start(to_seq_n);
-            }
-        }
-    }
-
-    std::vector<std::byte> read(const std::uint32_t seq_n, const std::size_t len)
-    {
-        std::vector<std::byte> res;
-        res.reserve(len);
-
-        auto iter = segs_.cbegin();
-
-        auto to_read = len;
-        auto seq_read = seq_n;
-        while (iter != segs_.cend() && to_read > 0) {
-            if (seq_read >= iter->seq_start() && seq_read < iter->seq_start() + iter->payload_size()) {
-                const auto idx = seq_read - iter->seq_start();
-                const auto read_n = std::min(to_read, iter->payload_size() - idx);
-
-                const auto pload = iter->payload();
-                const auto from = pload.begin() + idx;
-                const auto to = from + static_cast<std::ptrdiff_t>(read_n);
-                std::copy(from, to, std::back_inserter(res));
-
-                to_read -= read_n;
-                seq_read += read_n;
-            }
-            // FIXME: Does SYN/FIN no data segments require special handling?
-            ++iter;
-        }
-        return res;
-    }
+    // May be used for Receive QUEUE
+    std::vector<std::byte> read(const std::size_t len);
 
     std::size_t size() const
     {
@@ -176,10 +142,16 @@ public:
         return size() == 0;
     }
 
-    TcpSegment front()
+    // I guess this is used for sending, but what if we are sending several segments in 1 RTT, then I need to access nodes after front() - TODO: how?
+    const TcpSegment& front() const
     {
         assert(!empty());
         return segs_.front();
+    }
+    const TcpSegment& back() const
+    {
+        assert(!empty());
+        return segs_.back();
     }
 
     const std::list<TcpSegment>& inner() const
@@ -188,7 +160,6 @@ public:
     }
 private:
     std::list<TcpSegment> segs_;
-    std::uint32_t mss_{536};
 };
 
 
