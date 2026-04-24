@@ -61,6 +61,13 @@ void TcpBuffer::consume(const std::uint32_t range_to) {
     }
 }
 
+const TcpSegment & TcpBuffer::at(const std::ptrdiff_t idx) const {
+    assert(static_cast<std::size_t>(idx) < segs_.size());
+
+    auto iter = segs_.cbegin();
+    return *std::next(iter, static_cast<std::ptrdiff_t>(idx));
+}
+
 std::vector<std::byte> TcpBuffer::read(const std::size_t len) {
     std::vector<std::byte> res;
     if (empty()) {

@@ -130,6 +130,8 @@ public:
     void insert(const TcpSegment& seg);
     void consume(const std::uint32_t range_to);
 
+    const TcpSegment& at(const std::ptrdiff_t idx) const;
+
     // May be used for Receive QUEUE
     std::vector<std::byte> read(const std::size_t len);
 
