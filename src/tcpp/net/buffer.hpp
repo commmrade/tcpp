@@ -26,6 +26,11 @@ public:
         end_seq_n_ = seq_n_ + static_cast<std::uint32_t>(payload.size()) + (fin ? 1 : 0) + (syn ? 1 : 0);
     }
 
+    void set_ack(bool val)
+    {
+        ack_ = val;
+    }
+
     void set_syn(bool val)
     {
         if (!syn_ && val) {
