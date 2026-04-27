@@ -23,14 +23,31 @@ public:
         fin_ = fin;
 
         seq_n_ = seq_start;
-        end_seq_n_ = seq_n_ + static_cast<std::uint32_t>(payload.size()) + (fin ? 1 : 0) + (syn ? 1 : 0);
+        end_seq_n_ = seq_n_ + static_cast<std::uint32_t>(payload.size()) + (fin_ ? 1 : 0) + (syn_ ? 1 : 0);
     }
 
+    bool ack() const
+    {
+        return ack_;
+    }
     void set_ack(bool val)
     {
         ack_ = val;
     }
 
+    std::uint32_t ackn() const
+    {
+        return ack_n_;
+    }
+    void set_ackn(const std::uint32_t seq)
+    {
+        ack_n_ = seq;
+    }
+
+    bool syn() const
+    {
+        return syn_;
+    }
     void set_syn(bool val)
     {
         if (!syn_ && val) {
@@ -42,6 +59,10 @@ public:
         syn_ = val;
     }
 
+    bool fin() const
+    {
+        return fin_;
+    }
     void set_fin(bool val)
     {
         if (!fin_ && val) {
@@ -51,6 +72,15 @@ public:
         }
 
         fin_ = val;
+    }
+
+    bool rst() const
+    {
+        return rst_;
+    }
+    void set_rst(bool val)
+    {
+        rst_ = val;
     }
 
     void append(std::span<const std::byte> payload)
@@ -92,15 +122,6 @@ public:
         return end_seq_n_;
     }
 
-    bool syn() const
-    {
-        return syn_;
-    }
-    bool fin() const
-    {
-        return fin_;
-    }
-
     std::span<const std::byte> payload() const
     {
         return {payload_};
@@ -132,30 +153,49 @@ public:
 
     // Inserts a new node
     // TODO: Out-of-order inserts
-    void insert(const TcpSegment& seg);
-    void consume(const std::uint32_t range_to);
+    bool insert(const TcpSegment& seg);
+    std::size_t consume(const std::uint32_t range_to);
 
-    const TcpSegment& at(const std::ptrdiff_t idx) const;
+    TcpSegment& at(const std::ptrdiff_t idx);
+    TcpSegment& find(const std::uint32_t seq);
 
-    // May be used for Receive QUEUE
     std::vector<std::byte> read(const std::size_t len);
+    std::vector<std::byte> read(const std::uint32_t seq_n, const std::size_t len);
 
-    std::size_t size() const
+    std::size_t size_segs() const
     {
         return segs_.size();
     }
+    std::size_t size_bytes() const
+    {
+        std::size_t res = 0;
+        auto iter = segs_.cbegin();
+        for (; iter != segs_.end(); ++iter) {
+            res += iter->size_in_seq();
+        }
+        return res;
+    }
+    std::size_t size_payload_bytes()
+    {
+        std::size_t res = 0;
+        auto iter = segs_.cbegin();
+        for (; iter != segs_.cend(); ++iter) {
+            res += iter->payload_size();
+        }
+        return res;
+    }
     bool empty() const
     {
-        return size() == 0;
+        return size_segs() == 0;
     }
 
     // I guess this is used for sending, but what if we are sending several segments in 1 RTT, then I need to access nodes after front() - TODO: how?
-    const TcpSegment& front() const
+    TcpSegment& front()
     {
         assert(!empty());
         return segs_.front();
     }
-    const TcpSegment& back() const
+    TcpSegment& back()
     {
         assert(!empty());
         return segs_.back();
