@@ -520,13 +520,14 @@ bool TcpConnection::handle_send()
     // TODO: Not sure about in_flight
     const auto in_flight_n = send_.nxt() - send_.una();
     const auto send_buf_payload_bytes = send_buf_.size_payload_bytes();
-    assert(in_flight_n <= send_buf_.size_bytes());
 
-    // This condition trues when SYN is in flight, but I guess it is ok?
+    // This condition trues when SYN is in flight, but I guess it is ok, since segments shouldn't be sent when SYN is not acked
+    // As for FIN, there shouldn't be data to send after FIN, so it is also ok, although fragile
     if (in_flight_n > send_buf_payload_bytes) {
         return true;
     }
 
+    // At this point, send_buf.payload_size() == send_buf.seq_space_size()
     const auto unsent = static_cast<std::uint32_t>(send_buf_payload_bytes) - in_flight_n;
     if (unsent > 0 && send_.wnd() > 0) {
         // Sender SWS
@@ -610,13 +611,10 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size)
 {
     // Note: sent segments will be popped when acked later on
     ssize_t total_written = 0;
-    for (auto i = 0; i < segs; ++i) {
+    for (auto i = 0; i < segs && total_written <= static_cast<ssize_t>(max_size); ++i) {
         // TODO: optimize the loop, no point in arming timer every time right
         // Same goes for settings SND.NXT evry time
         TcpSegment& seg = send_buf_.at(i);
-        if (max_size > 0) {
-            assert(!seg.syn() && !seg.fin()); // TODO: handle fin case
-        }
         seg.set_ackn(recv_.nxt());
 
         update_recv_window();
@@ -627,7 +625,7 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size)
         // Max_size means max size of payload bytes to be sent
         // to-send_max is either full payload of cur. segment or part of it
         // So either way, it is just payload bytes => safe to add to total_written
-        total_written += std::min<ssize_t>(static_cast<ssize_t>(seg.payload_size()), written_bytes);
+        total_written += to_send_max;
 
         const auto data_size = seg.size_in_seq();
         if (data_size > 0) {
