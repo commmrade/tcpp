@@ -607,7 +607,7 @@ void TcpConnection::on_tick()
     if (!handle_close()) { return; }
 }
 
-ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size)
+ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
 {
     // Note: sent segments will be popped when acked later on
     ssize_t total_written = 0;
