@@ -8,16 +8,6 @@
 #include <print>
 #include <random>
 
-// void TcpConnection::append_send_data(const std::span<const std::byte> data)
-// {
-//     // send_buf_.append_range(data);
-//
-//     // TODO: May Need nagle here?
-//     if (send_buf_.empty()) {
-//         send_buf_.insert(TcpSegment{send_.iss, data});
-//     }
-// }
-
 void TcpConnection::append_recv_data(const std::span<const std::byte> data) { recv_buf_.append_range(data); }
 
 // void TcpConnection::erase_send_data(const std::size_t bytes_n)
@@ -281,7 +271,6 @@ void TcpConnection::update_recv_window()
 void TcpConnection::update_send_window()
 {
     const auto in_flight_n = send_.nxt() - send_.una();
-    // TODO: size_bytes() or size_payload_bytes()??
     const auto unsent = static_cast<std::uint32_t>(send_buf_.size_bytes()) - in_flight_n;
     // Start probing only if there is data to send, otherwise it is useless
     // Stop probing when SND.WND has been updated and now TCP is about to send new data (in on_tick()).
@@ -422,10 +411,11 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
         update_recv_window();
         if (tcph.ack()) { send_.set_una(tcph.ackn()); }
 
-        // TODO: Make sure SYN is actually acked
-        if (send_.una() > send_.iss() /* SYN has been ACKed */) {
-            state_ = TcpState::ESTAB;
+        assert(send_buf_.front().syn());
+        if (send_.una() > send_buf_.front().seq_start()) { // Check if it has ACKed SYN
+            send_buf_.consume(tcph.ackn()); // Consume up to SYN
 
+            state_ = TcpState::ESTAB;
             TcpSegment ack_seg{send_.nxt(), {}};
             ack_seg.set_ack(true);
             ack_seg.set_ackn(recv_.nxt());
