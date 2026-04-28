@@ -91,6 +91,14 @@ struct TcpSocket
         } else { throw std::runtime_error("Unimplemented other shutdown types"); }
     }
 
+    template<typename Value>
+    void set_option(const ConnectionOption opt, const Value& val)
+    {
+        auto& ctx = Context::instance();
+        std::unique_lock ctx_lock { ctx.mx };
+        ctx.tcp.get_connection(quad_).set_option(opt, val);
+    }
+
     // This will initiate a full shutdown
     void close()
     {
@@ -172,22 +180,23 @@ int main()
     // }};
 
     //
-    // TcpListener listener{};
-    // listener.bind(8090);
-    // listener.listen(999);
-    // std::println("user: bound and listening");
-    // auto sock = listener.accept();
-    // std::println("user: accepted");
-    // while (true) {
-    //     std::array<std::byte, 512> buf{};
-    //     auto rd = sock.read(buf.data(), buf.size());
-    //     if (rd == 0) {
-    //         std::println("user: DATA FINISHED, CLOSING...");
-    //         break;
-    //     } else {
-    //         auto wr = sock.write(std::span<const std::byte>(buf.data(), static_cast<std::size_t>(rd)));
-    //     }
-    // }
+    TcpListener listener{};
+    listener.bind(8090);
+    listener.listen(999);
+    std::println("user: bound and listening");
+    auto sock = listener.accept();
+    // sock.set_option(ConnectionOption::NAGLE, false);
+    std::println("user: accepted");
+    while (true) {
+        std::array<std::byte, 512> buf{};
+        auto rd = sock.read(buf.data(), buf.size());
+        if (rd == 0) {
+            std::println("user: DATA FINISHED, CLOSING...");
+            break;
+        } else {
+            auto wr = sock.write(std::span<const std::byte>(buf.data(), static_cast<std::size_t>(rd)));
+        }
+    }
 
 
     // Test FIN
@@ -201,16 +210,16 @@ int main()
 
 
     //
-    sleep(3); // Wait for py test thing to start
-    TcpSocket sock{};
-    sock.connect("10.0.0.1", 8090);
-
-    while (true) {
-        std::array<std::byte, 100> buf{};
-        std::memset(buf.data(), 'c', buf.size());
-        auto wr = sock.write(buf);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
+    // sleep(3); // Wait for py test thing to start
+    // TcpSocket sock{};
+    // sock.connect("10.0.0.1", 8090);
+    //
+    // while (true) {
+    //     std::array<std::byte, 100> buf{};
+    //     std::memset(buf.data(), 'c', buf.size());
+    //     auto wr = sock.write(buf);
+    //     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // }
 
     sleep(2);
     net_thread.request_stop();

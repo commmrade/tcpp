@@ -136,6 +136,16 @@ private:
 class Tcp;
 class TcpConnectionTest;
 
+enum class ConnectionOption
+{
+    NAGLE
+};
+
+struct Config
+{
+    bool is_nagle{true};
+};
+
 class TcpConnection
 {
 public:
@@ -155,6 +165,18 @@ public:
     void close();
     [[nodiscard]] ssize_t read(void *buf, const std::size_t buf_size);
     [[nodiscard]] ssize_t write(std::span<const std::byte> buf);
+
+    template<typename Value>
+    void set_option(const ConnectionOption cfg, const Value& val)
+    {
+        switch (cfg) {
+        case ConnectionOption::NAGLE: {
+            config_.is_nagle = val;
+            break;
+        }
+        default: throw std::runtime_error("TcpCon: Config option not implemented");
+        }
+    }
 
     [[nodiscard]] std::size_t send_buf_free_space() const
     {
@@ -212,7 +234,6 @@ private:
     friend class Tcp;
     friend class TcpConnectionTest;
 
-    // IOInterface &tun_;
     SegmentOutput output_;
 
     std::condition_variable recv_var_;// Notified when something is received
@@ -243,7 +264,6 @@ private:
     // Their MSS (what that host can send
     std::uint16_t recv_mss_{ RECEIVER_DEF_MSS };
     // Buffers and stuff
-    // bool should_send_fin_{ false }; // This won't be really used once I have segmentation
     bool is_finished_{ false };
 
     // Timer things (all in MS) ----
@@ -256,6 +276,8 @@ private:
 
     std::unique_ptr<ClockInterface> clock_;
     // retransmissions -----
+
+    Config config_;
 };
 
 

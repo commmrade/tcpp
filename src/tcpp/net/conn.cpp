@@ -533,10 +533,11 @@ bool TcpConnection::handle_send()
             return true;
         }
 
+        const bool nagle = config_.is_nagle ? send_.nxt() == send_.una() : true;
+
         // TODO: PUSH flag in segments
-        // FIXME: SND.NXT == SND.UNA is a NAGLE condition. I should let user disable NAgle so this cond. isnt enforced
-        bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (send_.nxt() == send_.una() && unsent <= usable_wnd)
-                        || (send_.nxt() == send_.una() && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
+        bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (nagle && unsent <= usable_wnd)
+                        || (nagle && std::min(unsent, usable_wnd) >= send_wnd_max_ / 2);
         if (can_send) {
             s_timer_.stop();
 
