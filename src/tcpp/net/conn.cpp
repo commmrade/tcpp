@@ -334,17 +334,13 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
             recv_.set_nxt(recv_.nxt() + payload_size);// FIN is handled in handle_fin()
         }
 
-        // FIN is gonna be handled in handle_fin()
-        if (!tcph.fin()) {
-            TcpSegment ack_seg{send_.nxt(), {}};
-            ack_seg.set_ack(true);
-            ack_seg.set_ackn(recv_.nxt());
-            send_pure(ack_seg);
+        // TODO: Could piggyback this ack
+        TcpSegment ack_seg{send_.nxt(), {}};
+        ack_seg.set_ack(true);
+        ack_seg.set_ackn(recv_.nxt());
+        send_pure(ack_seg);
 
-            // tcph_.ack(true);
-            // send(send_.nxt(), 0);// TODO: piggyback this
-            recv_var_.notify_all();
-        }
+        recv_var_.notify_all();
         break;
     }
     case TcpState::CLOSE_WAIT:
@@ -369,7 +365,7 @@ bool TcpConnection::on_fin()
     switch (state_) {
     case TcpState::ESTAB: {
         state_ = TcpState::CLOSE_WAIT;
-        should_send_fin_ = true;// Fin will be sent in on_tick()
+        add_fin_segment();
         break;
     }
     case TcpState::FIN_WAIT_2: {
@@ -381,7 +377,7 @@ bool TcpConnection::on_fin()
         break;
     }
     default:
-        break;// TODO
+        break;
     }
     return true;
 }
@@ -515,20 +511,28 @@ void TcpConnection::on_packet(const netparser::TcpHeaderView &tcph,
     }
 }
 
+void TcpConnection::add_fin_segment() {
+    std::uint32_t seq_start{};
+    if (send_buf_.empty()) {
+        seq_start = send_.nxt();
+    } else {
+        seq_start = send_buf_.back().seq_end();
+    }
+    TcpSegment fin_seg{seq_start, {}, false, true};
+    fin_seg.set_ack(true);
+    fin_seg.set_ackn(recv_.nxt());
+    send_buf_.insert(fin_seg);
+}
+
 bool TcpConnection::handle_send()
 {
-    // TODO: Not sure about in_flight
     const auto in_flight_n = send_.nxt() - send_.una();
-    const auto send_buf_payload_bytes = send_buf_.size_payload_bytes();
+    const auto send_buf_bytes = send_buf_.size_bytes();
 
-    // This condition trues when SYN is in flight, but I guess it is ok, since segments shouldn't be sent when SYN is not acked
-    // As for FIN, there shouldn't be data to send after FIN, so it is also ok, although fragile
-    if (in_flight_n > send_buf_payload_bytes) {
-        return true;
-    }
+    assert(in_flight_n <= send_buf_bytes);
 
-    // At this point, send_buf.payload_size() == send_buf.seq_space_size()
-    const auto unsent = static_cast<std::uint32_t>(send_buf_payload_bytes) - in_flight_n;
+    const auto unsent = static_cast<std::uint32_t>(send_buf_bytes) - in_flight_n;
+    // unsent may actually be more than there are payload bytes, but IDC because it won't send more that there are bytes anyhow
     if (unsent > 0 && send_.wnd() > 0) {
         // Sender SWS
         const auto usable_wnd = send_.wnd() - in_flight_n;
@@ -547,7 +551,7 @@ bool TcpConnection::handle_send()
             s_timer_.stop();
 
             std::println("SWS SEnding: {} {} {} {}, flight: {}",
-                send_buf_payload_bytes,
+                send_buf_bytes,
                 usable_wnd,
                 bytes_to_send,
                 unsent,
@@ -558,39 +562,11 @@ bool TcpConnection::handle_send()
             send_data(1ul, bytes_to_send);
         } else {
             std::println("Start SWS override timer. send nxt: {}, send una: {}, data len {}", send_.nxt(), send_.una(), bytes_to_send);
-            // FIXME: I MAY NEED TO IMPL. TIMERS OTEHR WAY, SINCE SWS AND RETRANS SHOULD NOT BE SHARED
-            s_timer_.start(clock_->now(), RttMeasurement::SWS_OVERRIDE_MS, send_.nxt(),
+
+            // TODO: maybe use seg.seq_start(), not send_.nxt() or whatever, to make sure such seg exists
+            const auto& seg = send_buf_.find(send_.nxt());
+            s_timer_.start(clock_->now(), RttMeasurement::SWS_OVERRIDE_MS, seg.seq_start(),
                 static_cast<std::uint32_t>(bytes_to_send));
-        }
-    }
-    return true;
-}
-
-bool TcpConnection::handle_close()
-{
-    if (should_send_fin_ && send_buf_.empty()) {
-        // tcph_.fin(true);
-        // tcph_.ack(true);
-        // send(send_.nxt(), 0);
-        TcpSegment finack_seg{send_.nxt(), {}, false, true};
-        finack_seg.set_ack(true);
-        finack_seg.set_ackn(recv_.nxt());
-        send_buf_.insert(finack_seg);
-        // TODO: maybe send data with ack
-        send_data(1, 0);
-
-        should_send_fin_ = false;
-
-        switch (state_) {
-        case TcpState::CLOSE_WAIT: {
-            state_ = TcpState::LAST_ACK;
-            break;
-        }
-        case TcpState::ESTAB: {
-            state_ = TcpState::FIN_WAIT_1;
-            break;
-        }
-        default: { break; }
         }
     }
     return true;
@@ -604,17 +580,10 @@ void TcpConnection::on_tick()
     update_send_window();
 
     if (!handle_send()) { return; }
-    if (!handle_close()) { return; }
 }
 
 ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
 {
-    // TODO (short plan) (to erase later):
-    // --- RTT Measurement:
-    // 1. I guess it shall start once the first SEG.SEQ >= SEND.NXT segment is sent (a bool flag?)
-    // --- Retrans. Timer:
-    // 1. It should start after all segements are sent out and I guess with params like r_timer.start(send.una.seg.start, send.una.seg.payload_size);
-
     ssize_t total_written_pl = 0;
     bool rtt_started = false;
 
@@ -640,6 +609,23 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
 
         if (wrapping_gt(seg.seq_start() + static_cast<std::uint32_t>(data_size), send_.nxt() - 1)) {
             send_.set_nxt(send_.nxt() + (seg.seq_start() + static_cast<std::uint32_t>(data_size) - send_.nxt()));
+        }
+
+        // This is kinda weird, but I have no idea where else to place this
+        switch (state_) {
+            case TcpState::CLOSE_WAIT: {
+                if (seg.fin()) {
+                    state_ = TcpState::LAST_ACK;
+                }
+                break;
+            }
+            case TcpState::ESTAB: {
+                if (seg.fin()) {
+                    state_ = TcpState::FIN_WAIT_1;
+                }
+                break;
+            }
+            default: break;
         }
     }
 
@@ -775,24 +761,6 @@ void TcpConnection::retransmit(Timer& timer)
 
     // TODO: Here, we should get the TIMER.START_SEQ() segment and use it.
     // (5.4) Retransmit the earliest segment that has not been acknowledged by the TCP receiver.
-    // tcph_.ack(true);
-    //
-    // if (is_fin_state(state_)) { tcph_.fin(true); }
-    // if (is_syn_state(state_)) {
-    //     tcph_.syn(true);
-    //
-    //     switch (state_) {
-    //     case TcpState::SYN_SENT:
-    //         // Since we are in SYN_SENT -> we should retransmit SYN withotu ACK
-    //         tcph_.ack(false);
-    //         break;
-    //     default:
-    //         break;
-    //     }
-    // }
-    //
-    // send(timer.start_seq(), timer.data_len());
-
     TcpSegment& retrans_seg = send_buf_.find(timer.start_seq());
     retrans_seg.set_ack(true);
     if (is_syn_state(state_)) {
@@ -832,14 +800,17 @@ void TcpConnection::update_timers()
 
 void TcpConnection::shutdown(ShutdownType sht)
 {
-    if (sht == ShutdownType::WRITE) { should_send_fin_ = true; } else {
+    if (sht == ShutdownType::WRITE) {
+        add_fin_segment();
+    } else {
         throw std::runtime_error("This shutdown type is not impl");
     }
 }
 
 void TcpConnection::close()
 {
-    should_send_fin_ = true;
+    // So at this point we wanna send a FIN segment
+    add_fin_segment();
 }
 
 ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
@@ -848,6 +819,7 @@ ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
     if (is_finished_ && !recv_buf_.empty()) { return 0; }
 
     const auto bytes_copy = std::min(buf_size, recv_buf_.size());
+    std::println("bytes copy: {}", bytes_copy);
     if (bytes_copy > 0) {
         std::memcpy(buf, recv_buf_.data(), bytes_copy);
         erase_recv_data(bytes_copy);

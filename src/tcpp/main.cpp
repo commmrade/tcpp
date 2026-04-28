@@ -171,6 +171,7 @@ int main()
     //     }
     // }};
 
+
     TcpListener listener{};
     listener.bind(8090);
     listener.listen(999);
@@ -184,27 +185,10 @@ int main()
             std::println("user: DATA FINISHED, CLOSING...");
             break;
         } else {
-            auto wr = sock.write(std::span<const std::byte>{buf.data(), (size_t)rd});
+            auto wr = sock.write(std::span<const std::byte>(buf.data(), static_cast<std::size_t>(rd)));
         }
     }
 
-    // TcpListener listener{};
-    // listener.bind(8090);
-    // listener.listen(999);
-    // std::println("user: bound and listening");
-    // auto sock = listener.accept();
-    // std::println("user: accepted");
-    // while (true) {
-    //     std::array<std::byte, 512> buf{};
-    //     auto rd = sock.read(buf.data(), buf.size());
-    //     if (rd == 0) {
-    //         std::println("user: DATA FINISHED, CLOSING...");
-    //         break;
-    //     } else {
-    //         auto wr = sock.write(std::span<const std::byte>(buf.data(), static_cast<std::size_t>(rd)));
-    //     }
-    // }
-    //
 
     // Test FIN
     // TcpListener listener{};

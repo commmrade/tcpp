@@ -167,8 +167,8 @@ public:
     void on_packet(const netparser::TcpHeaderView &tcph,
         std::span<const std::byte> payload);
 private:
-    // void append_send_data(const std::span<const std::byte> data);
-    // void erase_send_data(const std::size_t bytes_n);
+    // Helpers
+    void add_fin_segment();
 
     void append_recv_data(const std::span<const std::byte> data);
     void erase_recv_data(const std::size_t bytes_n);
@@ -184,7 +184,7 @@ private:
     bool segment_arrived_other(const netparser::TcpHeaderView &tcph, std::span<const std::byte> payload);
 
     bool handle_send();
-    bool handle_close();
+    // bool handle_close();
 
     void update_recv_window();
     void update_send_window();
@@ -243,7 +243,7 @@ private:
     // Their MSS (what that host can send
     std::uint16_t recv_mss_{ RECEIVER_DEF_MSS };
     // Buffers and stuff
-    bool should_send_fin_{ false }; // This won't be really used once I have segmentation
+    // bool should_send_fin_{ false }; // This won't be really used once I have segmentation
     bool is_finished_{ false };
 
     // Timer things (all in MS) ----

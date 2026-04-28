@@ -26,6 +26,7 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
             const std::span<const std::byte> payload{ std::next(buf.data(), rd_offset),
                                                       buf.size() - static_cast<std::size_t>(rd_offset) };
             conn->on_packet(tcph, payload);
+            std::println("CONN STATE: {}", (int)conn->get_state());
             if (conn->get_state() == TcpState::CLOSED) {
                 std::println("DELETED CONNECTION");
                 established_connections_.erase(eiter);
