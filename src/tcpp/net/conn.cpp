@@ -609,10 +609,16 @@ void TcpConnection::on_tick()
 
 ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
 {
-    // Note: sent segments will be popped when acked later on
-    ssize_t total_written = 0;
-    for (auto i = 0; i < segs && total_written <= static_cast<ssize_t>(max_size); ++i) {
-        // TODO: optimize the loop, no point in arming timer every time right
+    // TODO (short plan) (to erase later):
+    // --- RTT Measurement:
+    // 1. I guess it shall start once the first SEG.SEQ >= SEND.NXT segment is sent (a bool flag?)
+    // --- Retrans. Timer:
+    // 1. It should start after all segements are sent out and I guess with params like r_timer.start(send.una.seg.start, send.una.seg.payload_size);
+
+    ssize_t total_written_pl = 0;
+    bool rtt_started = false;
+
+    for (auto i = 0; i < segs && total_written_pl <= static_cast<ssize_t>(max_size_pl); ++i) {
         // Same goes for settings SND.NXT evry time
         TcpSegment& seg = send_buf_.at(i);
         seg.set_ackn(recv_.nxt());
@@ -620,31 +626,32 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
         update_recv_window();
 
         const auto wnd_to_adv = static_cast<std::uint16_t>(recv_.wnd());
-        const auto to_send_max = std::min(seg.payload_size(), max_size - static_cast<std::size_t>(total_written));
+        const auto to_send_max = std::min(seg.payload_size(), max_size_pl - static_cast<std::size_t>(total_written_pl));
         const auto written_bytes = output_.send(seg, to_send_max, wnd_to_adv);
-        // Max_size means max size of payload bytes to be sent
-        // to-send_max is either full payload of cur. segment or part of it
-        // So either way, it is just payload bytes => safe to add to total_written
-        total_written += to_send_max;
+        total_written_pl += to_send_max;
 
         const auto data_size = seg.size_in_seq();
-        if (data_size > 0) {
-            const auto time_now = clock_->now();
-            if (wrapping_gt(seg.seq_start(), send_.nxt() - 1)) {
-                // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
-                rtt_measurement_.start(time_now, seg.seq_start());
-            }
-            if (!z_timer_.is_armed()) { // Should not run while ZWP is active
-                r_timer_.start(time_now, rtt_measurement_.rto(), send_.una(),
-                static_cast<std::uint32_t>(seg.payload_size()));
-            }
+        const auto time_now = clock_->now();
+        if (wrapping_gt(seg.seq_start(), send_.nxt() - 1) && !rtt_started) {
+            // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
+            rtt_measurement_.start(time_now, seg.seq_start());
+            rtt_started = true;
         }
 
         if (wrapping_gt(seg.seq_start() + static_cast<std::uint32_t>(data_size), send_.nxt() - 1)) {
             send_.set_nxt(send_.nxt() + (seg.seq_start() + static_cast<std::uint32_t>(data_size) - send_.nxt()));
         }
     }
-    return total_written;
+
+    if (!z_timer_.is_armed()) {
+        const auto time_now = clock_->now();
+        // Should not run while ZWP is active
+        const auto& seg = send_buf_.find(send_.una());
+        r_timer_.start(time_now, rtt_measurement_.rto(), seg.seq_start(),
+        static_cast<std::uint32_t>(seg.payload_size()));
+    }
+
+    return total_written_pl;
 }
 
 ssize_t TcpConnection::send_pure(const TcpSegment &seg)

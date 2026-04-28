@@ -34,6 +34,7 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
             if (auto riter = syn_recv_connections_.find(quad); riter != syn_recv_connections_.end()) {
                 auto &conn = riter->second;
                 conn->on_packet(tcph, {}); // ACK for SYNACK cannot contain data
+                std::println("State: {}", (int)conn->get_state());
                 assert(conn->get_state() == TcpState::ESTAB); // It can't really be in other states
 
                 std::unique_ptr<TcpConnection> conn_ptr{conn.release()};
