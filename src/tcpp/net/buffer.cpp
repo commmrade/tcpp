@@ -148,3 +148,25 @@ std::vector<std::byte> TcpBuffer::read(const std::uint32_t seq_n, const std::siz
     }
     return res;
 }
+
+std::size_t TcpBuffer::size_segs() const {
+    return segs_.size();
+}
+
+std::size_t TcpBuffer::size_bytes() const {
+    std::size_t res = 0;
+    auto iter = segs_.cbegin();
+    for (; iter != segs_.end(); ++iter) {
+        res += iter->size_in_seq();
+    }
+    return res;
+}
+
+std::size_t TcpBuffer::size_payload_bytes() const {
+    std::size_t res = 0;
+    auto iter = segs_.cbegin();
+    for (; iter != segs_.cend(); ++iter) {
+        res += iter->payload_size();
+    }
+    return res;
+}

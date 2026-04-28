@@ -51,8 +51,8 @@ TEST(TcpSegment, SynWithPayload)
 {
     auto p = make_payload(99);
     TcpSegment s{1000, p, true, false};
-    EXPECT_EQ(s.size_in_seq(),  100u); // 99 + 1 SYN
-    EXPECT_EQ(s.seq_end(),      1100u);
+    EXPECT_EQ(s.size_in_seq(), 100u);
+    EXPECT_EQ(s.seq_end(),     1100u);
 }
 
 TEST(TcpSegment, FinWithPayload)
@@ -91,223 +91,222 @@ TEST(TcpSegment, PayloadContents)
         EXPECT_EQ(b, std::byte{0x42});
 }
 
+class TcpSegmentTest : public ::testing::Test
+{
+protected:
+    TcpSegment seg{1000, make_payload(100)};
+    void set_fin(bool val)
+    {
+        seg.set_fin(val);
+    }
+};
+
+TEST_F(TcpSegmentTest, EnableDisableFin)
+{
+    ASSERT_EQ(seg.seq_end(), 1100);
+    set_fin(true);
+    ASSERT_EQ(seg.seq_end(), 1101);
+    set_fin(true);
+    ASSERT_EQ(seg.seq_end(), 1101);
+    set_fin(false);
+    ASSERT_EQ(seg.seq_end(), 1100);
+    set_fin(false);
+    ASSERT_EQ(seg.seq_end(), 1100);
+}
 // ═══════════════════════════════════════════════════════════════════════════════
-// TcpBuffer — insert
+// TcpBuffer fixture
 // ═══════════════════════════════════════════════════════════════════════════════
 
-TEST(TcpBuffer, StartsEmpty)
+class TcpBufferTest : public ::testing::Test
 {
+protected:
     TcpBuffer buf;
+
+    const std::list<TcpSegment>& inner() const
+    {
+        return buf.segs_;
+    }
+};
+
+// ─── insert ──────────────────────────────────────────────────────────────────
+
+TEST_F(TcpBufferTest, StartsEmpty)
+{
     EXPECT_TRUE(buf.empty());
     EXPECT_EQ(buf.size_segs(), 0u);
 }
 
-TEST(TcpBuffer, InsertSingle)
+TEST_F(TcpBufferTest, InsertSingle)
 {
-    TcpBuffer buf;
     buf.insert(TcpSegment{1000, make_payload(100)});
     EXPECT_EQ(buf.size_segs(), 1u);
     EXPECT_FALSE(buf.empty());
 }
 
-TEST(TcpBuffer, InsertInOrder)
+TEST_F(TcpBufferTest, InsertInOrder)
 {
-    TcpBuffer buf;
     auto p = make_payload(100);
     buf.insert(TcpSegment{1000, p});
     buf.insert(TcpSegment{1100, p});
     buf.insert(TcpSegment{1200, p});
 
     ASSERT_EQ(buf.size_segs(), 3u);
-    auto it = buf.inner().cbegin();
+    auto it = inner().cbegin();
     EXPECT_EQ(it->seq_start(), 1000u); ++it;
     EXPECT_EQ(it->seq_start(), 1100u); ++it;
     EXPECT_EQ(it->seq_start(), 1200u);
 }
 
-TEST(TcpBuffer, InsertReverseOrder)
+TEST_F(TcpBufferTest, InsertReverseOrder)
 {
-    TcpBuffer buf;
     auto p = make_payload(100);
     buf.insert(TcpSegment{1200, p});
     buf.insert(TcpSegment{1100, p});
     buf.insert(TcpSegment{1000, p});
 
     ASSERT_EQ(buf.size_segs(), 3u);
-    auto it = buf.inner().cbegin();
+    auto it = inner().cbegin();
     EXPECT_EQ(it->seq_start(), 1000u); ++it;
     EXPECT_EQ(it->seq_start(), 1100u); ++it;
     EXPECT_EQ(it->seq_start(), 1200u);
 }
 
-TEST(TcpBuffer, InsertMiddle)
+TEST_F(TcpBufferTest, InsertMiddle)
 {
-    TcpBuffer buf;
     auto p = make_payload(100);
     buf.insert(TcpSegment{1000, p});
     buf.insert(TcpSegment{1200, p});
-    buf.insert(TcpSegment{1100, p}); // в середину
+    buf.insert(TcpSegment{1100, p});
 
     ASSERT_EQ(buf.size_segs(), 3u);
-    auto it = buf.inner().cbegin();
+    auto it = inner().cbegin();
     EXPECT_EQ(it->seq_start(), 1000u); ++it;
     EXPECT_EQ(it->seq_start(), 1100u); ++it;
     EXPECT_EQ(it->seq_start(), 1200u);
 }
 
-TEST(TcpBuffer, InsertWithGap)
+TEST_F(TcpBufferTest, InsertWithGap)
 {
-    TcpBuffer buf;
     auto p = make_payload(100);
     buf.insert(TcpSegment{1000, p});
-    buf.insert(TcpSegment{1300, p}); // gap [1100, 1300)
+    buf.insert(TcpSegment{1300, p});
 
     ASSERT_EQ(buf.size_segs(), 2u);
-    auto it = buf.inner().cbegin();
+    auto it = inner().cbegin();
     EXPECT_EQ(it->seq_start(), 1000u); ++it;
     EXPECT_EQ(it->seq_start(), 1300u);
 }
 
-TEST(TcpBuffer, InsertDuplicate)
+TEST_F(TcpBufferTest, InsertDuplicate)
 {
-    // Два сегмента с одинаковым seq_start — оба вставляются (или один? — тест покажет)
-    TcpBuffer buf;
     auto p = make_payload(100);
     buf.insert(TcpSegment{1000, p});
     buf.insert(TcpSegment{1000, p});
-
-    // Документируем фактическое поведение
     EXPECT_EQ(buf.size_segs(), 1u);
 }
 
-TEST(TcpBuffer, InsertManyRandomOrder)
+TEST_F(TcpBufferTest, InsertManyRandomOrder)
 {
-    TcpBuffer buf;
     auto p = make_payload(50);
     for (int i = 9; i >= 0; --i)
         buf.insert(TcpSegment{static_cast<std::uint32_t>(1000 + i * 50), p});
 
     ASSERT_EQ(buf.size_segs(), 10u);
     std::uint32_t prev_seq = 0;
-    for (const auto& s : buf.inner()) {
+    for (const auto& s : inner()) {
         EXPECT_GT(s.seq_start(), prev_seq);
         prev_seq = s.seq_start();
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// TcpBuffer — front
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── front ───────────────────────────────────────────────────────────────────
 
-TEST(TcpBuffer, FrontReturnFirstSegment)
+TEST_F(TcpBufferTest, FrontReturnFirstSegment)
 {
-    TcpBuffer buf;
+    auto p = make_payload(100);
+    buf.insert(TcpSegment{1000, p});
+    buf.insert(TcpSegment{1100, p});
+    EXPECT_EQ(buf.front().seq_start(), 1000u);
+}
+
+TEST_F(TcpBufferTest, FrontOnEmpty)
+{
+    EXPECT_DEATH(buf.front(), "");
+}
+
+// ─── consume ─────────────────────────────────────────────────────────────────
+
+TEST_F(TcpBufferTest, ConsumeExactSeqEnd)
+{
     auto p = make_payload(100);
     buf.insert(TcpSegment{1000, p});
     buf.insert(TcpSegment{1100, p});
 
-    auto f = buf.front();
-    EXPECT_EQ(f.seq_start(), 1000u);
-}
-
-TEST(TcpBuffer, FrontOnEmpty)
-{
-    TcpBuffer buf;
-    EXPECT_DEATH(buf.front(), ""); // assert(!empty())
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TcpBuffer — consume
-// ═══════════════════════════════════════════════════════════════════════════════
-
-TEST(TcpBuffer, ConsumeExactSeqEnd)
-{
-    TcpBuffer buf;
-    auto p = make_payload(100);
-    buf.insert(TcpSegment{1000, p}); // seq_end = 1100
-    buf.insert(TcpSegment{1100, p}); // seq_end = 1200
-
-    buf.consume(1100u); // первый сегмент уходит (seq_end==1100 <= 1100)
+    buf.consume(1100u);
     ASSERT_EQ(buf.size_segs(), 1u);
     EXPECT_EQ(buf.front().seq_start(), 1100u);
 }
 
-TEST(TcpBuffer, ConsumeAll)
+TEST_F(TcpBufferTest, ConsumeAll)
 {
-    TcpBuffer buf;
     auto p = make_payload(100);
     buf.insert(TcpSegment{1000, p});
     buf.insert(TcpSegment{1100, p});
     buf.insert(TcpSegment{1200, p});
 
-    buf.consume(1300u); // seq_end последнего == 1300
+    buf.consume(1300u);
     EXPECT_TRUE(buf.empty());
 }
 
-TEST(TcpBuffer, ConsumeSYNSegment)
+TEST_F(TcpBufferTest, ConsumeSYNSegment)
 {
-    TcpBuffer buf;
     buf.insert(TcpSegment{1000, {}, true, false});
-
     ASSERT_EQ(buf.size_segs(), 1);
-
-    buf.consume(1001); // SYN seq. num. is 1000
+    buf.consume(1001);
     EXPECT_TRUE(buf.empty());
 }
 
-TEST(TcpBuffer, ConsumeNone)
+TEST_F(TcpBufferTest, ConsumeNone)
 {
-    TcpBuffer buf;
     auto p = make_payload(100);
-    buf.insert(TcpSegment{1000, p}); // seq_end = 1100
+    buf.insert(TcpSegment{1000, p});
 
-    buf.consume(1000u); // 1000 < 1100 — ничего не удаляется
+    buf.consume(1000u);
     ASSERT_EQ(buf.size_segs(), 1u);
 }
 
-TEST(TcpBuffer, ConsumeMiddleOfSegment)
+TEST_F(TcpBufferTest, ConsumeMiddleOfSegment)
 {
-    // to_seg_n попадает внутрь сегмента: 1000 <= 1050 < 1100
-    // поведение зависит от реализации — тест документирует что происходит
-    TcpBuffer buf;
     auto p = make_payload(100);
-    buf.insert(TcpSegment{1000, p}); // seq_end = 1100
+    buf.insert(TcpSegment{1000, p});
 
     buf.consume(1050u);
-    // Сегмент не должен быть удалён полностью — хотя бы 0 или 1 сегмент
     EXPECT_EQ(buf.size_segs(), 1);
-
-    const auto iter = buf.inner().cbegin();
-    EXPECT_EQ(iter->seq_start(), 1050);
+    EXPECT_EQ(inner().cbegin()->seq_start(), 1050);
 }
 
-TEST(TcpBuffer, ConsumeEmptyBuffer)
+TEST_F(TcpBufferTest, ConsumeEmptyBuffer)
 {
-    TcpBuffer buf;
     EXPECT_NO_THROW(buf.consume(9999u));
     EXPECT_TRUE(buf.empty());
 }
 
-TEST(TcpBuffer, ConsumePartial)
+TEST_F(TcpBufferTest, ConsumePartial)
 {
-    TcpBuffer buf;
     auto p = make_payload(100);
-    buf.insert(TcpSegment{1000, p}); // seq_end = 1100
-    buf.insert(TcpSegment{1100, p}); // seq_end = 1200
-    buf.insert(TcpSegment{1200, p}); // seq_end = 1300
+    buf.insert(TcpSegment{1000, p});
+    buf.insert(TcpSegment{1100, p});
+    buf.insert(TcpSegment{1200, p});
 
-    buf.consume(1200u); // удаляет первые два (seq_end 1100 и 1200 <= 1200)
+    buf.consume(1200u);
     ASSERT_EQ(buf.size_segs(), 1u);
     EXPECT_EQ(buf.front().seq_start(), 1200u);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// TcpBuffer — read
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── read ────────────────────────────────────────────────────────────────────
 
-TEST(TcpBuffer, ReadExactSegment)
+TEST_F(TcpBufferTest, ReadExactSegment)
 {
-    TcpBuffer buf;
     auto p = make_payload(100, std::byte{0x42});
     buf.insert(TcpSegment{1000, p});
 
@@ -317,36 +316,31 @@ TEST(TcpBuffer, ReadExactSegment)
         EXPECT_EQ(b, std::byte{0x42});
 }
 
-TEST(TcpBuffer, ReadTwoSegments)
+TEST_F(TcpBufferTest, ReadTwoSegments)
 {
-    TcpBuffer buf;
     auto p = make_payload(100, std::byte{0x42});
     buf.insert(TcpSegment{1000, p});
     buf.insert(TcpSegment{1100, p});
 
     ASSERT_EQ(buf.size_segs(), 2);
-
     auto data = buf.read(200);
     ASSERT_EQ(data.size(), 200);
 }
 
-TEST(TcpBuffer, ReadTwoAndHalfSegments)
+TEST_F(TcpBufferTest, ReadTwoAndHalfSegments)
 {
-    TcpBuffer buf;
     auto p = make_payload(100, std::byte{0x42});
     buf.insert(TcpSegment{1000, p});
     buf.insert(TcpSegment{1100, p});
     buf.insert(TcpSegment{1200, p});
 
     ASSERT_EQ(buf.size_segs(), 3);
-
     auto data = buf.read(250);
     ASSERT_EQ(data.size(), 250);
 }
 
-TEST(TcpBuffer, ReadNotConseqSegments)
+TEST_F(TcpBufferTest, ReadNotConseqSegments)
 {
-    TcpBuffer buf;
     auto p = make_payload(100, std::byte{0x42});
     buf.insert(TcpSegment{1000, p});
     buf.insert(TcpSegment{1200, p});
@@ -355,9 +349,8 @@ TEST(TcpBuffer, ReadNotConseqSegments)
     ASSERT_EQ(data.size(), 100);
 }
 
-TEST(TcpBuffer, ReadFromMidSegment)
+TEST_F(TcpBufferTest, ReadFromMidSegment)
 {
-    TcpBuffer buf;
     auto p = make_payload(100, std::byte{0xFF});
     buf.insert(TcpSegment{1000, p});
 
@@ -365,64 +358,34 @@ TEST(TcpBuffer, ReadFromMidSegment)
     EXPECT_FALSE(data.empty());
 }
 
-TEST(TcpBuffer, ReadEmptyBuffer)
+TEST_F(TcpBufferTest, ReadEmptyBuffer)
 {
-    TcpBuffer buf;
     auto data = buf.read(100);
     EXPECT_TRUE(data.empty());
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// TcpBuffer — append
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── append ──────────────────────────────────────────────────────────────────
 
-TEST(TcpBuffer, AppendLessThanMss)
+TEST_F(TcpBufferTest, AppendLessThanMss)
 {
-    TcpBuffer buf;
-
     auto p = make_payload(50);
     auto big_p = make_payload(1000);
     buf.insert(TcpSegment{1000, p});
 
-
     constexpr auto MSS = 536;
-    if (buf.back().size_in_seq() < 536) {
-        const auto space_left = MSS - buf.back().size_in_seq();
-        const auto to_write_n = std::min(space_left, big_p.size());
+    ASSERT_LT(buf.back().size_in_seq(), MSS);
 
-        buf.append_back(std::span{big_p.data(), to_write_n});
-        ASSERT_EQ(buf.size_segs(), 1);
+    const auto space_left = MSS - buf.back().size_in_seq();
+    const auto to_write_n = std::min(space_left, big_p.size());
+    buf.append_back(std::span{big_p.data(), to_write_n});
 
-        auto iter = buf.inner().cbegin();
-        EXPECT_EQ(iter->size_in_seq(), 536);
-        EXPECT_EQ(iter->payload_size(), 536);
-    }
+    ASSERT_EQ(buf.size_segs(), 1);
+    EXPECT_EQ(inner().cbegin()->size_in_seq(), 536u);
+    EXPECT_EQ(inner().cbegin()->payload_size(), 536u);
 }
 
-TEST(TcpBuffer, AppendFailsWhenEmpty)
+TEST_F(TcpBufferTest, AppendFailsWhenEmpty)
 {
-    TcpBuffer buf;
     const auto pl = make_payload(100);
     EXPECT_ANY_THROW(buf.append_back(pl));
-}
-
-// ========
-// TcpBuffer - Flags
-// ========
-
-TEST(TcpBuffer, EnableDisableFin)
-{
-    const auto pl = make_payload(100);
-
-    TcpSegment seg{1000, pl};
-    ASSERT_EQ(seg.seq_end(), 1100);
-    seg.set_fin(true);
-    ASSERT_EQ(seg.seq_end(), 1101);
-    seg.set_fin(true);
-    ASSERT_EQ(seg.seq_end(), 1101);
-
-    seg.set_fin(false);
-    ASSERT_EQ(seg.seq_end(), 1100);
-    seg.set_fin(false);
-    ASSERT_EQ(seg.seq_end(), 1100);
 }

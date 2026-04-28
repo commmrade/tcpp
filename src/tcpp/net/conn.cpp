@@ -749,21 +749,8 @@ void TcpConnection::retransmit(Timer& timer)
 
     // (5.4) Retransmit the earliest segment that has not been acknowledged by the TCP receiver.
     TcpSegment& retrans_seg = send_buf_.find(timer.start_seq());
-    retrans_seg.set_ack(true);
-    if (is_syn_state(state_)) {
-        retrans_seg.set_syn(true);
-
-        switch (state_) {
-        case TcpState::SYN_SENT:
-            // Since we are in SYN_SENT -> we should retransmit SYN withotu ACK
-            retrans_seg.set_ack(false);
-            break;
-        default:
-            break;
-        }
-    }
+    retrans_seg.set_ackn(recv_.nxt());
     send_retransmit(retrans_seg);
-    // TODO: how the fuck I send it ??
 
     timer.retransmitted(clock_->now(), send_.una());
 }
