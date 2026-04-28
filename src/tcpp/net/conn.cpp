@@ -553,7 +553,6 @@ bool TcpConnection::handle_send()
         } else {
             std::println("Start SWS override timer. send nxt: {}, send una: {}, data len {}", send_.nxt(), send_.una(), bytes_to_send);
 
-            // TODO: maybe use seg.seq_start(), not send_.nxt() or whatever, to make sure such seg exists
             const auto& seg = send_buf_.find(send_.nxt());
             s_timer_.start(clock_->now(), RttMeasurement::SWS_OVERRIDE_MS, seg.seq_start(),
                 static_cast<std::uint32_t>(bytes_to_send));
@@ -724,7 +723,6 @@ void TcpConnection::open_active(const std::uint32_t saddr,
 
     output_.init_headers(saddr, daddr, sport, dport);
 
-    // TODO: impl
     output_.set_mss(recv_mss_);
     // tcph_.options().mss(recv_mss_);
 
@@ -749,7 +747,6 @@ void TcpConnection::retransmit(Timer& timer)
     // Retransmission should happen
     rtt_measurement_.stop();// Must not measure on retransmits
 
-    // TODO: Here, we should get the TIMER.START_SEQ() segment and use it.
     // (5.4) Retransmit the earliest segment that has not been acknowledged by the TCP receiver.
     TcpSegment& retrans_seg = send_buf_.find(timer.start_seq());
     retrans_seg.set_ack(true);
