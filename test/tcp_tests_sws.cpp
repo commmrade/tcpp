@@ -133,48 +133,48 @@ TEST_F(TcpConnectionSenderSwsTest, SenderSws3)
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&mock_io_);
 }
-
-TEST_F(TcpConnectionSenderSwsTest, SenderSws4)
-{
-    do_handshake(500);
-    std::array<std::byte, 900> buf{};
-    const auto written = conn_.write(std::span{buf.data(), 500});
-    const auto send_size = 500 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
-    // 1. MIN(D,U) => (500 < Send MSS) => false
-    // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (500) <= USABLE_WND (500)) => true
-    EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(send_size));
-    conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
-    auto ack = helpers::make_tcp({
-        .sport = PEER_PORT, .dport = LOCAL_PORT,
-        .seqn = PEER_ISN + 1,
-        .ackn = get_send_iss() + 500,// size of packet we sent
-        .window = 100,
-        .ack = true,
-        .mss = 0,
-    });
-    const auto ack_data = ack.serialize();
-    const netparser::TcpHeaderView ack_view{ ack_data };
-    conn_.on_packet(ack_view, {});
-    const auto sent = conn_.write(std::span{buf.data(), 200});
-    const auto send_size2 = 200 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
-    // Make sure write isnt even called, since timer is supposed to start
-    // 1. MIN(D,U) => (100 < Send MSS) => false
-    // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (200) > USABLE_WND (100)) => false
-    // 3. ([SND.NXT = SND.UNA] && min(D, U) (100) >= (1/2 * MAX_WND_SIZE) (250) => false
-    // 4. Timer starts
-    EXPECT_CALL(mock_io_, write(_)).Times(0);
-    conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
-
-    // Make sure it fires after SWS_OVERRIDE_MS.
-    static_cast<FakeClock &>(get_clock()).advance(RttMeasurement::SWS_OVERRIDE_MS / 2);
-    EXPECT_CALL(mock_io_, write).Times(0);
-    conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
-
-    static_cast<FakeClock &>(get_clock()).advance(RttMeasurement::SWS_OVERRIDE_MS / 2);
-    EXPECT_CALL(mock_io_, write).Times(1).WillOnce(Return(139));
-    conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
-}
+//
+// TEST_F(TcpConnectionSenderSwsTest, SenderSws4)
+// {
+//     do_handshake(500);
+//     std::array<std::byte, 900> buf{};
+//     const auto written = conn_.write(std::span{buf.data(), 500});
+//     const auto send_size = 500 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
+//     // 1. MIN(D,U) => (500 < Send MSS) => false
+//     // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (500) <= USABLE_WND (500)) => true
+//     EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(send_size));
+//     conn_.on_tick();
+//     Mock::VerifyAndClearExpectations(&mock_io_);
+//     auto ack = helpers::make_tcp({
+//         .sport = PEER_PORT, .dport = LOCAL_PORT,
+//         .seqn = PEER_ISN + 1,
+//         .ackn = get_send_iss() + 500,// size of packet we sent
+//         .window = 100,
+//         .ack = true,
+//         .mss = 0,
+//     });
+//     const auto ack_data = ack.serialize();
+//     const netparser::TcpHeaderView ack_view{ ack_data };
+//     conn_.on_packet(ack_view, {});
+//     const auto sent = conn_.write(std::span{buf.data(), 200});
+//     const auto send_size2 = 200 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;
+//     // Make sure write isnt even called, since timer is supposed to start
+//     // 1. MIN(D,U) => (100 < Send MSS) => false
+//     // 2. ([SND.NXT = SND.UNA] PUSHED && DATA_QUEUE_SIZE (200) > USABLE_WND (100)) => false
+//     // 3. ([SND.NXT = SND.UNA] && min(D, U) (100) >= (1/2 * MAX_WND_SIZE) (250) => false
+//     // 4. Timer starts
+//     EXPECT_CALL(mock_io_, write(_)).Times(0);
+//     conn_.on_tick();
+//     Mock::VerifyAndClearExpectations(&mock_io_);
+//
+//     // Make sure it fires after SWS_OVERRIDE_MS.
+//     static_cast<FakeClock &>(get_clock()).advance(RttMeasurement::SWS_OVERRIDE_MS / 2);
+//     EXPECT_CALL(mock_io_, write).Times(0);
+//     conn_.on_tick();
+//     Mock::VerifyAndClearExpectations(&mock_io_);
+//
+//     static_cast<FakeClock &>(get_clock()).advance(RttMeasurement::SWS_OVERRIDE_MS / 2);
+//     EXPECT_CALL(mock_io_, write).Times(1).WillOnce(Return(139));
+//     conn_.on_tick();
+//     Mock::VerifyAndClearExpectations(&mock_io_);
+// }

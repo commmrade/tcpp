@@ -46,7 +46,7 @@ namespace helpers {
         std::uint16_t mss     = 0;       // 0 = don't add MSS option
     };
 
-    netparser::IpHeader make_ip(const IpArgs& a) {
+    inline netparser::IpHeader make_ip(const IpArgs& a) {
         netparser::IpHeader iph{};
         iph.version(4);
         iph.ihl(5);
@@ -64,7 +64,7 @@ namespace helpers {
         return iph;
     }
 
-    netparser::TcpHeader make_tcp(const TcpArgs& a) {
+    inline netparser::TcpHeader make_tcp(const TcpArgs& a) {
         netparser::TcpHeader tcph{};
         tcph.source_port(a.sport);
         tcph.dest_port(a.dport);
@@ -154,6 +154,25 @@ protected:
         EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(netparser::TCPH_MIN_SIZE + netparser::IPV4H_MIN_SIZE));
         conn_.on_packet(seg_view, payload);
         Mock::VerifyAndClearExpectations(&mock_io_);
+    }
+
+    std::uint16_t send_mss() const
+    {
+        return conn_.send_mss_;
+    }
+
+    ssize_t write(std::span<const std::byte> payload)
+    {
+        return conn_.write(payload);
+    }
+
+    std::size_t send_buf_size_segs() const
+    {
+        return conn_.send_buf_.size_segs();
+    }
+    std::size_t send_buf_pl_size() const
+    {
+        return conn_.send_buf_.size_payload_bytes();
     }
 
     std::uint32_t get_send_iss() const

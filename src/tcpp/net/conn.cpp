@@ -837,22 +837,28 @@ ssize_t TcpConnection::write(std::span<const std::byte> buf)
     case TcpState::CLOSE_WAIT: {
         std::span<const std::byte> data{buf.data(), insert_bytes_n};
 
-        if (send_buf_.empty()) {
-            assert(send_.nxt() == send_.una()); // this should fire,
-            // because even if we haven't sent anything yet, send.iss == send.una == send.nxt
+        // Fill unsent back segment up to MSS first
+        if (!send_buf_.empty() && send_buf_.back().seq_start() >= send_.nxt()) {
+            const auto space_left = send_mss_ - send_buf_.back().payload_size();
+            const auto to_append = std::min(space_left, data.size());
+            send_buf_.append_back(data.subspan(0, to_append));
+            data = data.subspan(to_append);
+        }
 
-            // FIXME: I am not sure about SEND.NXT part
-            TcpSegment seg{send_.nxt(), data};
-            seg.set_ack(true); // ACK is always true in ALL segments, except for initial SYN segment
-            const auto res = send_buf_.insert(seg);
-            assert(res);
-        } else {
-            const auto seq_start = send_buf_.back().seq_end(); // TODO: is this even oK?
-            TcpSegment seg{seq_start, data};
+        // Write remaining data as new MSS-sized segments
+        while (!data.empty()) {
+            const auto seg_size = std::min<std::size_t>(send_mss_, data.size());
+
+            const uint32_t seq_start = send_buf_.empty()
+                ? send_.nxt()
+                : send_buf_.back().seq_end();
+
+            TcpSegment seg{seq_start, data.subspan(0, seg_size)};
             seg.set_ack(true);
-
             const auto res = send_buf_.insert(seg);
             assert(res);
+
+            data = data.subspan(seg_size);
         }
         break;
     }

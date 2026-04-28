@@ -175,7 +175,7 @@ public:
         }
         return res;
     }
-    std::size_t size_payload_bytes()
+    std::size_t size_payload_bytes() const
     {
         std::size_t res = 0;
         auto iter = segs_.cbegin();
