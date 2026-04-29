@@ -9,7 +9,6 @@
 #include <cstdint>
 #include <cstring>
 #include <print>
-#include <stdexcept>
 #include <string>
 
 inline std::string addr_to_str(const std::uint32_t addr)

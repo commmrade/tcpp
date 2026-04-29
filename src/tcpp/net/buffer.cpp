@@ -3,6 +3,8 @@
 //
 
 #include "buffer.hpp"
+#include <stdexcept>
+#include <algorithm>
 
 // This should only be used for NAGLE?? Like when it is enabled and a segment is kinda small, so instead of creating a new node, you can append payload to the already existing node
 void TcpBuffer::append_back(std::span<const std::byte> payload)

@@ -1,10 +1,8 @@
 #include <chrono>
 #include <print>
-#include "tun.hpp"
 #include "net/tcp.hpp"
 
 #include <mutex>
-#include <ratio>
 #include <thread>
 
 struct Context

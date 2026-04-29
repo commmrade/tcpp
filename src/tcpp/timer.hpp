@@ -7,7 +7,6 @@
 
 #include <cstdint>
 #include <optional>
-#include "util.hpp"
 
 class RttMeasurement
 {
@@ -43,7 +42,17 @@ private:
 class Timer
 {
 public:
+    Timer() = default;
+
     virtual ~Timer() = default;
+
+    Timer(const Timer&) = delete;
+
+    Timer& operator=(const Timer&) = delete;
+
+    Timer(Timer&&) = delete;
+
+    Timer& operator=(Timer&&) = delete;
 
     [[nodiscard]] bool is_armed() const { return start_time_.has_value(); }
 

@@ -8,9 +8,7 @@
 #include <cstddef>
 #include <list>
 #include <cstdint>
-#include <iostream>
 #include <cstring>
-#include <print>
 #include <vector>
 #include <span>
 
@@ -59,16 +57,13 @@ private:
         end_seq_n_ = seq;
     }
 public:
-    TcpSegment(const std::uint32_t seq_start, std::span<const std::byte> payload, bool syn = false, bool fin = false) : payload_(payload.begin(), payload.end())
+    TcpSegment(const std::uint32_t seq_start, std::span<const std::byte> payload, bool syn = false, bool fin = false)
+        : payload_(payload.begin(), payload.end()), syn_(syn), fin_(fin),
+        seq_n_(seq_start), end_seq_n_(seq_n_ + static_cast<std::uint32_t>(payload.size()) + (fin_ ? 1 : 0) + (syn_ ? 1 : 0))
     {
-        syn_ = syn;
-        fin_ = fin;
-
-        seq_n_ = seq_start;
-        end_seq_n_ = seq_n_ + static_cast<std::uint32_t>(payload.size()) + (fin_ ? 1 : 0) + (syn_ ? 1 : 0);
     }
 
-    bool ack() const
+    [[nodiscard]] bool ack() const
     {
         return ack_;
     }
@@ -76,7 +71,7 @@ public:
     {
         ack_ = val;
     }
-    std::uint32_t ackn() const
+    [[nodiscard]] std::uint32_t ackn() const
     {
         return ack_n_;
     }
@@ -84,15 +79,15 @@ public:
     {
         ack_n_ = seq;
     }
-    bool syn() const
+    [[nodiscard]] bool syn() const
     {
         return syn_;
     }
-    bool fin() const
+    [[nodiscard]] bool fin() const
     {
         return fin_;
     }
-    bool rst() const
+    [[nodiscard]] bool rst() const
     {
         return rst_;
     }
@@ -101,29 +96,31 @@ public:
         rst_ = val;
     }
 
-    std::size_t size_in_seq() const
+    [[nodiscard]] std::size_t size_in_seq() const
     {
         return end_seq_n_ - seq_n_;
     }
-    std::size_t payload_size() const
+    [[nodiscard]] std::size_t payload_size() const
     {
         return payload_.size();
     }
 
-    std::uint32_t seq_start() const
+    [[nodiscard]] std::uint32_t seq_start() const
     {
         return seq_n_;
     }
-    std::uint32_t seq_end() const
+    [[nodiscard]] std::uint32_t seq_end() const
     {
         return end_seq_n_;
     }
 
-    std::span<const std::byte> payload() const
+    [[nodiscard]] std::span<const std::byte> payload() const
     {
         return {payload_};
     }
 private:
+    std::vector<std::byte> payload_;
+
     bool ack_{};
     bool rst_{};
     bool syn_{};
@@ -133,8 +130,6 @@ private:
     std::uint32_t end_seq_n_{};
 
     std::uint32_t ack_n_{};
-
-    std::vector<std::byte> payload_{};
 };
 
 class TcpBuffer
@@ -154,11 +149,11 @@ public:
     std::vector<std::byte> read(const std::size_t len);
     std::vector<std::byte> read(const std::uint32_t seq_n, const std::size_t len);
 
-    std::size_t size_segs() const;
-    std::size_t size_bytes() const;
-    std::size_t size_payload_bytes() const;
+    [[nodiscard]] std::size_t size_segs() const;
+    [[nodiscard]] std::size_t size_bytes() const;
+    [[nodiscard]] std::size_t size_payload_bytes() const;
 
-    bool empty() const
+    [[nodiscard]] bool empty() const
     {
         return size_segs() == 0;
     }

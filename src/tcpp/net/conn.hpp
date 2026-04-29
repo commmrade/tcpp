@@ -136,7 +136,7 @@ private:
 class Tcp;
 class TcpConnectionTest;
 
-enum class ConnectionOption
+enum class ConnectionOption : std::uint8_t
 {
     NAGLE
 };
