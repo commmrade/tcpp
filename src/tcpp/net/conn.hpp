@@ -219,7 +219,7 @@ private:
     // Used for sending data segments
     ssize_t send_data(const int segs, const std::size_t max_size_pl);
     ssize_t send_pure(const TcpSegment& seg);
-    ssize_t send_retransmit(const TcpSegment& retrans_seg);
+    ssize_t send_retransmit(const TcpSegment& retrans_seg, const std::size_t max_size_pl);
 
     // Conn. establishment functions
     void open_passive(const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph);

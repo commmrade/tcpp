@@ -63,7 +63,7 @@ std::size_t TcpBuffer::consume(const std::uint32_t range_to) {
             const auto to_erase_n = std::min<std::size_t>(to_idx, payload_size); // In case this segment contains SYN/FIN
             res += to_erase_n;
             old_iter->erase(to_erase_n);
-            old_iter->set_seq_start(range_to);
+            // old_iter->set_seq_start(range_to);
         }
     }
     return res;

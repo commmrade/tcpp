@@ -555,6 +555,7 @@ bool TcpConnection::handle_send()
             std::println("Start SWS override timer. send nxt: {}, send una: {}, data len {}", send_.nxt(), send_.una(), bytes_to_send);
 
             const auto& seg = send_buf_.find(send_.nxt());
+            std::println("Afetr SWS START OVERRIDE");
             s_timer_.start(clock_->now(), RttMeasurement::SWS_OVERRIDE_MS, seg.seq_start(),
                 static_cast<std::uint32_t>(bytes_to_send));
         }
@@ -598,7 +599,7 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
         }
 
         if (wrapping_gt(seg.seq_start() + static_cast<std::uint32_t>(data_size), send_.nxt() - 1)) {
-            send_.set_nxt(send_.nxt() + (seg.seq_start() + static_cast<std::uint32_t>(data_size) - send_.nxt()));
+            send_.set_nxt(seg.seq_start() + static_cast<std::uint32_t>(data_size));
         }
 
         // This is kinda weird, but I have no idea where else to place this
@@ -637,11 +638,11 @@ ssize_t TcpConnection::send_pure(const TcpSegment &seg)
     return output_.send(seg, 0, wnd_to_adv);
 }
 
-ssize_t TcpConnection::send_retransmit(const TcpSegment &retrans_seg)
+ssize_t TcpConnection::send_retransmit(const TcpSegment &retrans_seg, const std::size_t max_size_pl)
 {
     update_recv_window();
     const auto wnd_to_adv = static_cast<std::uint16_t>(recv_.wnd());
-    return output_.send(retrans_seg, retrans_seg.size_in_seq(), wnd_to_adv);
+    return output_.send(retrans_seg, max_size_pl, wnd_to_adv);
 }
 
 
@@ -751,7 +752,7 @@ void TcpConnection::retransmit(Timer& timer)
     // (5.4) Retransmit the earliest segment that has not been acknowledged by the TCP receiver.
     TcpSegment& retrans_seg = send_buf_.find(timer.start_seq());
     retrans_seg.set_ackn(recv_.nxt());
-    send_retransmit(retrans_seg);
+    send_retransmit(retrans_seg, timer.data_len());
 
     timer.retransmitted(clock_->now(), send_.una());
 }
