@@ -249,7 +249,7 @@ private:
     // Tcp protocol stuff
     SendSequence send_{};
     std::uint32_t send_wnd_max_{};
-    TcpBuffer send_buf_;
+    TcpSenderBuffer send_buf_;
     // Buffer send_buf_;
 
     ReceiveSequence recv_{};

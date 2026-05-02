@@ -4,6 +4,8 @@
 
 #ifndef TCPP_BUFFER_HPP
 #define TCPP_BUFFER_HPP
+#include "buffer.hpp"
+
 #include <cassert>
 #include <cstddef>
 #include <list>
@@ -17,6 +19,7 @@
 class TcpSegment
 {
     friend class TcpBuffer;
+    friend class TcpSenderBuffer;
     friend class TcpSegmentTest;
 private:
     void set_syn(bool val)
@@ -141,8 +144,7 @@ class TcpBuffer
 {
 public:
     friend class TcpBufferTest;
-    // Appends bytes to the last node
-    void append_back(std::span<const std::byte> payload);
+    friend class TcpReceiverBufferTest;
 
     // Inserts a new node
     bool insert(const TcpSegment& seg);
@@ -150,9 +152,6 @@ public:
 
     TcpSegment& at(const std::ptrdiff_t idx);
     TcpSegment& find(const std::uint32_t seq);
-
-    std::vector<std::byte> read(const std::size_t len);
-    std::vector<std::byte> read(const std::uint32_t seq_n, const std::size_t len);
 
     std::size_t size_segs() const;
     std::size_t size_bytes() const;
@@ -174,9 +173,24 @@ public:
         assert(!empty());
         return segs_.back();
     }
-private:
+protected:
     std::list<TcpSegment> segs_;
 };
 
+class TcpSenderBuffer : public TcpBuffer
+{
+public:
+    // Appends bytes to the last node
+    void append_back(std::span<const std::byte> payload);
+};
+
+class TcpReceiverBuffer : public TcpBuffer
+{
+public:
+    std::vector<std::byte> read(const std::size_t max_size, const std::uint32_t recv_nxt) const;
+
+    // This function should be called after a segment was inserted on receive. It checks if that segment had filled a gap and therefore updated RECV.NXT
+    std::uint32_t check_gaps(const std::uint32_t recv_nxt) const;
+};
 
 #endif //TCPP_BUFFER_HPP
