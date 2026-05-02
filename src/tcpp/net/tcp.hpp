@@ -16,7 +16,7 @@ constexpr std::string_view SRC_IP = "10.0.0.2";
 class Tcp
 {
 public:
-    Tcp(std::string_view dev_name)
+    explicit Tcp(std::string_view dev_name)
         : tun_(dev_name)
     {
         tun_.set_addr("10.0.0.1");
@@ -45,9 +45,9 @@ private:
     std::unordered_map<std::uint16_t, std::deque<Quad>> bound_;
 
     // Connections that are in SYN_RCVD state
-    std::unordered_map<Quad, std::unique_ptr<TcpConnection>> syn_recv_connections_{};
+    std::unordered_map<Quad, std::unique_ptr<TcpConnection>> syn_recv_connections_;
     // Established and "active-opened" connections
-    std::unordered_map<Quad, std::unique_ptr<TcpConnection>> established_connections_{};
+    std::unordered_map<Quad, std::unique_ptr<TcpConnection>> established_connections_;
     std::condition_variable accept_var_;
 
     // I guess TCP should store TUN, because I don't need it outside of this class

@@ -318,7 +318,7 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
 
         // This should not be done in ZWP state
         if (recv_.wnd()!= 0) {
-            const std::uint32_t payload_size = static_cast<std::uint32_t>(payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0));
+            const auto payload_size = static_cast<std::uint32_t>(payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0));
             append_recv_data(payload);
             recv_.set_nxt(recv_.nxt() + payload_size);// FIN is handled in handle_fin()
         }
@@ -550,7 +550,7 @@ bool TcpConnection::handle_send()
 
             // tcph_.ack(true); // ACK is supposed to be already set in all data segments
             // send(send_.nxt(), bytes_to_send);
-            send_data(1ul, bytes_to_send);
+            send_data(1, bytes_to_send);
         } else {
             std::println("Start SWS override timer. send nxt: {}, send una: {}, data len {}", send_.nxt(), send_.una(), bytes_to_send);
 
@@ -575,10 +575,10 @@ void TcpConnection::on_tick()
 
 ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
 {
-    ssize_t total_written_pl = 0;
+    std::size_t total_written_pl = 0;
     bool rtt_started = false;
 
-    for (auto i = 0; i < segs && total_written_pl <= static_cast<ssize_t>(max_size_pl); ++i) {
+    for (auto i = 0; i < segs && total_written_pl <= max_size_pl; ++i) {
         // Same goes for settings SND.NXT evry time
         TcpSegment& seg = send_buf_.at(i);
         seg.set_ackn(recv_.nxt());
@@ -586,8 +586,8 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
         update_recv_window();
 
         const auto wnd_to_adv = static_cast<std::uint16_t>(recv_.wnd());
-        const auto to_send_max = std::min(seg.payload_size(), max_size_pl - static_cast<std::size_t>(total_written_pl));
-        const auto written_bytes = output_.send(seg, to_send_max, wnd_to_adv);
+        const auto to_send_max = std::min(seg.payload_size(), max_size_pl - total_written_pl);
+        output_.send(seg, to_send_max, wnd_to_adv);
         total_written_pl += to_send_max;
 
         const auto data_size = seg.size_in_seq();
@@ -628,7 +628,7 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
         static_cast<std::uint32_t>(seg.payload_size()));
     }
 
-    return total_written_pl;
+    return static_cast<ssize_t>(total_written_pl);
 }
 
 ssize_t TcpConnection::send_pure(const TcpSegment &seg)

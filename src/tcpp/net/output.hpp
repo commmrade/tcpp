@@ -26,7 +26,7 @@ struct HeadersInitData
 class SegmentOutput
 {
 public:
-    SegmentOutput(IOInterface& io) : io_(io) {}
+    explicit SegmentOutput(IOInterface& io) : io_(io) {}
 
     ssize_t send(const TcpSegment& seg, const std::size_t max_size_pl, const std::uint32_t rwnd);
 

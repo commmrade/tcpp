@@ -3,6 +3,8 @@
 //
 
 #include "buffer.hpp"
+#include <stdexcept>
+#include <algorithm>
 
 bool TcpBuffer::insert(const TcpSegment &seg)
 {
@@ -154,6 +156,5 @@ std::uint32_t TcpReceiverBuffer::check_gaps(const std::uint32_t recv_nxt) const
         cur_seq += iter->size_in_seq();
         ++iter;
     }
-
     return cur_seq;
 }

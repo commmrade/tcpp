@@ -3,6 +3,7 @@
 //
 
 #include "timer.hpp"
+#include "util.hpp"
 
 void RttMeasurement::reset() {
     rttvar_ = 0;
@@ -103,7 +104,6 @@ void RetransTimer::retransmitted(const std::int64_t cur_time, const std::uint32_
     rto_ms_ = rto_ms_.value() * 2;
 
     // These values are likely bogus after several backoffs (3)
-    constexpr std::uint32_t BACKOFF_THRESHOLD = 10000;
     rto_ms_ = std::min(rto_ms_.value(), RttMeasurement::MAX_RTO_MS);
 
     //  (5.6) Start the retransmission timer, such that it expires after RTO
@@ -130,7 +130,6 @@ void ZwpTimer::retransmitted(const std::int64_t cur_time, const std::uint32_t se
     rto_ms_ = rto_ms_.value() * 2;
 
     // These values are likely bogus after several backoffs (3)
-    constexpr std::uint32_t BACKOFF_THRESHOLD = 10000;
     rto_ms_ = std::min(rto_ms_.value(), RttMeasurement::MAX_RTO_MS);
 
     //  (5.6) Start the retransmission timer, such that it expires after RTO
@@ -157,7 +156,6 @@ void SwsTimer::retransmitted(const std::int64_t cur_time, const std::uint32_t se
     rto_ms_ = rto_ms_.value() * 2;
 
     // These values are likely bogus after several backoffs (3)
-    constexpr std::uint32_t BACKOFF_THRESHOLD = 10000;
     rto_ms_ = std::min(rto_ms_.value(), RttMeasurement::MAX_RTO_MS);
 
     //  (5.6) Start the retransmission timer, such that it expires after RTO
