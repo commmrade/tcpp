@@ -4,7 +4,6 @@
 
 #ifndef TCPP_BUFFER_HPP
 #define TCPP_BUFFER_HPP
-#include "buffer.hpp"
 
 #include <cassert>
 #include <cstddef>
@@ -143,14 +142,14 @@ public:
 
     // Inserts a new node
     bool insert(const TcpSegment& seg);
-    std::size_t consume(const std::uint32_t seq_range_to);
+    std::size_t consume_seq(const std::uint32_t seq_range_to);
 
     TcpSegment& at(const std::ptrdiff_t idx);
     TcpSegment& find(const std::uint32_t seq);
 
-    std::size_t size_segs() const;
-    std::size_t size_bytes() const;
-    std::size_t size_payload_bytes() const;
+    [[nodiscard]] std::size_t size_segs() const;
+    [[nodiscard]] std::size_t size_bytes() const;
+    [[nodiscard]] std::size_t size_payload_bytes() const;
 
     [[nodiscard]] bool empty() const
     {
@@ -182,10 +181,11 @@ public:
 class TcpReceiverBuffer : public TcpBuffer
 {
 public:
-    std::vector<std::byte> read(const std::size_t max_size, const std::uint32_t recv_nxt);
+    // Returns (data, sequence number up to which you should consume)
+    [[nodiscard]] std::pair<std::vector<std::byte>, std::uint32_t> read(const std::size_t max_size, const std::uint32_t recv_nxt);
 
     // This function should be called after a segment was inserted on receive. It checks if that segment had filled a gap and therefore updated RECV.NXT
-    std::uint32_t check_gaps(const std::uint32_t recv_nxt) const;
+    [[nodiscard]] std::uint32_t check_gaps(const std::uint32_t recv_nxt) const;
 };
 
 #endif //TCPP_BUFFER_HPP

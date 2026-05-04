@@ -242,7 +242,7 @@ TEST_F(TcpBufferTest, ConsumeExactSeqEnd)
     buf.insert(TcpSegment{1000, p});
     buf.insert(TcpSegment{1100, p});
 
-    buf.consume(1100u);
+    buf.consume_seq(1100u);
     ASSERT_EQ(buf.size_segs(), 1u);
     EXPECT_EQ(buf.front().seq_start(), 1100u);
 }
@@ -254,7 +254,7 @@ TEST_F(TcpBufferTest, ConsumeAll)
     buf.insert(TcpSegment{1100, p});
     buf.insert(TcpSegment{1200, p});
 
-    buf.consume(1300u);
+    buf.consume_seq(1300u);
     EXPECT_TRUE(buf.empty());
 }
 
@@ -262,7 +262,7 @@ TEST_F(TcpBufferTest, ConsumeSYNSegment)
 {
     buf.insert(TcpSegment{1000, {}, true, false});
     ASSERT_EQ(buf.size_segs(), 1);
-    buf.consume(1001);
+    buf.consume_seq(1001);
     EXPECT_TRUE(buf.empty());
 }
 
@@ -271,7 +271,7 @@ TEST_F(TcpBufferTest, ConsumeNone)
     auto p = make_payload(100);
     buf.insert(TcpSegment{1000, p});
 
-    buf.consume(1000u);
+    buf.consume_seq(1000u);
     ASSERT_EQ(buf.size_segs(), 1u);
 }
 
@@ -280,14 +280,14 @@ TEST_F(TcpBufferTest, ConsumeMiddleOfSegment)
     auto p = make_payload(100);
     buf.insert(TcpSegment{1000, p});
 
-    buf.consume(1050u);
+    buf.consume_seq(1050u);
     EXPECT_EQ(buf.size_segs(), 1);
     EXPECT_EQ(inner().cbegin()->seq_start(), 1050);
 }
 
 TEST_F(TcpBufferTest, ConsumeEmptyBuffer)
 {
-    EXPECT_NO_THROW(buf.consume(9999u));
+    EXPECT_NO_THROW(buf.consume_seq(9999u));
     EXPECT_TRUE(buf.empty());
 }
 
@@ -298,7 +298,7 @@ TEST_F(TcpBufferTest, ConsumePartial)
     buf.insert(TcpSegment{1100, p});
     buf.insert(TcpSegment{1200, p});
 
-    buf.consume(1200u);
+    buf.consume_seq(1200u);
     ASSERT_EQ(buf.size_segs(), 1u);
     EXPECT_EQ(buf.front().seq_start(), 1200u);
 }
@@ -413,7 +413,7 @@ class TcpReceiverBufferReadTest : public testing::Test {};
 
 TEST_F(TcpReceiverBufferReadTest, EmptyBuffer) {
     TcpReceiverBuffer buf;
-    auto result = buf.read(100, 0);
+    auto [result, seq_n] = buf.read(100, 0);
     EXPECT_TRUE(result.empty());
 }
 
@@ -421,7 +421,7 @@ TEST_F(TcpReceiverBufferReadTest, ReadSingleSegmentFully) {
     TcpReceiverBuffer buf;
     auto data = make_bytes({1, 2, 3, 4, 5});
     buf.insert(TcpSegment(0, data));
-    auto result = buf.read(100, 5);
+    auto [result, seq_n] = buf.read(100, 5);
     EXPECT_EQ(result.size(), 5u);
     EXPECT_EQ(result, data);
 }
@@ -430,7 +430,7 @@ TEST_F(TcpReceiverBufferReadTest, ReadLimitedByMaxSize) {
     TcpReceiverBuffer buf;
     auto data = make_bytes({1, 2, 3, 4, 5});
     buf.insert(TcpSegment(0, data));
-    auto result = buf.read(3, 5);
+    auto [result, seq_n] = buf.read(3, 5);
     EXPECT_EQ(result.size(), 3u);
     EXPECT_EQ(result, (make_bytes({1, 2, 3})));
 }
@@ -441,7 +441,7 @@ TEST_F(TcpReceiverBufferReadTest, ReadTwoContiguousSegments) {
     auto d2 = make_bytes({4, 5, 6});
     buf.insert(TcpSegment(0, d1));
     buf.insert(TcpSegment(3, d2));
-    auto result = buf.read(100, 6);
+    auto [result, seq_n] = buf.read(100, 6);
     EXPECT_EQ(result.size(), 6u);
     EXPECT_EQ(result, (make_bytes({1, 2, 3, 4, 5, 6})));
 }
@@ -452,7 +452,7 @@ TEST_F(TcpReceiverBufferReadTest, ReadStopsAtGap) {
     auto d2 = make_bytes({7, 8, 9});
     buf.insert(TcpSegment(0, d1));
     buf.insert(TcpSegment(10, d2)); // gap
-    auto result = buf.read(100, 3);
+    auto [result, seq_n] = buf.read(100, 3);
     EXPECT_EQ(result.size(), 3u);
     EXPECT_EQ(result, d1);
 }
@@ -462,7 +462,7 @@ TEST_F(TcpReceiverBufferReadTest, OnlyOutOfOrderSegments) {
     auto data = make_bytes({1, 2, 3});
     buf.insert(TcpSegment(50, data));
     // recv_nxt=0, buffer starts at 50 — all OOO
-    auto result = buf.read(100, 0);
+    auto [result, seq_n] = buf.read(100, 0);
     EXPECT_TRUE(result.empty());
 }
 
@@ -470,7 +470,7 @@ TEST_F(TcpReceiverBufferReadTest, MaxSizeZero) {
     TcpReceiverBuffer buf;
     auto data = make_bytes({1, 2, 3});
     buf.insert(TcpSegment(0, data));
-    auto result = buf.read(0, 3);
+    auto [result, seq_n] = buf.read(0, 3);
     EXPECT_TRUE(result.empty());
 }
 
@@ -481,7 +481,7 @@ TEST_F(TcpReceiverBufferReadTest, ReadExactSegmentBoundary) {
     buf.insert(TcpSegment(0, d1));
     buf.insert(TcpSegment(3, d2));
     // max_size exactly covers first segment
-    auto result = buf.read(3, 6);
+    auto [result, seq_n] = buf.read(3, 6);
     EXPECT_EQ(result.size(), 3u);
     EXPECT_EQ(result, d1);
 }
@@ -490,7 +490,7 @@ TEST_F(TcpReceiverBufferReadTest, LargePayloadSingleSegment) {
     TcpReceiverBuffer buf;
     auto data = make_bytes_n(0xAB, 65535);
     buf.insert(TcpSegment(0, data));
-    auto result = buf.read(65535, 65535);
+    auto [result, seq_n] = buf.read(65535, 65535);
     EXPECT_EQ(result.size(), 65535u);
     EXPECT_EQ(result, data);
 }
@@ -505,7 +505,7 @@ TEST_F(TcpReceiverBufferReadTest, ReadManyContiguousSegments) {
         expected.insert(expected.end(), chunk.begin(), chunk.end());
         seq += 10;
     }
-    auto result = buf.read(1000, seq);
+    auto [result, seq_n] = buf.read(1000, seq);
     EXPECT_EQ(result.size(), 200u);
     EXPECT_EQ(result, expected);
 }
@@ -568,7 +568,7 @@ TEST_F(TcpReceiverBufferIntegrationTest, OOOSegmentFilledByLaterInsert) {
     nxt = buf.check_gaps(0);
     EXPECT_EQ(nxt, 9u);
 
-    auto result = buf.read(100, nxt);
+    auto [result, seq_n] = buf.read(100, nxt);
     EXPECT_EQ(result, (make_bytes({1,2,3,4,5,6,7,8,9})));
 }
 
@@ -581,7 +581,7 @@ TEST_F(TcpReceiverBufferIntegrationTest, ReadAfterPartialConsumeViaCheckGaps) {
     uint32_t nxt = buf.check_gaps(0);
     EXPECT_EQ(nxt, 4u);
 
-    auto result = buf.read(100, nxt);
+    auto [result, seq_n] = buf.read(100, nxt);
     EXPECT_EQ(result, (make_bytes({10, 20, 30, 40})));
 }
 
@@ -621,7 +621,7 @@ TEST_F(TcpReceiverBufferIntegrationTest, SingleByteSegmentsContiguous) {
         buf.insert(TcpSegment(i, make_bytes({static_cast<uint8_t>(i)})));
     }
     EXPECT_EQ(buf.check_gaps(0), 256u);
-    auto result = buf.read(256, 256);
+    auto [result, seq_n] = buf.read(256, 256);
     EXPECT_EQ(result.size(), 256u);
     for (int i = 0; i < 256; ++i) {
         EXPECT_EQ(result[i], static_cast<std::byte>(i));

@@ -174,7 +174,7 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
         if (is_between_wrapped(send_.una(), tcph.ackn(), send_.nxt() + 1)) {
             // const auto acked_bytes_n = tcph.ackn() - send_.una();// This wraps fine
             if (!send_buf_.empty()) {
-                const auto res = send_buf_.consume(tcph.ackn()); // TODO: check if this correctly consumes UP TO (especially when SYN/FIN)
+                const auto res = send_buf_.consume_seq(tcph.ackn()); // TODO: check if this correctly consumes UP TO (especially when SYN/FIN)
                 assert(res > 0);
                 // assert(acked_bytes_n <= send_buf_.size());// Just in case
                 // if empty, probably means that SYN/FIN was ACKed
@@ -414,7 +414,7 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
 
         assert(send_buf_.front().syn());
         if (send_.una() > send_buf_.front().seq_start()) { // Check if it has ACKed SYN
-            send_buf_.consume(tcph.ackn()); // Consume up to SYN
+            send_buf_.consume_seq(tcph.ackn()); // Consume up to SYN
 
             state_ = TcpState::ESTAB;
             TcpSegment ack_seg{send_.nxt(), {}};
@@ -796,17 +796,9 @@ ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
     // TODO: Get rid of is finished?, check FIN byte in recv_buf, don't just guess, same goes for other places in code where recv buf is used like that
     if (is_finished_ && !recv_buf_.empty()) { return 0; }
 
-    const auto data = recv_buf_.read(buf_size, recv_.nxt());
-    // TODO: CONSUME!!!!!, up to what byte tho?
-    // recv_buf_.front().seq_start()
-    // recv_buf_.consume()
+    const auto [data, seq_n] = recv_buf_.read(buf_size, recv_.nxt());
+    recv_buf_.consume_seq(seq_n);
     std::memcpy(buf, data.data(), data.size());
-    // const auto bytes_copy = std::min(buf_size, recv_buf_.size());
-    // std::println("bytes copy: {}", bytes_copy);
-    // if (bytes_copy > 0) {
-        // std::memcpy(buf, recv_buf_.data(), bytes_copy);
-        // erase_recv_data(bytes_copy);
-    // }
     return static_cast<ssize_t>(data.size());
 }
 

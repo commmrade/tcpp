@@ -37,7 +37,7 @@ bool TcpBuffer::insert(const TcpSegment &seg)
     return false;
 }
 
-std::size_t TcpBuffer::consume(const std::uint32_t seq_range_to)
+std::size_t TcpBuffer::consume_seq(const std::uint32_t seq_range_to)
 {
     std::size_t res = 0;
     auto iter = segs_.begin();
@@ -64,6 +64,7 @@ std::size_t TcpBuffer::consume(const std::uint32_t seq_range_to)
     }
     return res;
 }
+
 
 TcpSegment &TcpBuffer::at(const std::ptrdiff_t idx)
 {
@@ -106,11 +107,10 @@ void TcpSenderBuffer::append_back(std::span<const std::byte> payload)
     segs_.back().append(payload);
 }
 
-std::vector<std::byte> TcpReceiverBuffer::read(const std::size_t max_size, const std::uint32_t recv_nxt)
+std::pair<std::vector<std::byte>, std::uint32_t> TcpReceiverBuffer::read(const std::size_t max_size, const std::uint32_t recv_nxt)
 {
     std::vector<std::byte> res;
-    if (empty()) { return res; }
-
+    if (empty()) { return {res, 0}; }
     res.reserve(max_size);
 
     auto iter = segs_.cbegin();
@@ -119,7 +119,7 @@ std::vector<std::byte> TcpReceiverBuffer::read(const std::size_t max_size, const
 
     if (current_read_seq >= recv_nxt) {
         // This means that buffer contains only out-of-order segments.
-        return res;
+        return {res, current_read_seq};
     }
 
     while (iter != segs_.end() &&
@@ -136,9 +136,7 @@ std::vector<std::byte> TcpReceiverBuffer::read(const std::size_t max_size, const
         ++iter;
     }
 
-    consume(current_read_seq);
-
-    return res;
+    return {res, current_read_seq};
 }
 
 std::uint32_t TcpReceiverBuffer::check_gaps(const std::uint32_t recv_nxt) const
