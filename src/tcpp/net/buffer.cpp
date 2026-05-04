@@ -37,7 +37,7 @@ bool TcpBuffer::insert(const TcpSegment &seg)
     return false;
 }
 
-std::size_t TcpBuffer::consume(const std::uint32_t range_to)
+std::size_t TcpBuffer::consume(const std::uint32_t seq_range_to)
 {
     std::size_t res = 0;
     auto iter = segs_.begin();
@@ -45,12 +45,12 @@ std::size_t TcpBuffer::consume(const std::uint32_t range_to)
         auto old_iter = iter;
         ++iter;
 
-        if (range_to >= old_iter->seq_end()) {
+        if (seq_range_to >= old_iter->seq_end()) {
             res += old_iter->size_in_seq();
             segs_.erase(old_iter);
-        } else if (range_to >= old_iter->seq_start() && range_to < old_iter->seq_end()) {
+        } else if (seq_range_to >= old_iter->seq_start() && seq_range_to < old_iter->seq_end()) {
             // Erase inside a segment
-            const auto to_idx = range_to - old_iter->seq_start();
+            const auto to_idx = seq_range_to - old_iter->seq_start();
             const auto payload_size = old_iter->payload_size();
             // Since we use payload_size() special handling for SYN/FIN is not needed, if this is a data segment,
             // to_erase_n will be empty, so all good.
@@ -106,7 +106,7 @@ void TcpSenderBuffer::append_back(std::span<const std::byte> payload)
     segs_.back().append(payload);
 }
 
-std::vector<std::byte> TcpReceiverBuffer::read(const std::size_t max_size, const std::uint32_t recv_nxt) const
+std::vector<std::byte> TcpReceiverBuffer::read(const std::size_t max_size, const std::uint32_t recv_nxt)
 {
     std::vector<std::byte> res;
     if (empty()) { return res; }
@@ -135,6 +135,8 @@ std::vector<std::byte> TcpReceiverBuffer::read(const std::size_t max_size, const
         current_read_seq += (read_n == iter->payload_size()) ? iter->size_in_seq() : read_n;
         ++iter;
     }
+
+    consume(current_read_seq);
 
     return res;
 }

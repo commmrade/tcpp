@@ -143,7 +143,7 @@ public:
 
     // Inserts a new node
     bool insert(const TcpSegment& seg);
-    std::size_t consume(const std::uint32_t range_to);
+    std::size_t consume(const std::uint32_t seq_range_to);
 
     TcpSegment& at(const std::ptrdiff_t idx);
     TcpSegment& find(const std::uint32_t seq);
@@ -182,7 +182,7 @@ public:
 class TcpReceiverBuffer : public TcpBuffer
 {
 public:
-    std::vector<std::byte> read(const std::size_t max_size, const std::uint32_t recv_nxt) const;
+    std::vector<std::byte> read(const std::size_t max_size, const std::uint32_t recv_nxt);
 
     // This function should be called after a segment was inserted on receive. It checks if that segment had filled a gap and therefore updated RECV.NXT
     std::uint32_t check_gaps(const std::uint32_t recv_nxt) const;

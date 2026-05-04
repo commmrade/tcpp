@@ -8,7 +8,7 @@
 #include <print>
 #include <random>
 
-void TcpConnection::append_recv_data(const std::span<const std::byte> data) { recv_buf_.append_range(data); }
+// void TcpConnection::append_recv_data(const std::span<const std::byte> data) { recv_buf_.append_range(data); }
 
 // void TcpConnection::erase_send_data(const std::size_t bytes_n)
 // {
@@ -16,10 +16,10 @@ void TcpConnection::append_recv_data(const std::span<const std::byte> data) { re
     // send_var_.notify_all();
 // }
 
-void TcpConnection::erase_recv_data(const std::size_t bytes_n)
-{
-    recv_buf_.erase(recv_buf_.begin(), recv_buf_.begin() + static_cast<const std::ptrdiff_t>(bytes_n));
-}
+// void TcpConnection::erase_recv_data(const std::size_t bytes_n)
+// {
+    // recv_buf_.erase(recv_buf_.begin(), recv_buf_.begin() + static_cast<const std::ptrdiff_t>(bytes_n));
+// }
 
 static bool validate_seq_n(const std::uint32_t seq_n, std::size_t payload_size, const std::uint32_t recv_wnd, const std::uint32_t recv_nxt)
 {
@@ -254,7 +254,7 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
 void TcpConnection::update_recv_window()
 {
     const std::size_t buffer_size = std::numeric_limits<std::uint16_t>::max();
-    const auto free_space = buffer_size - recv_buf_.size();
+    const auto free_space = buffer_size - recv_buf_.size_payload_bytes();
 
     if (free_space == 0) {
         recv_.set_wnd(0);
@@ -319,7 +319,8 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
         // This should not be done in ZWP state
         if (recv_.wnd()!= 0) {
             const auto payload_size = static_cast<std::uint32_t>(payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0));
-            append_recv_data(payload);
+            recv_buf_.insert(TcpSegment{tcph.seqn(), payload, tcph.syn(), tcph.fin()}); // I don't care about the flags, except for FIN and SYN maybe
+            // append_recv_data(payload);
             recv_.set_nxt(recv_.nxt() + payload_size);// FIN is handled in handle_fin()
         }
 
@@ -792,15 +793,21 @@ void TcpConnection::close()
 ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
 {
     // If user hasn't read everything yet, delay signaling FIN
+    // TODO: Get rid of is finished?, check FIN byte in recv_buf, don't just guess, same goes for other places in code where recv buf is used like that
     if (is_finished_ && !recv_buf_.empty()) { return 0; }
 
-    const auto bytes_copy = std::min(buf_size, recv_buf_.size());
-    std::println("bytes copy: {}", bytes_copy);
-    if (bytes_copy > 0) {
-        std::memcpy(buf, recv_buf_.data(), bytes_copy);
-        erase_recv_data(bytes_copy);
-    }
-    return static_cast<ssize_t>(bytes_copy);
+    const auto data = recv_buf_.read(buf_size, recv_.nxt());
+    // TODO: CONSUME!!!!!, up to what byte tho?
+    // recv_buf_.front().seq_start()
+    // recv_buf_.consume()
+    std::memcpy(buf, data.data(), data.size());
+    // const auto bytes_copy = std::min(buf_size, recv_buf_.size());
+    // std::println("bytes copy: {}", bytes_copy);
+    // if (bytes_copy > 0) {
+        // std::memcpy(buf, recv_buf_.data(), bytes_copy);
+        // erase_recv_data(bytes_copy);
+    // }
+    return static_cast<ssize_t>(data.size());
 }
 
 ssize_t TcpConnection::write(std::span<const std::byte> buf)

@@ -192,8 +192,8 @@ private:
     // Helpers
     void add_fin_segment();
 
-    void append_recv_data(const std::span<const std::byte> data);
-    void erase_recv_data(const std::size_t bytes_n);
+    // void append_recv_data(const std::span<const std::byte> data);
+    // void erase_recv_data(const std::size_t bytes_n);
 
     // lile false if it should return
     bool on_rst(const netparser::TcpHeaderView &tcph);
@@ -255,7 +255,9 @@ private:
     ReceiveSequence recv_{};
     std::uint32_t right_wnd_edge_{};
     // TODO: replace recv buf with TcpBuffer
-    Buffer recv_buf_;// First element is SND.UNA, last is SND.UNA + SND.WND
+    // Buffer recv_buf_;
+    TcpReceiverBuffer recv_buf_;
+
 
     TcpState state_{};
 
