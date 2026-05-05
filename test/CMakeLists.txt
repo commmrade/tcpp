@@ -21,10 +21,14 @@ include(GoogleTest)
 add_executable(tests
         ip_tests.cpp
         tcp_tests.cpp
-        ../src/tcpp/net/conn.hpp
         ../src/tcpp/net/conn.cpp
         ../src/tcpp/timer.cpp
-        tcp_tests_sws.cpp)
+        ../src/tcpp/net/buffer.cpp
+        ../src/tcpp/net/output.cpp
+        tcp_tests_sws.cpp
+        tcp_buffer_tests.cpp
+        tcp_send_buf_tests.cpp
+        tcp_recv_buf_tests.cpp)
 
 set(SPDLOG_FMT_EXTERNAL ON)
 target_link_libraries(tests PRIVATE fmt::fmt)
