@@ -57,7 +57,9 @@ struct TcpSocket
         std::unique_lock recv_lock{ ctx_.mx };
         std::println("USER: TAKE THE READ LOCK");
         auto &conn = ctx_.tcp.get_connection(quad_);
-        conn.get_recv_var().wait(recv_lock, [&conn] { return !conn.is_recv_empty() || conn.is_finished(); });
+
+        // It isn't supposed to go into TcpConnection::read() until either new data comes in or conneciton is terminated
+        conn.get_recv_var().wait(recv_lock, [&conn] { return !conn.is_recv_empty() || (conn.is_finished() && conn.is_recv_empty()); });
         return conn.read(buf, buf_sz);
     }
 
