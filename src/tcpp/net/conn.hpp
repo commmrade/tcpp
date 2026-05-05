@@ -157,7 +157,10 @@ public:
     [[nodiscard]] std::condition_variable &get_recv_var() { return recv_var_; }
     [[nodiscard]] std::condition_variable &get_send_var() { return send_var_; }
     [[nodiscard]] bool is_recv_empty() const { return recv_buf_.empty(); }
-    [[nodiscard]] bool is_finished() const { return is_finished_; }
+    [[nodiscard]] bool is_finished() const
+    {
+        return recv_buf_.empty() ? false : recv_buf_.back().fin();
+    }
     [[nodiscard]] TcpState get_state() const { return state_; }
 
     // "Userspace" kinda functions -------------------------------------

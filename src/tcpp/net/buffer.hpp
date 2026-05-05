@@ -157,12 +157,12 @@ public:
     }
 
     // I guess this is used for sending, but what if we are sending several segments in 1 RTT, then I need to access nodes after front()
-    TcpSegment& front()
+    const TcpSegment& front() const
     {
         assert(!empty());
         return segs_.front();
     }
-    TcpSegment& back()
+    const TcpSegment& back() const
     {
         assert(!empty());
         return segs_.back();

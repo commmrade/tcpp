@@ -292,23 +292,12 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
     case TcpState::FIN_WAIT_2: {
         // A TCP implementation MAY send an ACK segment acknowledging RCV.NXT
         // when a valid segment arrives that is in the window but not at the left window edge
-        if (tcph.seqn() != recv_.nxt()) {
-            // tcph_.ack(true);
-            // send(send_.nxt(), 0);
-
-            TcpSegment ack_seg{send_.nxt(), {}};
-            ack_seg.set_ack(true);
-            ack_seg.set_ackn(recv_.nxt());
-            send_pure(ack_seg);
-            return true;
-        }
 
         // This should not be done in ZWP state
         if (recv_.wnd()!= 0) {
             const auto payload_size = static_cast<std::uint32_t>(payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0));
             recv_buf_.insert(TcpSegment{tcph.seqn(), payload, tcph.syn(), tcph.fin()}); // I don't care about the flags, except for FIN and SYN maybe
-            // append_recv_data(payload);
-            recv_.set_nxt(recv_.nxt() + payload_size);// FIN is handled in handle_fin()
+            recv_.set_nxt(recv_buf_.check_gaps(recv_.nxt()));
         }
 
         // TODO: Could piggyback this ack

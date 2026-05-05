@@ -183,7 +183,10 @@ protected:
     {
         return *conn_.clock_.get();
     }
-
+    std::uint32_t recv_nxt() const
+    {
+        return conn_.recv_.nxt();
+    }
     std::uint32_t right_edge() const {
         return conn_.right_wnd_edge_;
     }

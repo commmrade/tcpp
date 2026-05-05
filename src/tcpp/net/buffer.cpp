@@ -142,7 +142,9 @@ std::pair<std::vector<std::byte>, std::uint32_t> TcpReceiverBuffer::read(const s
 std::uint32_t TcpReceiverBuffer::check_gaps(const std::uint32_t recv_nxt) const
 {
     // My idea is that it is gonna iterate through consequential segments until it finds a gap or comes to the end and return that seq. num which will be new RECV.NXT
-
+    if (empty()) {
+        return recv_nxt;
+    }
     auto iter = segs_.cbegin();
     if (iter->seq_start() > recv_nxt) {
         // This means that even the first segment's seq_start is more than recv_nxt which means that there is an unfilled gap
