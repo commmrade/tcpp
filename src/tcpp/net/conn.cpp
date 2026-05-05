@@ -8,19 +8,6 @@
 #include <print>
 #include <random>
 
-// void TcpConnection::append_recv_data(const std::span<const std::byte> data) { recv_buf_.append_range(data); }
-
-// void TcpConnection::erase_send_data(const std::size_t bytes_n)
-// {
-    // send_buf_.erase(send_buf_.begin(), send_buf_.begin() + static_cast<const std::ptrdiff_t>(bytes_n));
-    // send_var_.notify_all();
-// }
-
-// void TcpConnection::erase_recv_data(const std::size_t bytes_n)
-// {
-    // recv_buf_.erase(recv_buf_.begin(), recv_buf_.begin() + static_cast<const std::ptrdiff_t>(bytes_n));
-// }
-
 static bool validate_seq_n(const std::uint32_t seq_n, std::size_t payload_size, const std::uint32_t recv_wnd, const std::uint32_t recv_nxt)
 {
     if (payload_size == 0 && recv_wnd == 0 && seq_n == recv_nxt) { return true; } else if (
