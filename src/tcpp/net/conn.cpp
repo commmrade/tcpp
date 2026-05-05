@@ -349,7 +349,6 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
 
 bool TcpConnection::on_fin()
 {
-    is_finished_ = true;
     recv_var_.notify_all();// Notify socekts about a read, now they should check is_finished
 
     switch (state_) {

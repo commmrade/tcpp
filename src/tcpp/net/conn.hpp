@@ -266,7 +266,6 @@ private:
     // Their MSS (what that host can send
     std::uint16_t recv_mss_{ RECEIVER_DEF_MSS };
     // Buffers and stuff
-    bool is_finished_{ false };
 
     // Timer things (all in MS) ----
     RttMeasurement rtt_measurement_;
