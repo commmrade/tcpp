@@ -138,12 +138,14 @@ class TcpConnectionTest;
 
 enum class ConnectionOption : std::uint8_t
 {
-    NAGLE
+    NODELAY,
+    QUICKACK
 };
 
 struct Config
 {
-    bool is_nagle{true};
+    bool is_nodelay{false};
+    bool is_quickack{false};
 };
 
 class TcpConnection
@@ -173,8 +175,12 @@ public:
     void set_option(const ConnectionOption cfg, const Value& val)
     {
         switch (cfg) {
-        case ConnectionOption::NAGLE: {
-            config_.is_nagle = val;
+        case ConnectionOption::NODELAY: {
+            config_.is_nodelay = val;
+            break;
+        }
+        case ConnectionOption::QUICKACK: {
+            config_.is_quickack = val;
             break;
         }
         default: throw std::runtime_error("TcpCon: Config option not implemented");
@@ -194,7 +200,7 @@ public:
 private:
     // Helpers
     void add_fin_segment();
-
+    void ack_new_data(const std::size_t data_size);
     // void append_recv_data(const std::span<const std::byte> data);
     // void erase_recv_data(const std::size_t bytes_n);
 

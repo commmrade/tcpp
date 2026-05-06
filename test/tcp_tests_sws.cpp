@@ -136,7 +136,9 @@ TEST_F(TcpConnectionSenderSwsTest, SenderSws3)
 
 TEST_F(TcpConnectionSenderSwsTest, SenderSws4)
 {
+    conn_.set_option(ConnectionOption::NODELAY, true);
     do_handshake(500);
+
     std::array<std::byte, 900> buf{};
     const auto written = conn_.write(std::span{buf.data(), 500});
     const auto send_size = 500 + netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE;

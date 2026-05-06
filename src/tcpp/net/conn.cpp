@@ -299,19 +299,7 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
             recv_buf_.insert(TcpSegment{tcph.seqn(), payload, tcph.syn(), tcph.fin()}); // I don't care about the flags, except for FIN and SYN maybe
             recv_.set_nxt(recv_buf_.check_gaps(recv_.nxt()));
 
-            // If not armed, arm for delaying the ack
-            if (!ack_timer_.is_armed()) {
-                constexpr auto DEL_ACK_TIMER_DELAY_MS = 200;
-                ack_timer_.start(clock_->now(), DEL_ACK_TIMER_DELAY_MS, recv_.nxt() - payload_size, 0);
-                // This may be piggybacked, if it was, timer will be stopped
-            } else if (ack_timer_.is_armed() && recv_.nxt() - ack_timer_.start_seq() >= 2 * recv_mss_) {
-                // "An ACK SHOULD be generated for at least every second full-sized segment or 2*RMSS bytes of new data"
-                TcpSegment ack_seg{send_.nxt(), {}};
-                ack_seg.set_ack(true);
-                ack_seg.set_ackn(recv_.nxt());
-                send_pure(ack_seg);
-                ack_timer_.stop();
-            }
+            ack_new_data(payload_size);
         }
 
         recv_var_.notify_all();
@@ -498,6 +486,25 @@ void TcpConnection::add_fin_segment() {
     send_buf_.insert(fin_seg);
 }
 
+void TcpConnection::ack_new_data(const std::size_t data_size)
+{
+    // If not armed, arm for delaying the ack
+    if (!config_.is_quickack) {
+        if (!ack_timer_.is_armed()) {
+            constexpr auto DEL_ACK_TIMER_DELAY_MS = 200;
+            ack_timer_.start(clock_->now(), DEL_ACK_TIMER_DELAY_MS, recv_.nxt() - static_cast<const std::uint32_t>(data_size), 0);
+            // This may be piggybacked, if it was, timer will be stopped
+        } else if (ack_timer_.is_armed() && recv_.nxt() - ack_timer_.start_seq() >= 2 * recv_mss_) {
+            // "An ACK SHOULD be generated for at least every second full-sized segment or 2*RMSS bytes of new data"
+            TcpSegment ack_seg{send_.nxt(), {}};
+            ack_seg.set_ack(true);
+            ack_seg.set_ackn(recv_.nxt());
+            send_pure(ack_seg);
+            ack_timer_.stop();
+        }
+    }
+}
+
 bool TcpConnection::handle_send()
 {
     const auto in_flight_n = send_.nxt() - send_.una();
@@ -517,7 +524,7 @@ bool TcpConnection::handle_send()
             return true;
         }
 
-        const bool nagle = config_.is_nagle ? send_.nxt() == send_.una() : true;
+        const bool nagle = config_.is_nodelay ? send_.nxt() == send_.una() : true;
 
         // TODO: PUSH flag in segments
         bool can_send = (std::min(usable_wnd, unsent) >= send_mss_) || (nagle && unsent <= usable_wnd)
@@ -582,7 +589,7 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
             rtt_started = true;
         }
 
-        if (seg.ackn() == ack_timer_.start_seq()) {
+        if (!config_.is_quickack && seg.ackn() == ack_timer_.start_seq()) {
             // This means we delayed an ACK, and data with that ACK was just sent, therefore
             // no need to wait for the timer to fire.
             ack_timer_.stop();
@@ -762,15 +769,18 @@ void TcpConnection::update_timers()
     if (should_sws) {
         retransmit(s_timer_);
     }
-    const bool should_del_ack = ack_timer_.update(time_now);
-    // Timer expired, send pure ACK
-    // Can I piggyback it at this point??
-    if (should_del_ack) {
-        TcpSegment ack_seg{send_.nxt(), {}};
-        ack_seg.set_ack(true);
-        ack_seg.set_ackn(recv_.nxt());
-        send_pure(ack_seg);
-        ack_timer_.retransmitted(clock_->now(), send_.una());
+
+    if (!config_.is_quickack) {
+        const bool should_del_ack = ack_timer_.update(time_now);
+        // Timer expired, send pure ACK
+        // Can I piggyback it at this point??
+        if (should_del_ack) {
+            TcpSegment ack_seg{send_.nxt(), {}};
+            ack_seg.set_ack(true);
+            ack_seg.set_ackn(recv_.nxt());
+            send_pure(ack_seg);
+            ack_timer_.retransmitted(clock_->now(), send_.una());
+        }
     }
 }
 
