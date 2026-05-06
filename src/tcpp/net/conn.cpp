@@ -298,23 +298,20 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
             const auto payload_size = static_cast<std::uint32_t>(payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0));
             recv_buf_.insert(TcpSegment{tcph.seqn(), payload, tcph.syn(), tcph.fin()}); // I don't care about the flags, except for FIN and SYN maybe
             recv_.set_nxt(recv_buf_.check_gaps(recv_.nxt()));
-        }
 
-        // If not armed, arm for delaying the ack
-        if (ack_timer_.is_armed()) {
-            std::println("TIMER ACK DIFF: {}, {}", recv_.nxt() - ack_timer_.start_seq(), 2 * recv_mss_);
-        }
-        if (!ack_timer_.is_armed()) {
-            constexpr auto DEL_ACK_TIMER_DELAY_MS = 200;
-            ack_timer_.start(clock_->now(), DEL_ACK_TIMER_DELAY_MS, recv_.nxt(), 0);
-            // This may be piggybacked, if it was, timer will be stopped
-        } else if (ack_timer_.is_armed() && recv_.nxt() - ack_timer_.start_seq() >= recv_mss_) {
-            // "An ACK SHOULD be generated for at least every second full-sized segment or 2*RMSS bytes of new data"
-            TcpSegment ack_seg{send_.nxt(), {}};
-            ack_seg.set_ack(true);
-            ack_seg.set_ackn(recv_.nxt());
-            send_pure(ack_seg);
-            ack_timer_.stop();
+            // If not armed, arm for delaying the ack
+            if (!ack_timer_.is_armed()) {
+                constexpr auto DEL_ACK_TIMER_DELAY_MS = 200;
+                ack_timer_.start(clock_->now(), DEL_ACK_TIMER_DELAY_MS, recv_.nxt() - payload_size, 0);
+                // This may be piggybacked, if it was, timer will be stopped
+            } else if (ack_timer_.is_armed() && recv_.nxt() - ack_timer_.start_seq() >= 2 * recv_mss_) {
+                // "An ACK SHOULD be generated for at least every second full-sized segment or 2*RMSS bytes of new data"
+                TcpSegment ack_seg{send_.nxt(), {}};
+                ack_seg.set_ack(true);
+                ack_seg.set_ackn(recv_.nxt());
+                send_pure(ack_seg);
+                ack_timer_.stop();
+            }
         }
 
         recv_var_.notify_all();
