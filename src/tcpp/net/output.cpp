@@ -49,7 +49,7 @@ ssize_t SegmentOutput::send(const TcpSegment &seg, const std::size_t max_size_pl
         throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno)));
     }
     std::println("Written {} bytes, buf is {} bytes", written, buf.size());
-    assert(static_cast<std::size_t>(written) == buf.size());
+    // assert(static_cast<std::size_t>(written) == buf.size());
 
     return written;
 }

@@ -101,6 +101,7 @@ TEST_F(TcpReceiverBufTest, PartialRead_ConsumesOnlyRequested)
 // -------------------------------------------------------------------
 TEST_F(TcpReceiverBufTest, OutOfOrder_RecvNxtHoldsUntilGapFilled)
 {
+    conn_.set_option(ConnectionOption::QUICKACK, true);
     do_handshake();
 
     // In-order [0, 1200): seq PEER_ISN+1 .. PEER_ISN+1201

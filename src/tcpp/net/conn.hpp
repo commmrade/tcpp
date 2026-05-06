@@ -200,7 +200,6 @@ public:
 private:
     // Helpers
     void add_fin_segment();
-    void ack_new_data(const std::size_t data_size);
     // void append_recv_data(const std::span<const std::byte> data);
     // void erase_recv_data(const std::size_t bytes_n);
 

@@ -295,11 +295,36 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
 
         // This should not be done in ZWP state
         if (recv_.wnd()!= 0) {
+            const auto old_recv_nxt = recv_.nxt();
             const auto payload_size = static_cast<std::uint32_t>(payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0));
             recv_buf_.insert(TcpSegment{tcph.seqn(), payload, tcph.syn(), tcph.fin()}); // I don't care about the flags, except for FIN and SYN maybe
             recv_.set_nxt(recv_buf_.check_gaps(recv_.nxt()));
 
-            ack_new_data(payload_size);
+            // If not armed, arm for delaying the ack
+            if (!config_.is_quickack) {
+                // Out-of-order or "An ACK SHOULD be generated for at least every second full-sized segment or 2*RMSS bytes of new data"
+                if (ack_timer_.is_armed() && recv_.nxt() - ack_timer_.start_seq() >= 2 * recv_mss_) {
+                    TcpSegment ack_seg{send_.nxt(), {}};
+                    ack_seg.set_ack(true);
+                    ack_seg.set_ackn(recv_.nxt());
+                    send_pure(ack_seg);
+                    ack_timer_.stop();
+                } else if (old_recv_nxt != tcph.seqn()) { // ACK out-of-order immediately
+                    TcpSegment ack_seg{send_.nxt(), {}};
+                    ack_seg.set_ack(true);
+                    ack_seg.set_ackn(recv_.nxt());
+                    send_pure(ack_seg);
+                } else if (!ack_timer_.is_armed()) {
+                    constexpr auto DEL_ACK_TIMER_DELAY_MS = 200;
+                    ack_timer_.start(clock_->now(), DEL_ACK_TIMER_DELAY_MS, tcph.seqn(), 0);
+                    // This may be piggybacked, if it was, timer will be stopped
+                }
+            } else {
+                TcpSegment ack_seg{send_.nxt(), {}};
+                ack_seg.set_ack(true);
+                ack_seg.set_ackn(recv_.nxt());
+                send_pure(ack_seg);
+            }
         }
 
         recv_var_.notify_all();
@@ -484,25 +509,6 @@ void TcpConnection::add_fin_segment() {
     fin_seg.set_ack(true);
     fin_seg.set_ackn(recv_.nxt());
     send_buf_.insert(fin_seg);
-}
-
-void TcpConnection::ack_new_data(const std::size_t data_size)
-{
-    // If not armed, arm for delaying the ack
-    if (!config_.is_quickack) {
-        if (!ack_timer_.is_armed()) {
-            constexpr auto DEL_ACK_TIMER_DELAY_MS = 200;
-            ack_timer_.start(clock_->now(), DEL_ACK_TIMER_DELAY_MS, recv_.nxt() - static_cast<const std::uint32_t>(data_size), 0);
-            // This may be piggybacked, if it was, timer will be stopped
-        } else if (ack_timer_.is_armed() && recv_.nxt() - ack_timer_.start_seq() >= 2 * recv_mss_) {
-            // "An ACK SHOULD be generated for at least every second full-sized segment or 2*RMSS bytes of new data"
-            TcpSegment ack_seg{send_.nxt(), {}};
-            ack_seg.set_ack(true);
-            ack_seg.set_ackn(recv_.nxt());
-            send_pure(ack_seg);
-            ack_timer_.stop();
-        }
-    }
 }
 
 bool TcpConnection::handle_send()

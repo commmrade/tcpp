@@ -83,6 +83,25 @@ TEST_F(TcpDelAckTest, TwoSegmentsReaching2Rmss_ImmediateAck)
     Mock::VerifyAndClearExpectations(&mock_io_);
 }
 
+TEST_F(TcpDelAckTest, TwoSegmentsNotReaching2Rmss_NoImmediateAck)
+{
+    do_handshake();
+
+    const auto rmss = recv_mss() / 3;
+    std::vector<std::byte> p1(rmss, std::byte{1});
+    std::vector<std::byte> p2(rmss, std::byte{2});
+
+    // First segment — below threshold, no ACK
+    EXPECT_CALL(mock_io_, write(_)).Times(0);
+    peer_send_no_ack(PEER_ISN + 1, p1);
+    Mock::VerifyAndClearExpectations(&mock_io_);
+
+    // Second segment pushes total to RMSS - no immediate ACK
+    EXPECT_CALL(mock_io_, write(_)).Times(0);
+    peer_send_no_ack(PEER_ISN + 1 + rmss, p2);
+    Mock::VerifyAndClearExpectations(&mock_io_);
+}
+
 TEST_F(TcpDelAckTest, PiggybackOnOutgoingData)
 {
     do_handshake();
