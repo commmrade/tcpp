@@ -156,6 +156,23 @@ protected:
         Mock::VerifyAndClearExpectations(&mock_io_);
     }
 
+    void send_data_to_conn_noack(const std::size_t size)
+    {
+        std::vector<std::byte> payload(size);
+        auto seg = helpers::make_tcp({
+            .sport = PEER_PORT, .dport = LOCAL_PORT,
+            .seqn  = PEER_ISN + 1,
+            .ackn  = get_send_iss() + 1,
+            .window = 65535,
+            .ack   = true,
+        });
+        const auto seg_d = seg.serialize();
+        const netparser::TcpHeaderView seg_view{seg_d};
+        EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+        conn_.on_packet(seg_view, payload);
+        Mock::VerifyAndClearExpectations(&mock_io_);
+    }
+
     std::uint16_t send_mss() const
     {
         return conn_.send_mss_;
@@ -198,5 +215,10 @@ protected:
     }
     void set_recv_wnd(const std::uint16_t wnd) {
         conn_.recv_.set_wnd(wnd);
+    }
+
+    std::uint16_t recv_mss() const
+    {
+        return conn_.recv_mss_;
     }
 };

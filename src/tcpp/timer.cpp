@@ -163,3 +163,18 @@ void SwsTimer::retransmitted(const std::int64_t cur_time, const std::uint32_t se
     stop();
     // Sws timer does not exp. backoff
 }
+
+bool DelAckTimer::update(const std::int64_t cur_time_ms)
+{
+    if (start_time_.has_value()) {
+        if (cur_time_ms >= expire_at_time_.value()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void DelAckTimer::retransmitted(const std::int64_t cur_time, const std::uint32_t send_una)
+{
+    stop();
+}

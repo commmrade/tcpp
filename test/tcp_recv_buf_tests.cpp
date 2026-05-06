@@ -27,8 +27,7 @@ protected:
         const auto seg_d = seg.serialize();
         const netparser::TcpHeaderView seg_view{seg_d};
 
-        EXPECT_CALL(mock_io_, write(_))
-            .WillOnce(Return(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE));
+        EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
         conn_.on_packet(seg_view, payload);
         Mock::VerifyAndClearExpectations(&mock_io_);
     }

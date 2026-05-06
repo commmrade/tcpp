@@ -300,11 +300,22 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
             recv_.set_nxt(recv_buf_.check_gaps(recv_.nxt()));
         }
 
-        // TODO: Could piggyback this ack
-        TcpSegment ack_seg{send_.nxt(), {}};
-        ack_seg.set_ack(true);
-        ack_seg.set_ackn(recv_.nxt());
-        send_pure(ack_seg);
+        // If not armed, arm for delaying the ack
+        if (ack_timer_.is_armed()) {
+            std::println("TIMER ACK DIFF: {}, {}", recv_.nxt() - ack_timer_.start_seq(), 2 * recv_mss_);
+        }
+        if (!ack_timer_.is_armed()) {
+            constexpr auto DEL_ACK_TIMER_DELAY_MS = 200;
+            ack_timer_.start(clock_->now(), DEL_ACK_TIMER_DELAY_MS, recv_.nxt(), 0);
+            // This may be piggybacked, if it was, timer will be stopped
+        } else if (ack_timer_.is_armed() && recv_.nxt() - ack_timer_.start_seq() >= recv_mss_) {
+            // "An ACK SHOULD be generated for at least every second full-sized segment or 2*RMSS bytes of new data"
+            TcpSegment ack_seg{send_.nxt(), {}};
+            ack_seg.set_ack(true);
+            ack_seg.set_ackn(recv_.nxt());
+            send_pure(ack_seg);
+            ack_timer_.stop();
+        }
 
         recv_var_.notify_all();
         break;
@@ -574,6 +585,12 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
             rtt_started = true;
         }
 
+        if (seg.ackn() == ack_timer_.start_seq()) {
+            // This means we delayed an ACK, and data with that ACK was just sent, therefore
+            // no need to wait for the timer to fire.
+            ack_timer_.stop();
+        }
+
         if (wrapping_gt(seg.seq_start() + static_cast<std::uint32_t>(data_size), send_.nxt() - 1)) {
             send_.set_nxt(seg.seq_start() + static_cast<std::uint32_t>(data_size));
         }
@@ -747,6 +764,16 @@ void TcpConnection::update_timers()
     const bool should_sws = s_timer_.update(time_now);
     if (should_sws) {
         retransmit(s_timer_);
+    }
+    const bool should_del_ack = ack_timer_.update(time_now);
+    // Timer expired, send pure ACK
+    // Can I piggyback it at this point??
+    if (should_del_ack) {
+        TcpSegment ack_seg{send_.nxt(), {}};
+        ack_seg.set_ack(true);
+        ack_seg.set_ackn(recv_.nxt());
+        send_pure(ack_seg);
+        ack_timer_.retransmitted(clock_->now(), send_.una());
     }
 }
 

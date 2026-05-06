@@ -277,6 +277,7 @@ private:
     RetransTimer r_timer_{};
     ZwpTimer z_timer_{};
     SwsTimer s_timer_{};
+    DelAckTimer ack_timer_{};
 
     std::unique_ptr<ClockInterface> clock_;
     // retransmissions -----

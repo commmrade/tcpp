@@ -16,7 +16,7 @@ class TcpConnectionReceiverSwsTest : public TcpConnectionTest {};
 TEST_F(TcpConnectionReceiverSwsTest, BelowThreshold_NoWindowUpdate)
 {
     do_handshake();
-    send_data_to_conn(1539); // fill buffer with 1539 bytes
+    send_data_to_conn_noack(1539); // fill buffer with 1539 bytes
     const auto wnd_before = get_recv_win();
 
     std::array<char, 64000> rd_buf{};
@@ -32,7 +32,7 @@ TEST_F(TcpConnectionReceiverSwsTest, BelowThreshold_NoWindowUpdate)
 TEST_F(TcpConnectionReceiverSwsTest, AtThreshold_WindowUpdated)
 {
     do_handshake();
-    send_data_to_conn(1540);
+    send_data_to_conn_noack(1540);
     const auto wnd_before = get_recv_win();
 
     std::array<char, 64000> rd_buf{};
@@ -47,7 +47,7 @@ TEST_F(TcpConnectionReceiverSwsTest, AtThreshold_WindowUpdated)
 TEST_F(TcpConnectionReceiverSwsTest, AboveThreshold_WindowUpdated)
 {
     do_handshake();
-    send_data_to_conn(2000);
+    send_data_to_conn_noack(2000);
     const auto wnd_before = get_recv_win();
 
     std::array<char, 64000> rd_buf{};
@@ -62,7 +62,7 @@ TEST_F(TcpConnectionReceiverSwsTest, AboveThreshold_WindowUpdated)
 TEST_F(TcpConnectionReceiverSwsTest, PartialRead_BelowThreshold_NoUpdate)
 {
     do_handshake();
-    send_data_to_conn(2000);
+    send_data_to_conn_noack(2000);
     const auto wnd_before = get_recv_win();
 
     std::array<char, 64000> rd_buf{};
@@ -81,7 +81,7 @@ TEST_F(TcpConnectionReceiverSwsTest, PartialRead_BelowThreshold_NoUpdate)
 TEST_F(TcpConnectionReceiverSwsTest, NoConsumption_NoUpdate)
 {
     do_handshake();
-    send_data_to_conn(1540);
+    send_data_to_conn_noack(1540);
     conn_.on_tick();
     upd_recv_win();
     const auto wnd_after_recv = get_recv_win();
