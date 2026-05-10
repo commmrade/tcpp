@@ -29,7 +29,8 @@ add_executable(tests
         tcp_buffer_tests.cpp
         tcp_send_buf_tests.cpp
         tcp_recv_buf_tests.cpp
-        tcp_delayed_ack_tests.cpp)
+        tcp_delayed_ack_tests.cpp
+        tcp_conn_timeout_tests.cpp)
 
 set(SPDLOG_FMT_EXTERNAL ON)
 target_link_libraries(tests PRIVATE fmt::fmt)

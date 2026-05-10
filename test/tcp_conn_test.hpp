@@ -178,6 +178,11 @@ protected:
         return conn_.send_mss_;
     }
 
+    std::uint32_t get_send_nxt() const
+    {
+        return conn_.send_.nxt();
+    }
+
     ssize_t write(std::span<const std::byte> payload)
     {
         return conn_.write(payload);

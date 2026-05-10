@@ -359,7 +359,7 @@ bool TcpConnection::on_fin()
         [[fallthrough]];
     }
     case TcpState::TIME_WAIT: {
-        constexpr auto TIME_WAIT_TIMEOUT_MS = 3000; // Linux does 60 seconds
+        constexpr auto TIME_WAIT_TIMEOUT_MS = 60000; // Linux does 60 seconds
         time_wait_timer_.stop();
         time_wait_timer_.start(clock_->now(), TIME_WAIT_TIMEOUT_MS, 0, 0);
         state_ = TcpState::TIME_WAIT;
