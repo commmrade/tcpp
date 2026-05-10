@@ -310,13 +310,15 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
                     send_pure(ack_seg);
                     ack_timer_.stop();
                 } else if (old_recv_nxt != tcph.seqn()) { // ACK out-of-order immediately
+                    std::println("ACK OUT OF ORDER");
                     TcpSegment ack_seg{send_.nxt(), {}};
                     ack_seg.set_ack(true);
                     ack_seg.set_ackn(recv_.nxt());
                     send_pure(ack_seg);
                 } else if (!ack_timer_.is_armed()) {
                     constexpr auto DEL_ACK_TIMER_DELAY_MS = 200;
-                    ack_timer_.start(clock_->now(), DEL_ACK_TIMER_DELAY_MS, tcph.seqn(), 0);
+                    std::println("START DELACK TIMER");
+                    ack_timer_.start(clock_->now(), DEL_ACK_TIMER_DELAY_MS, old_recv_nxt, 0);
                     // This may be piggybacked, if it was, timer will be stopped
                 }
             } else {
@@ -603,7 +605,8 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
             rtt_started = true;
         }
 
-        if (!config_.is_quickack && seg.ackn() == ack_timer_.start_seq()) {
+        if (!config_.is_quickack && wrapping_gt(seg.ackn() + 1, ack_timer_.start_seq())) {
+            std::println("We are sending a piggybacked ACK, stopping ack timer");
             // This means we delayed an ACK, and data with that ACK was just sent, therefore
             // no need to wait for the timer to fire.
             ack_timer_.stop();
@@ -789,6 +792,7 @@ void TcpConnection::update_timers()
         // Timer expired, send pure ACK
         // Can I piggyback it at this point??
         if (should_del_ack) {
+            std::println("DELACK TIMER EXPIRED");
             TcpSegment ack_seg{send_.nxt(), {}};
             ack_seg.set_ack(true);
             ack_seg.set_ackn(recv_.nxt());

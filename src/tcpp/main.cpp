@@ -194,8 +194,9 @@ int main()
             std::println("user: DATA FINISHED, CLOSING...");
             break;
         } else {
-            sock.close();
-            break;
+            // sock.close();
+            // break;
+
             // auto wr = sock.write(std::span<const std::byte>(buf.data(), static_cast<std::size_t>(rd)));
         }
     }
