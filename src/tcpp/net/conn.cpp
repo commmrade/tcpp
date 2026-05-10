@@ -605,7 +605,7 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
             rtt_started = true;
         }
 
-        if (!config_.is_quickack && wrapping_gt(seg.ackn() + 1, ack_timer_.start_seq())) {
+        if (!config_.is_quickack && wrapping_gt(seg.ackn(), ack_timer_.start_seq())) {
             std::println("We are sending a piggybacked ACK, stopping ack timer");
             // This means we delayed an ACK, and data with that ACK was just sent, therefore
             // no need to wait for the timer to fire.

@@ -197,7 +197,7 @@ int main()
             // sock.close();
             // break;
 
-            // auto wr = sock.write(std::span<const std::byte>(buf.data(), static_cast<std::size_t>(rd)));
+            auto wr = sock.write(std::span<const std::byte>(buf.data(), static_cast<std::size_t>(rd)));
         }
     }
 
