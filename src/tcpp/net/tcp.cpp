@@ -28,7 +28,6 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
             conn->on_packet(tcph, payload);
             std::println("CONN STATE: {}", (int)conn->get_state());
             if (conn->get_state() == TcpState::CLOSED) {
-                std::println("DELETED CONNECTION");
                 established_connections_.erase(eiter);
             }
         } else if (bound_.contains(quad.src_port)) {
@@ -71,7 +70,16 @@ void Tcp::process_packet()
 
     // It makes sence to call on_tick on syn_recv_conns, because they may retransmit SYNACK
     for (const auto &[quad, conn] : syn_recv_connections_) { conn->on_tick(); }
-    for (const auto &[quad, conn] : established_connections_) { conn->on_tick(); }
+    for (auto iter = established_connections_.begin(); iter != established_connections_.end();) {
+        auto &conn = iter->second;
+        conn->on_tick();
+        if (conn->get_state() == TcpState::CLOSED) {
+            iter = established_connections_.erase(iter);
+            // Returns 1 iter after the erased element
+        } else {
+            ++iter;
+        }
+    }
 
     if (ret == 0) {
         return;// Nothing to read

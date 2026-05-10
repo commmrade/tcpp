@@ -356,10 +356,18 @@ bool TcpConnection::on_fin()
     }
     case TcpState::FIN_WAIT_2: {
         // WE got a FIN from the other side, now switch to time_wait
+        [[fallthrough]];
+    }
+    case TcpState::TIME_WAIT: {
+        constexpr auto TIME_WAIT_TIMEOUT_MS = 3000; // Linux does 60 seconds
+        time_wait_timer_.stop();
+        time_wait_timer_.start(clock_->now(), TIME_WAIT_TIMEOUT_MS, 0, 0);
         state_ = TcpState::TIME_WAIT;
-        // TODO: start wait timer and then close
 
-        state_ = TcpState::CLOSED;
+        r_timer_.stop();
+        z_timer_.stop();
+        s_timer_.stop();
+        ack_timer_.stop();
         break;
     }
     default:
@@ -787,6 +795,12 @@ void TcpConnection::update_timers()
             send_pure(ack_seg);
             ack_timer_.retransmitted(clock_->now(), send_.una());
         }
+    }
+
+    const bool should_tw_tout = time_wait_timer_.update(clock_->now());
+    if (should_tw_tout) {
+        std::println("TIME WAIT TIMER EXPIRED, CLOSING");
+        state_ = TcpState::CLOSED;
     }
 }
 

@@ -194,6 +194,8 @@ int main()
             std::println("user: DATA FINISHED, CLOSING...");
             break;
         } else {
+            sock.close();
+            break;
             // auto wr = sock.write(std::span<const std::byte>(buf.data(), static_cast<std::size_t>(rd)));
         }
     }
@@ -221,7 +223,7 @@ int main()
     //     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     // }
 
-    sleep(2);
+    sleep(100);
     net_thread.request_stop();
     net_thread.join();
     return 0;

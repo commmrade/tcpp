@@ -98,7 +98,7 @@ struct SwsTimer : public Timer
     void retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) override;
 };
 
-struct DelAckTimer : public Timer
+struct ExpireTimer : public Timer
 {
     bool update(const std::int64_t cur_time_ms);
     void retransmitted(const std::int64_t cur_time, const std::uint32_t send_una);
