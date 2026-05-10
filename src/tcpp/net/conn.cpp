@@ -799,7 +799,6 @@ void TcpConnection::update_timers()
 
     const bool should_tw_tout = time_wait_timer_.update(clock_->now());
     if (should_tw_tout) {
-        std::println("TIME WAIT TIMER EXPIRED, CLOSING");
         state_ = TcpState::CLOSED;
     }
 }
