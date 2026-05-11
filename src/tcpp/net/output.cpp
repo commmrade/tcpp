@@ -54,7 +54,7 @@ ssize_t SegmentOutput::send(const TcpSegment &seg, const std::size_t max_size_pl
     return written;
 }
 
-void SegmentOutput::init_headers(const std::uint32_t src_addr,
+void SegmentOutput::init(const std::uint32_t src_addr,
     const std::uint32_t dst_addr,
     const std::uint16_t src_port,
     const std::uint16_t dst_port) {
@@ -69,12 +69,4 @@ void SegmentOutput::init_headers(const std::uint32_t src_addr,
 
     tcph_.source_port(src_port);
     tcph_.dest_port(dst_port);
-}
-
-void SegmentOutput::set_mss(const std::uint16_t mss) {
-    tcph_.options().mss(mss);
-}
-
-void SegmentOutput::clear_options() {
-    tcph_.options().clear();
 }

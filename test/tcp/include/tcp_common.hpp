@@ -17,19 +17,8 @@ class MockOutput : public OutputInterface
 {
 public:
     MOCK_METHOD(ssize_t, send, (const TcpSegment& seg, const std::size_t max_size_pl, const std::uint32_t rwnd), (override));
-
-    void init_headers(const std::uint32_t src_addr, const std::uint32_t dst_addr, const std::uint16_t src_port, const std::uint16_t dst_port) override
-    {
-
-    }
-    void set_mss(const std::uint16_t mss) override
-    {
-
-    }
-    void clear_options() override
-    {
-
-    }
+    void init([[maybe_unused]] const std::uint32_t src_addr, [[maybe_unused]] const std::uint32_t dst_addr, [[maybe_unused]] const std::uint16_t src_port, [[maybe_unused]] const std::uint16_t dst_port) override
+    {}
 };
 
 class FakeClock : public ClockInterface

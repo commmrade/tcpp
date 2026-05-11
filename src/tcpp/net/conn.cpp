@@ -294,7 +294,7 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
         // when a valid segment arrives that is in the window but not at the left window edge
 
         // This should not be done in ZWP state
-        if (recv_.wnd()!= 0) {
+        if (recv_.wnd() != 0) {
             const auto old_recv_nxt = recv_.nxt();
             const auto payload_size = static_cast<std::uint32_t>(payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0));
             recv_buf_.insert(TcpSegment{tcph.seqn(), payload, tcph.syn(), tcph.fin()}); // I don't care about the flags, except for FIN and SYN maybe
@@ -317,6 +317,8 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
                 } else if (!ack_timer_.is_armed()) {
                     constexpr auto DEL_ACK_TIMER_DELAY_MS = 200;
                     ack_timer_.start(clock_->now(), DEL_ACK_TIMER_DELAY_MS, old_recv_nxt, 0);
+
+                    std::println("STATERED DELACK TIMER");
                     // This may be piggybacked, if it was, timer will be stopped
                 }
             } else {
