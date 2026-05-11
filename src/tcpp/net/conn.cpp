@@ -592,7 +592,7 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
 
         const auto wnd_to_adv = static_cast<std::uint16_t>(recv_.wnd());
         const auto to_send_max = std::min(seg.payload_size(), max_size_pl - total_written_pl);
-        output_.send(seg, to_send_max, wnd_to_adv);
+        output_->send(seg, to_send_max, wnd_to_adv);
         total_written_pl += to_send_max;
 
         const auto data_size = seg.size_in_seq();
@@ -646,20 +646,20 @@ ssize_t TcpConnection::send_pure(const TcpSegment &seg)
 {
     update_recv_window();
     const auto wnd_to_adv = static_cast<std::uint16_t>(recv_.wnd());
-    return output_.send(seg, 0, wnd_to_adv);
+    return output_->send(seg, 0, wnd_to_adv);
 }
 
 ssize_t TcpConnection::send_retransmit(const TcpSegment &retrans_seg, const std::size_t max_size_pl)
 {
     update_recv_window();
     const auto wnd_to_adv = static_cast<std::uint16_t>(recv_.wnd());
-    return output_.send(retrans_seg, max_size_pl, wnd_to_adv);
+    return output_->send(retrans_seg, max_size_pl, wnd_to_adv);
 }
 
 
 void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
 {
-    output_.init_headers(iph.dest_addr(), iph.source_addr(), tcph.dest_port(), tcph.source_port());
+    output_->init_headers(iph.dest_addr(), iph.source_addr(), tcph.dest_port(), tcph.source_port());
 
     // 3.10.7.2. LISTEN STATE
     if (tcph.rst()) {
@@ -699,7 +699,7 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
         auto iss = dis(gen);
         // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
 
-        output_.set_mss(recv_mss_); // FIXME: SHOULD I SEND IT IF THAT PEER DID NOT HAVE THIS????
+        output_->set_mss(recv_mss_); // FIXME: SHOULD I SEND IT IF THAT PEER DID NOT HAVE THIS????
 
         TcpSegment synack_seg{iss, {}, true};
         synack_seg.set_ack(true);
@@ -717,7 +717,7 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
         send_data(1, 0);
         // send(iss, 0);
 
-        output_.clear_options();
+        output_->clear_options();
         state_ = TcpState::SYN_RCVD;
     }
 }
@@ -734,9 +734,9 @@ void TcpConnection::open_active(const std::uint32_t saddr,
 
     const auto iss = dis(gen);
 
-    output_.init_headers(saddr, daddr, sport, dport);
+    output_->init_headers(saddr, daddr, sport, dport);
 
-    output_.set_mss(recv_mss_);
+    output_->set_mss(recv_mss_);
     // tcph_.options().mss(recv_mss_);
 
     TcpSegment seg{iss, {}, true};
@@ -751,7 +751,7 @@ void TcpConnection::open_active(const std::uint32_t saddr,
 
     send_data(1, 0);
 
-    output_.clear_options();
+    output_->clear_options();
     state_ = TcpState::SYN_SENT;
 }
 

@@ -13,6 +13,25 @@ public:
     MOCK_METHOD(ssize_t, write, (std::span<const std::byte> payload), (override));
 };
 
+class MockOutput : public OutputInterface
+{
+public:
+    MOCK_METHOD(ssize_t, send, (const TcpSegment& seg, const std::size_t max_size_pl, const std::uint32_t rwnd), (override));
+
+    void init_headers(const std::uint32_t src_addr, const std::uint32_t dst_addr, const std::uint16_t src_port, const std::uint16_t dst_port) override
+    {
+
+    }
+    void set_mss(const std::uint16_t mss) override
+    {
+
+    }
+    void clear_options() override
+    {
+
+    }
+};
+
 class FakeClock : public ClockInterface
 {
 public:
@@ -96,12 +115,16 @@ protected:
     static constexpr std::uint16_t PEER_PORT  = 12345;
     static constexpr std::uint16_t LOCAL_PORT = 8090;
     static constexpr std::uint32_t PEER_ISN  = 1000;
-    MockTun mock_io_;
-    TcpConnection conn_{mock_io_, std::make_unique<FakeClock>()};
+    TcpConnection conn_{std::make_unique<MockOutput>(), std::make_unique<FakeClock>()};
+
+    MockOutput& output()
+    {
+        return static_cast<MockOutput&>(*conn_.output_);
+    }
 
     void do_handshake(const std::uint16_t send_wnd_size = std::numeric_limits<std::uint16_t>::max())
     {
-        EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(44));
+        EXPECT_CALL(output(), send).WillOnce(Return(44));
 
         auto iph = helpers::make_ip({.src = PEER_IP, .dst = LOCAL_IP});
         auto syn  = helpers::make_tcp({
@@ -117,9 +140,9 @@ protected:
         netparser::IpHeaderView iph_view{iph_data};
         netparser::TcpHeaderView tcph_view{tcph_data};
         conn_.open_passive(iph_view, tcph_view);
-        Mock::VerifyAndClearExpectations(&mock_io_);
+        Mock::VerifyAndClearExpectations(&output());
 
-        EXPECT_CALL(mock_io_, write(_)).Times(0);
+        EXPECT_CALL(output(), send).Times(0);
         auto ack = helpers::make_tcp({
             .sport = PEER_PORT, .dport = LOCAL_PORT,
             .seqn  = PEER_ISN + 1,
@@ -130,10 +153,23 @@ protected:
         auto ack_data = ack.serialize();
         netparser::TcpHeaderView ack_view{ack_data};
         conn_.on_packet(ack_view, {});
-        Mock::VerifyAndClearExpectations(&mock_io_);
+        Mock::VerifyAndClearExpectations(&output());
 
         ASSERT_EQ(conn_.send_.wnd(), send_wnd_size);
         ASSERT_EQ(conn_.get_state(), TcpState::ESTAB);
+    }
+
+    void passive_open(const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
+    {
+        conn_.open_passive(iph, tcph);
+    }
+
+    void active_open(const std::uint32_t saddr,
+    const std::uint16_t sport,
+    const std::uint32_t daddr,
+    const std::uint16_t dport)
+    {
+        conn_.open_active(saddr, sport, daddr, dport);
     }
 
     void send_data_to_conn(const std::size_t size)
@@ -151,9 +187,9 @@ protected:
         const auto seg_d = seg.serialize();
         const netparser::TcpHeaderView seg_view{ seg_d };
 
-        EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(netparser::TCPH_MIN_SIZE + netparser::IPV4H_MIN_SIZE));
+        EXPECT_CALL(output(), send).WillOnce(Return(netparser::TCPH_MIN_SIZE + netparser::IPV4H_MIN_SIZE));
         conn_.on_packet(seg_view, payload);
-        Mock::VerifyAndClearExpectations(&mock_io_);
+        Mock::VerifyAndClearExpectations(&output());
     }
 
     void send_data_to_conn_noack(const std::size_t size)
@@ -168,14 +204,19 @@ protected:
         });
         const auto seg_d = seg.serialize();
         const netparser::TcpHeaderView seg_view{seg_d};
-        EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+        EXPECT_CALL(output(), send).Times(AnyNumber());
         conn_.on_packet(seg_view, payload);
-        Mock::VerifyAndClearExpectations(&mock_io_);
+        Mock::VerifyAndClearExpectations(&output());
     }
 
     std::uint16_t send_mss() const
     {
         return conn_.send_mss_;
+    }
+
+    std::uint32_t send_una() const
+    {
+        return conn_.send_.una();
     }
 
     std::uint32_t get_send_nxt() const

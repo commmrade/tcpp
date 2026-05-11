@@ -151,8 +151,8 @@ struct Config
 class TcpConnection
 {
 public:
-    TcpConnection(IOInterface &tun, std::unique_ptr<ClockInterface> clock)
-        : output_(tun), clock_(std::move(clock)) {}
+    TcpConnection(std::unique_ptr<OutputInterface> output, std::unique_ptr<ClockInterface> clock)
+        : output_(std::move(output)), clock_(std::move(clock)) {}
 
     // Helpers
     [[nodiscard]] std::condition_variable &get_connect_var() { return conn_var_; }
@@ -237,7 +237,7 @@ private:
     friend class Tcp;
     friend class TcpConnectionTest;
 
-    SegmentOutput output_;
+    std::unique_ptr<OutputInterface> output_;
 
     std::condition_variable recv_var_;// Notified when something is received
     std::condition_variable conn_var_;// Notified when 3 way handshake is done (both active and passive)

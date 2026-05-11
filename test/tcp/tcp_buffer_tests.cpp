@@ -651,9 +651,9 @@ protected:
         const auto seg_d = seg.serialize();
         const netparser::TcpHeaderView seg_view{seg_d};
 
-        EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+        EXPECT_CALL(output(), send).Times(AnyNumber());
         conn_.on_packet(seg_view, payload);
-        Mock::VerifyAndClearExpectations(&mock_io_);
+        Mock::VerifyAndClearExpectations(&output());
     }
 
     ssize_t conn_read(void* buf, const std::size_t n)
