@@ -30,7 +30,8 @@ add_executable(tests
         tcp/tcp_delayed_ack_tests.cpp
         tcp/tcp_msl_timeout_tests.cpp
         tcp/tcp_conn_estab.cpp
-        tcp/tcp_conn_teardown.cpp)
+        tcp/tcp_conn_teardown.cpp
+        tcp/tcp_retransmit_data_tests.cpp)
 
 set(SPDLOG_FMT_EXTERNAL ON)
 target_link_libraries(tests PRIVATE fmt::fmt)
