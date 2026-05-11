@@ -659,7 +659,7 @@ ssize_t TcpConnection::send_retransmit(const TcpSegment &retrans_seg, const std:
 
 void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph)
 {
-    output_->init_headers(iph.dest_addr(), iph.source_addr(), tcph.dest_port(), tcph.source_port());
+    output_->init(iph.dest_addr(), iph.source_addr(), tcph.dest_port(), tcph.source_port());
 
     // 3.10.7.2. LISTEN STATE
     if (tcph.rst()) {
@@ -699,11 +699,10 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
         auto iss = dis(gen);
         // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
 
-        output_->set_mss(recv_mss_); // FIXME: SHOULD I SEND IT IF THAT PEER DID NOT HAVE THIS????
-
         TcpSegment synack_seg{iss, {}, true};
         synack_seg.set_ack(true);
         synack_seg.set_ackn(recv_.nxt());
+        synack_seg.set_mss(recv_mss_);
         send_buf_.insert(synack_seg); // Put it onto retrans. queue
 
         // tcph_.options().mss(recv_mss_);
@@ -717,7 +716,6 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
         send_data(1, 0);
         // send(iss, 0);
 
-        output_->clear_options();
         state_ = TcpState::SYN_RCVD;
     }
 }
@@ -734,12 +732,10 @@ void TcpConnection::open_active(const std::uint32_t saddr,
 
     const auto iss = dis(gen);
 
-    output_->init_headers(saddr, daddr, sport, dport);
-
-    output_->set_mss(recv_mss_);
-    // tcph_.options().mss(recv_mss_);
+    output_->init(saddr, daddr, sport, dport);
 
     TcpSegment seg{iss, {}, true};
+    seg.set_mss(recv_mss_);
     send_buf_.insert(seg);
 
     send_.set_iss(iss);
@@ -751,7 +747,6 @@ void TcpConnection::open_active(const std::uint32_t saddr,
 
     send_data(1, 0);
 
-    output_->clear_options();
     state_ = TcpState::SYN_SENT;
 }
 

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <vector>
 #include <span>
 
@@ -64,6 +65,15 @@ public:
         : payload_(payload.begin(), payload.end()), syn_(syn), fin_(fin),
         seq_n_(seq_start), end_seq_n_(seq_n_ + static_cast<std::uint32_t>(payload.size()) + (fin_ ? 1 : 0) + (syn_ ? 1 : 0))
     {
+    }
+
+    void set_mss(const std::uint16_t mss)
+    {
+        mss_.emplace(mss);
+    }
+    [[nodiscard]] std::optional<std::uint16_t> mss() const
+    {
+        return mss_;
     }
 
     [[nodiscard]] bool ack() const
@@ -133,6 +143,8 @@ private:
     std::uint32_t end_seq_n_{};
 
     std::uint32_t ack_n_{};
+
+    std::optional<std::uint16_t> mss_{};
 };
 
 class TcpBuffer
