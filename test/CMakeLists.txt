@@ -19,18 +19,16 @@ endif ()
 include(GoogleTest)
 
 add_executable(tests
-        ip_tests.cpp
-        tcp_tests.cpp
+        parsing/ip_parsing_tests.cpp
+        parsing/tcp_parsing_tests.cpp
         ../src/tcpp/net/conn.cpp
         ../src/tcpp/timer.cpp
         ../src/tcpp/net/buffer.cpp
         ../src/tcpp/net/output.cpp
-        tcp_tests_sws.cpp
-        tcp_buffer_tests.cpp
-        tcp_send_buf_tests.cpp
-        tcp_recv_buf_tests.cpp
-        tcp_delayed_ack_tests.cpp
-        tcp_conn_timeout_tests.cpp)
+        tcp/tcp_sws_tests.cpp
+        tcp/tcp_buffer_tests.cpp
+        tcp/tcp_delayed_ack_tests.cpp
+        tcp/tcp_msl_timeout_tests.cpp)
 
 set(SPDLOG_FMT_EXTERNAL ON)
 target_link_libraries(tests PRIVATE fmt::fmt)

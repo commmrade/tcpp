@@ -2,7 +2,7 @@
 // Created by klewy on 5/6/26.
 //
 
-#include "tcp_conn_test.hpp"
+#include "include/tcp_common.hpp"
 #include <gmock/gmock.h>
 
 class TcpDelAckTest : public TcpConnectionTest

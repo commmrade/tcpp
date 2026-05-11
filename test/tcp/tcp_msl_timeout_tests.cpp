@@ -1,7 +1,7 @@
 //
 // Created by klewy on 5/11/26.
 //
-#include "tcp_conn_test.hpp"
+#include "include/tcp_common.hpp"
 #include <gmock/gmock.h>
 
 class TcpConnMslTimeoutTest : public TcpConnectionTest
