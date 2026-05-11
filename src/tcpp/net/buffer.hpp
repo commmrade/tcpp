@@ -10,6 +10,7 @@
 #include <list>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <vector>
 #include <span>
 
@@ -140,6 +141,10 @@ public:
     friend class TcpBufferTest;
     friend class TcpReceiverBufferTest;
 
+     [[nodiscard]] std::size_t free_space() const
+     {
+         return std::numeric_limits<std::uint16_t>::max() - size_bytes();
+     }
     // Inserts a new node
     bool insert(const TcpSegment& seg);
     std::size_t consume_seq(const std::uint32_t seq_range_to);

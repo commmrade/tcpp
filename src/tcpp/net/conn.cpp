@@ -310,14 +310,12 @@ bool TcpConnection::on_data(const netparser::TcpHeaderView &tcph,
                     send_pure(ack_seg);
                     ack_timer_.stop();
                 } else if (old_recv_nxt != tcph.seqn()) { // ACK out-of-order immediately
-                    std::println("ACK OUT OF ORDER");
                     TcpSegment ack_seg{send_.nxt(), {}};
                     ack_seg.set_ack(true);
                     ack_seg.set_ackn(recv_.nxt());
                     send_pure(ack_seg);
                 } else if (!ack_timer_.is_armed()) {
                     constexpr auto DEL_ACK_TIMER_DELAY_MS = 200;
-                    std::println("START DELACK TIMER");
                     ack_timer_.start(clock_->now(), DEL_ACK_TIMER_DELAY_MS, old_recv_nxt, 0);
                     // This may be piggybacked, if it was, timer will be stopped
                 }
@@ -606,7 +604,6 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
         }
 
         if (!config_.is_quickack && wrapping_gt(seg.ackn(), ack_timer_.start_seq())) {
-            std::println("We are sending a piggybacked ACK, stopping ack timer");
             // This means we delayed an ACK, and data with that ACK was just sent, therefore
             // no need to wait for the timer to fire.
             ack_timer_.stop();
@@ -848,7 +845,7 @@ ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
 
 ssize_t TcpConnection::write(std::span<const std::byte> buf)
 {
-    const auto insert_bytes_n = std::min(send_buf_free_space(), buf.size());
+    const auto insert_bytes_n = std::min(send_buf_.free_space(), buf.size());
     switch (state_) {
     case TcpState::SYN_SENT:
     case TcpState::SYN_RCVD:

@@ -187,11 +187,6 @@ public:
         }
     }
 
-    [[nodiscard]] std::size_t send_buf_free_space() const
-    {
-        return std::numeric_limits<std::uint16_t>::max() - send_buf_.size_bytes();
-    }
-
     // Check timers, all sorts of events and issue SENDs
     // Method is used for SENDs and TIMEOUTs and all other kinds of events except SEGMENT ARRIVES
     void on_tick();
