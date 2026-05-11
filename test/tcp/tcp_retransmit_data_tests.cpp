@@ -190,3 +190,77 @@ TEST_F(TcpConnRetransmit, FinRetransmitsWithBackoff)
     conn_.on_packet(netparser::TcpHeaderView{peer_ack_d}, {});
     ASSERT_EQ(conn_.get_state(), TcpState::CLOSED);
 }
+
+TEST_F(TcpConnRetransmit, SynRetransmitsWithBackoff)
+{
+    // Active open — SYN goes out
+    EXPECT_CALL(output(), send(
+        ResultOf([](const TcpSegment& s){ return s.syn() && !s.ack(); }, true),
+        _, _
+    )).WillOnce(Return(44));
+
+    active_open(LOCAL_IP, LOCAL_PORT, PEER_IP, PEER_PORT);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+    ASSERT_EQ(conn_.get_state(), TcpState::SYN_SENT);
+
+    // RTO not elapsed yet — no retransmit
+    EXPECT_CALL(output(), send).Times(0);
+    static_cast<FakeClock&>(get_clock()).advance(500);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    // First retransmit — RTO ~1000ms
+    EXPECT_CALL(output(), send(
+        ResultOf([](const TcpSegment& s){ return s.syn() && !s.ack(); }, true),
+        _, _
+    )).WillOnce(Return(44));
+    static_cast<FakeClock&>(get_clock()).advance(600);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    // Second retransmit — RTO doubled ~2000ms, not yet
+    EXPECT_CALL(output(), send).Times(0);
+    static_cast<FakeClock&>(get_clock()).advance(1500);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    EXPECT_CALL(output(), send(
+        ResultOf([](const TcpSegment& s){ return s.syn() && !s.ack(); }, true),
+        _, _
+    )).WillOnce(Return(44));
+    static_cast<FakeClock&>(get_clock()).advance(600);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    // Third retransmit — RTO doubled ~4000ms, not yet
+    EXPECT_CALL(output(), send).Times(0);
+    static_cast<FakeClock&>(get_clock()).advance(3500);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    EXPECT_CALL(output(), send(
+        ResultOf([](const TcpSegment& s){ return s.syn() && !s.ack(); }, true),
+        _, _
+    )).WillOnce(Return(44));
+    static_cast<FakeClock&>(get_clock()).advance(600);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    // SYN-ACK finally arrives — handshake completes
+    EXPECT_CALL(output(), send(
+        ResultOf([](const TcpSegment& s){ return s.ack() && !s.syn(); }, true),
+        _, _
+    )).WillOnce(Return(44));
+    auto synack = helpers::make_tcp({
+        .sport = PEER_PORT, .dport = LOCAL_PORT,
+        .seqn  = PEER_ISN,
+        .ackn  = get_send_iss() + 1,
+        .syn   = true,
+        .ack   = true,
+    });
+    auto synack_d = synack.serialize();
+    conn_.on_packet(netparser::TcpHeaderView{synack_d}, {});
+
+    ASSERT_EQ(conn_.get_state(), TcpState::ESTAB);
+}

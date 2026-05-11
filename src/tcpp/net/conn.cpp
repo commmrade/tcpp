@@ -426,7 +426,7 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
         if (tcph.ack()) { send_.set_una(tcph.ackn()); }
 
         assert(send_buf_.front().syn());
-        if (send_.una() > send_buf_.front().seq_start()) {
+        if (send_.una() >= send_buf_.front().seq_end()) {
             // Check if it has ACKed SYN
             send_buf_.consume_seq(tcph.ackn());// Consume up to SYN
 
