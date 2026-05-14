@@ -152,3 +152,166 @@ TEST_F(TcpConnZeroWindow, WindowReopensAfterRead)
     conn_.on_packet(netparser::TcpHeaderView{probe_d}, probe_payload);
 }
 
+// ====================================
+
+class TcpConnSenderZwp : public TcpConnectionTest {};
+
+// Peer closes window — stack starts ZWP after RTO, backs off exponentially
+TEST_F(TcpConnSenderZwp, ProbesWithBackoff)
+{
+    conn_.set_option(ConnectionOption::QUICKACK, true);
+    conn_.set_option(ConnectionOption::NODELAY, true);
+    do_handshake();
+
+    // Write data and send it
+    std::vector<std::byte> data(100);
+    EXPECT_CALL(output(), send).WillOnce(Return(44));
+    write(data);
+    conn_.on_tick();
+    const std::uint32_t seq_after = get_send_nxt();
+    Mock::VerifyAndClearExpectations(&output());
+
+    // Peer ACKs data but advertises window=0
+    EXPECT_CALL(output(), send).Times(0);
+    auto wnd_close = helpers::make_tcp({
+        .sport  = PEER_PORT, .dport = LOCAL_PORT,
+        .seqn   = PEER_ISN + 1,
+        .ackn   = seq_after,
+        .window = 0,
+        .ack    = true,
+    });
+
+    write(data); // Add data to Sender ZWP is started because it isn't started if send buffer is empty
+
+    auto wnd_close_d = wnd_close.serialize();
+    conn_.on_packet(netparser::TcpHeaderView{wnd_close_d}, {});
+    Mock::VerifyAndClearExpectations(&output());
+
+    // Write more data — queued but not sent (window=0)
+
+
+    // ZWP not fired yet
+    EXPECT_CALL(output(), send).Times(0);
+    static_cast<FakeClock&>(get_clock()).advance(500);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    // First ZWP fires — 1 byte probe
+    EXPECT_CALL(output(), send(
+        _, 1u, _  // max_size_pl == 1 means probe
+    )).WillOnce(Return(44));
+    static_cast<FakeClock&>(get_clock()).advance(600); // ~1000ms total
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    // Peer ACKs probe but window still 0
+    auto probe_ack = helpers::make_tcp({
+        .sport  = PEER_PORT, .dport = LOCAL_PORT,
+        .seqn   = PEER_ISN + 1,
+        .ackn   = seq_after,
+        .window = 0,
+        .ack    = true,
+    });
+    auto probe_ack_d = probe_ack.serialize();
+    conn_.on_packet(netparser::TcpHeaderView{probe_ack_d}, {});
+
+    // Second ZWP — RTO doubled ~2000ms, not yet
+    EXPECT_CALL(output(), send).Times(0);
+    static_cast<FakeClock&>(get_clock()).advance(1500);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    EXPECT_CALL(output(), send(
+        _, 1u, _  // max_size_pl == 1 means probe
+    )).WillOnce(Return(44));
+    static_cast<FakeClock&>(get_clock()).advance(600); // ~2000ms after first
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    // Peer ACKs probe but window still 0
+    conn_.on_packet(netparser::TcpHeaderView{probe_ack_d}, {});
+
+    // Third ZWP — RTO doubled ~4000ms, not yet
+    EXPECT_CALL(output(), send).Times(0);
+    static_cast<FakeClock&>(get_clock()).advance(3500);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    EXPECT_CALL(output(), send(
+    _, 1u, _  // max_size_pl == 1 means probe
+    )).WillOnce(Return(44));
+    static_cast<FakeClock&>(get_clock()).advance(600); // ~4000ms after second
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+}
+
+// Window reopens after ZWP — stack resumes sending data
+TEST_F(TcpConnSenderZwp, ResumesAfterWindowReopens)
+{
+    conn_.set_option(ConnectionOption::QUICKACK, true);
+    conn_.set_option(ConnectionOption::NODELAY, true);
+    do_handshake();
+
+    // Write and send data
+    std::vector<std::byte> data(100);
+    EXPECT_CALL(output(), send).WillOnce(Return(44));
+    write(data);
+    conn_.on_tick();
+    const std::uint32_t seq_after = get_send_nxt();
+    Mock::VerifyAndClearExpectations(&output());
+
+    // Peer closes window
+    auto wnd_close = helpers::make_tcp({
+        .sport  = PEER_PORT, .dport = LOCAL_PORT,
+        .seqn   = PEER_ISN + 1,
+        .ackn   = seq_after,
+        .window = 0,
+        .ack    = true,
+    });
+    auto wnd_close_d = wnd_close.serialize();
+
+    // Queue more data
+    write(data); // Add data to Sender ZWP is started because it isn't started if send buffer is empty
+
+    conn_.on_packet(netparser::TcpHeaderView{wnd_close_d}, {});
+
+    // First ZWP fires
+    EXPECT_CALL(output(), send).WillOnce(Return(44));
+    static_cast<FakeClock&>(get_clock()).advance(1100);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    // Peer reopens window
+    EXPECT_CALL(output(), send(
+        ResultOf([](const TcpSegment& s){ return s.payload_size() > 0 && !s.fin(); }, true),
+        _, Gt(0u)
+    )).WillOnce(Return(44));
+
+    auto wnd_open = helpers::make_tcp({
+        .sport  = PEER_PORT, .dport = LOCAL_PORT,
+        .seqn   = PEER_ISN + 1,
+        .ackn   = seq_after,
+        .window = 65535,
+        .ack    = true,
+    });
+    auto wnd_open_d = wnd_open.serialize();
+    conn_.on_packet(netparser::TcpHeaderView{wnd_open_d}, {});
+    conn_.on_tick(); // flush queued data. r_timer is started here!!
+
+    // ACK the flushed data
+    auto ack_data = helpers::make_tcp({
+        .sport  = PEER_PORT, .dport = LOCAL_PORT,
+        .seqn   = PEER_ISN + 1,
+        .ackn   = get_send_nxt(), // ACKs everything sent so far
+        .window = 65535,
+        .ack    = true,
+    });
+    auto ack_data_d = ack_data.serialize();
+    conn_.on_packet(netparser::TcpHeaderView{ack_data_d}, {});
+
+    // ZWP timer must be stopped
+    EXPECT_CALL(output(), send).Times(0);
+    static_cast<FakeClock&>(get_clock()).advance(5000);
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+}

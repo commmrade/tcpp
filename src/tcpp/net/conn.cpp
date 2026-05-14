@@ -266,23 +266,21 @@ void TcpConnection::update_send_window()
     // Start probing only if there is data to send, otherwise it is useless
     // Stop probing when SND.WND has been updated and now TCP is about to send new data (in on_tick()).
     // So (unsent > 0) is safe for stopping ZWP scenario
-    if (unsent > 0) {
-        if (send_.wnd() == 0 && !z_timer_.is_armed()) {
-            assert(!send_buf_.empty());
-            const auto seq_num = send_.una();
-            rtt_measurement_.rto(RttMeasurement::DEFAULT_RTO_MS);
+    if (unsent > 0 && send_.wnd() == 0 && !z_timer_.is_armed()) {
+        assert(!send_buf_.empty());
+        const auto seq_num = send_.una();
+        rtt_measurement_.rto(RttMeasurement::DEFAULT_RTO_MS);
 
-            r_timer_.stop();// Retrans. timer should be suspended when ZWP is running
-            z_timer_.start(clock_->now(), rtt_measurement_.rto(), seq_num, 1);
-        } else if (send_.wnd() > 0 && z_timer_.is_armed()) {
-            z_timer_.stop();
+        r_timer_.stop();// Retrans. timer should be suspended when ZWP is running
+        z_timer_.start(clock_->now(), rtt_measurement_.rto(), seq_num, 1);
+    } else if (send_.wnd() > 0 && z_timer_.is_armed()) {
+        z_timer_.stop();
 
-            rtt_measurement_.reset();
-            rtt_measurement_.rto(RttMeasurement::DEFAULT_RTO_MS);
+        rtt_measurement_.reset();
+        rtt_measurement_.rto(RttMeasurement::DEFAULT_RTO_MS);
 
-            // I think It is kinda logical to start sending from UNA after ZWP is finished
-            send_.set_nxt(send_.una());
-        }
+        // I think It is kinda logical to start sending from UNA after ZWP is finished
+        send_.set_nxt(send_.una());
     }
 
 }
@@ -774,11 +772,17 @@ void TcpConnection::update_timers()
 {
     const auto time_now = clock_->now();
     const bool should_retrans = r_timer_.update(time_now, rtt_measurement_.rto(), send_.nxt(), send_.una());
-    if (should_retrans) { retransmit(r_timer_); }
+    if (should_retrans) {
+        retransmit(r_timer_);
+    }
     const bool should_zwp = z_timer_.update(time_now);
-    if (should_zwp) { retransmit(z_timer_); }
+    if (should_zwp) {
+        retransmit(z_timer_);
+    }
     const bool should_sws = s_timer_.update(time_now);
-    if (should_sws) { retransmit(s_timer_); }
+    if (should_sws) {
+        retransmit(s_timer_);
+    }
 
     if (!config_.is_quickack) {
         const bool should_del_ack = ack_timer_.update(time_now);
