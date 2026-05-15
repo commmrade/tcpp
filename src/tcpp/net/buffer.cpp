@@ -6,6 +6,12 @@
 #include <stdexcept>
 #include <algorithm>
 
+std::size_t TcpBuffer::available_space() const {
+    // This is like this because Window Scale is not implemented -> TODO
+    const auto left_size = std::min<std::size_t>(std::numeric_limits<std::uint16_t>::max(), max_size_ - cur_size_);
+    return left_size;
+}
+
 bool TcpBuffer::insert(const TcpSegment &seg)
 {
     // 1. Iterate through segments and compare sequence numbers
@@ -19,6 +25,7 @@ bool TcpBuffer::insert(const TcpSegment &seg)
         if (seq_n < iter->seq_start()) {
             // Inserts before
             segs_.insert(iter, seg);
+            cur_size_ += seg.size_in_seq();
             return true;
             break;
         } else if (seq_n == iter->seq_start()) {
@@ -31,6 +38,7 @@ bool TcpBuffer::insert(const TcpSegment &seg)
     if (iter == segs_.end()) {
         // We did not find a place for this segment, which means it is in-order
         segs_.push_back(seg);
+        cur_size_ += seg.size_in_seq();
         // Insert a new one
         return true;
     }
@@ -47,6 +55,7 @@ std::size_t TcpBuffer::consume_seq(const std::uint32_t seq_range_to)
 
         if (seq_range_to >= old_iter->seq_end()) {
             res += old_iter->size_in_seq();
+            cur_size_ -= old_iter->size_in_seq();
             segs_.erase(old_iter);
         } else if (seq_range_to >= old_iter->seq_start() && seq_range_to < old_iter->seq_end()) {
             // Erase inside a segment
@@ -58,6 +67,7 @@ std::size_t TcpBuffer::consume_seq(const std::uint32_t seq_range_to)
             // FIXME: I think handling SYN/FIN requires special care, what if range_to points to a no-data segment, but with SYN/FIN
             const auto to_erase_n = std::min<std::size_t>(to_idx, payload_size);// In case this segment contains SYN/FIN
             res += to_erase_n;
+            cur_size_ -= to_erase_n;
             old_iter->erase(to_erase_n);
             // old_iter->set_seq_start(range_to);
         }
@@ -87,10 +97,11 @@ std::size_t TcpBuffer::size_segs() const { return segs_.size(); }
 
 std::size_t TcpBuffer::size_bytes() const
 {
-    std::size_t res = 0;
-    auto iter = segs_.cbegin();
-    for (; iter != segs_.end(); ++iter) { res += iter->size_in_seq(); }
-    return res;
+    // std::size_t res = 0;
+    // auto iter = segs_.cbegin();
+    // for (; iter != segs_.end(); ++iter) { res += iter->size_in_seq(); }
+    // return res;
+    return cur_size_;
 }
 
 std::size_t TcpBuffer::size_payload_bytes() const
@@ -104,6 +115,7 @@ std::size_t TcpBuffer::size_payload_bytes() const
 void TcpSenderBuffer::append_back(std::span<const std::byte> payload)
 {
     if (empty()) { throw std::out_of_range{ "You cannot append, when there is no segments in this buffer" }; }
+    cur_size_ += payload.size_bytes();
     segs_.back().append(payload);
 }
 

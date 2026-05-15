@@ -835,14 +835,14 @@ ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
         }
     }
 
-    recv_buf_.consume_seq(seq_n);
+    const auto consumed = recv_buf_.consume_seq(seq_n);
     std::memcpy(buf, data.data(), data.size());
     return static_cast<ssize_t>(data.size());
 }
 
 ssize_t TcpConnection::write(std::span<const std::byte> buf)
 {
-    const auto insert_bytes_n = std::min(send_buf_.free_space(), buf.size());
+    const auto insert_bytes_n = std::min(send_buf_.available_space(), buf.size());
     switch (state_) {
     case TcpState::SYN_SENT:
     case TcpState::SYN_RCVD:

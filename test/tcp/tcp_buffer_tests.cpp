@@ -825,3 +825,266 @@ TEST_F(TcpConnectionSendBufTest, InsertSeveralMss)
     ASSERT_EQ(send_buf_size_segs(), 3);
     ASSERT_EQ(send_buf_pl_size(), buf.size());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TcpBuffer cur_size_ tracking
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class TcpBufferCurSizeTest : public TcpBufferTest {};
+
+// ─── insert ──────────────────────────────────────────────────────────────────
+
+TEST_F(TcpBufferCurSizeTest, InsertDataSegment)
+{
+    buf.insert(TcpSegment{0, make_payload(100)});
+    EXPECT_EQ(buf.size_bytes(), 100u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertSynOnlyCountsOne)
+{
+    buf.insert(TcpSegment{0, {}, true, false});
+    EXPECT_EQ(buf.size_bytes(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertFinOnlyCountsOne)
+{
+    buf.insert(TcpSegment{0, {}, false, true});
+    EXPECT_EQ(buf.size_bytes(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertSynFinNoPayload)
+{
+    buf.insert(TcpSegment{0, {}, true, true});
+    EXPECT_EQ(buf.size_bytes(), 2u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertSynWithPayload)
+{
+    buf.insert(TcpSegment{0, make_payload(99), true, false});
+    EXPECT_EQ(buf.size_bytes(), 100u); // 99 + SYN
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertFinWithPayload)
+{
+    buf.insert(TcpSegment{0, make_payload(50), false, true});
+    EXPECT_EQ(buf.size_bytes(), 51u); // 50 + FIN
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertSynDataFin)
+{
+    buf.insert(TcpSegment{0, make_payload(100), true, true});
+    EXPECT_EQ(buf.size_bytes(), 102u); // SYN + 100 + FIN
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertMultipleSegmentsAccumulates)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(200)});
+    buf.insert(TcpSegment{300, make_payload(50)});
+    EXPECT_EQ(buf.size_bytes(), 350u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertOutOfOrderAccumulates)
+{
+    buf.insert(TcpSegment{200, make_payload(50)});
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(100)});
+    EXPECT_EQ(buf.size_bytes(), 250u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertDuplicateDoesNotChangeCurSize)
+{
+    buf.insert(TcpSegment{0, make_payload(100)});
+    buf.insert(TcpSegment{0, make_payload(100)});
+    EXPECT_EQ(buf.size_bytes(), 100u);
+    EXPECT_EQ(buf.size_segs(), 1u);
+}
+
+// ─── consume_seq ─────────────────────────────────────────────────────────────
+
+TEST_F(TcpBufferCurSizeTest, ConsumeFullSegment)
+{
+    buf.insert(TcpSegment{0, make_payload(100)});
+    buf.consume_seq(100);
+    EXPECT_EQ(buf.size_bytes(), 0u);
+    EXPECT_EQ(buf.size_segs(), 0u);
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumePartialSegment)
+{
+    buf.insert(TcpSegment{0, make_payload(100)});
+    buf.consume_seq(50);
+    EXPECT_EQ(buf.size_bytes(), 50u);
+    EXPECT_EQ(buf.size_segs(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeMultipleFullSegments)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(100)});
+    buf.insert(TcpSegment{200, make_payload(100)});
+    buf.consume_seq(200);
+    EXPECT_EQ(buf.size_bytes(), 100u);
+    EXPECT_EQ(buf.size_segs(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeAtExactSegmentBoundary)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(200)});
+    buf.consume_seq(100);
+    EXPECT_EQ(buf.size_bytes(), 200u);
+    EXPECT_EQ(buf.size_segs(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeAll)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(100)});
+    buf.consume_seq(200);
+    EXPECT_EQ(buf.size_bytes(), 0u);
+    EXPECT_TRUE(buf.empty());
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeZeroDoesNothing)
+{
+    buf.insert(TcpSegment{0, make_payload(100)});
+    buf.consume_seq(0);
+    EXPECT_EQ(buf.size_bytes(), 100u);
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeFinOnlySegment)
+{
+    buf.insert(TcpSegment{0, {}, false, true});
+    buf.consume_seq(1);
+    EXPECT_EQ(buf.size_bytes(), 0u);
+    EXPECT_TRUE(buf.empty());
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeSynOnlySegment)
+{
+    buf.insert(TcpSegment{0, {}, true, false});
+    buf.consume_seq(1);
+    EXPECT_EQ(buf.size_bytes(), 0u);
+    EXPECT_TRUE(buf.empty());
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeEmptyBufferDoesNothing)
+{
+    EXPECT_NO_THROW(buf.consume_seq(100));
+    EXPECT_EQ(buf.size_bytes(), 0u);
+}
+
+TEST_F(TcpBufferCurSizeTest, CurSizeConsistentAfterMixedOperations)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(100)});
+    buf.consume_seq(50);
+    buf.insert(TcpSegment{200, make_payload(100)});
+    buf.consume_seq(200);
+    // remaining: last 100 bytes segment
+    EXPECT_EQ(buf.size_bytes(), 100u);
+    EXPECT_EQ(buf.size_segs(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, CurSizeConsistentAfterSynFinInsertConsume)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(50), false, true}); // data + FIN = 51
+    EXPECT_EQ(buf.size_bytes(), 151u);
+    buf.consume_seq(100);
+    EXPECT_EQ(buf.size_bytes(), 51u);
+    buf.consume_seq(151);
+    EXPECT_EQ(buf.size_bytes(), 0u);
+}
+
+// ─── free_space ──────────────────────────────────────────────────────────────
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceFullWhenEmpty)
+{
+    const auto expected = std::min<std::size_t>(
+        std::numeric_limits<std::uint16_t>::max(),
+        buf.max_size()
+    );
+    EXPECT_EQ(buf.available_space(), expected);
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceDecreasesAfterInsert)
+{
+    buf.set_max_size(std::numeric_limits<std::uint16_t>::max());
+
+    const auto before = buf.available_space();
+    buf.insert(TcpSegment{0, make_payload(100)});
+    EXPECT_EQ(buf.available_space(), before - 100);
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceIncreasesAfterConsume)
+{
+    buf.set_max_size(std::numeric_limits<std::uint16_t>::max());
+
+    buf.insert(TcpSegment{0, make_payload(100)});
+    const auto after_insert = buf.available_space();
+    buf.consume_seq(100);
+    EXPECT_GT(buf.available_space(), after_insert);
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceCappedAtUint16Max)
+{
+    buf.set_max_size(std::numeric_limits<std::uint32_t>::max());
+    EXPECT_EQ(buf.available_space(), std::numeric_limits<std::uint16_t>::max());
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceZeroWhenFull)
+{
+    const std::size_t cap = std::numeric_limits<std::uint16_t>::max();
+    buf.set_max_size(cap);
+    buf.insert(TcpSegment{0, make_payload(cap)});
+    EXPECT_EQ(buf.available_space(), 0u);
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceConsistentAfterPartialConsume)
+{
+    const std::size_t cap = 1000;
+    buf.set_max_size(cap);
+    buf.insert(TcpSegment{0, make_payload(500)});
+    buf.consume_seq(200);
+    EXPECT_EQ(buf.available_space(), cap - 300);
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceSynFinCountedAgainstCap)
+{
+    const std::size_t cap = 1000;
+    buf.set_max_size(cap);
+    buf.insert(TcpSegment{0, make_payload(100), true, true}); // 102 seq bytes
+    EXPECT_EQ(buf.available_space(), cap - 102);
+}
+
+// ─── append_back (TcpSenderBuffer) ───────────────────────────────────────────
+
+class TcpSenderBufferCurSizeTest : public testing::Test
+{
+protected:
+    TcpSenderBuffer buf_;
+};
+
+TEST_F(TcpSenderBufferCurSizeTest, AppendBackUpdatesCurSize)
+{
+    buf_.insert(TcpSegment{0, make_payload(100)});
+    const auto extra = make_payload(50);
+    buf_.append_back(extra);
+    EXPECT_EQ(buf_.size_bytes(), 150u);
+}
+
+TEST_F(TcpSenderBufferCurSizeTest, AppendBackOnEmptyThrows)
+{
+    const auto extra = make_payload(50);
+    EXPECT_THROW(buf_.append_back(extra), std::out_of_range);
+}
+
+TEST_F(TcpSenderBufferCurSizeTest, AppendBackMultipleTimes)
+{
+    buf_.insert(TcpSegment{0, make_payload(100)});
+    buf_.append_back(make_payload(50));
+    buf_.append_back(make_payload(25));
+    EXPECT_EQ(buf_.size_bytes(), 175u);
+}

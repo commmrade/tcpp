@@ -153,10 +153,16 @@ public:
     friend class TcpBufferTest;
     friend class TcpReceiverBufferTest;
 
-     [[nodiscard]] std::size_t free_space() const
-     {
-         return std::numeric_limits<std::uint16_t>::max() - size_bytes();
-     }
+    void set_max_size(const std::size_t new_size)
+    {
+        max_size_ = new_size;
+    }
+    [[nodiscard]] std::size_t max_size() const
+    {
+        return max_size_;
+    }
+
+    [[nodiscard]] std::size_t available_space() const;
     // Inserts a new node
     bool insert(const TcpSegment& seg);
     std::size_t consume_seq(const std::uint32_t seq_range_to);
@@ -186,6 +192,8 @@ public:
     }
 protected:
     std::list<TcpSegment> segs_;
+    std::size_t cur_size_{};
+    std::size_t max_size_{2 * 1024 * 1024};
 };
 
 class TcpSenderBuffer : public TcpBuffer

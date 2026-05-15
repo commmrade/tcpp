@@ -164,6 +164,10 @@ public:
         return recv_buf_.empty() ? false : recv_buf_.back().fin();
     }
     [[nodiscard]] TcpState get_state() const { return state_; }
+    [[nodiscard]] std::size_t send_buf_free_space() const
+    {
+        return send_buf_.available_space();
+    }
 
     // "Userspace" kinda functions -------------------------------------
     void shutdown(ShutdownType sht);
