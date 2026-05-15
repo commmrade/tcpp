@@ -74,7 +74,7 @@ static constexpr std::size_t IPV4H_FRAG_OFFSET = 6;
 static constexpr std::size_t IPV4H_TTL_OFFSET = 8;
 static constexpr std::size_t IPV4H_HDR_CHECKSUM_OFFSET = 10;
 
-
+class IpHeader;
 /// Non-owning IP Header
 class IpHeaderView
 {
@@ -83,6 +83,7 @@ private:
 
 public:
     explicit IpHeaderView(const std::span<const std::byte> bytes);
+    explicit IpHeaderView(const IpHeader& iph);
 
     [[nodiscard]] std::uint8_t version() const;
     [[nodiscard]] std::uint8_t ihl() const;
@@ -114,6 +115,7 @@ private:
 public:
     IpHeader() = default;
     explicit IpHeader(const IpHeaderView &iph);
+    explicit IpHeader(std::span<const std::byte> data);
 
     [[nodiscard]] std::uint8_t version() const;
     void version(const std::uint8_t ver);
@@ -163,6 +165,10 @@ public:
     void dest_addr(const std::uint32_t addr);
 
     [[nodiscard]] std::vector<std::byte> serialize() const;
+    [[nodiscard]] const iphdr& inner() const
+    {
+        return hdr_;
+    }
 };
 
 
@@ -248,12 +254,14 @@ struct TcpWinScaleOption
     std::uint8_t shift_cnt{};
 };
 
+class TcpHeader;
 class TcpHeaderView
 {
     std::span<const std::byte> bytes_;
 public:
     TcpHeaderView() = default;
     explicit TcpHeaderView(const std::span<const std::byte> bytes);
+    explicit TcpHeaderView(const TcpHeader& tcph);
 
     [[nodiscard]] std::uint16_t source_port() const;
     [[nodiscard]] std::uint16_t dest_port() const;
@@ -395,6 +403,7 @@ private:
 public:
     TcpHeader() = default;
     explicit TcpHeader(const TcpHeaderView &tcph);
+    explicit TcpHeader(std::span<const std::byte> data);
 
     /// Everything is set/returned in Host Byte Order
     [[nodiscard]] std::uint16_t source_port() const;
@@ -448,6 +457,10 @@ public:
     [[nodiscard]] std::uint16_t urg_ptr() const;
     void urg_ptr(const std::uint16_t ptr);
 
+    [[nodiscard]] const tcphdr& inner() const
+    {
+        return hdr_;
+    }
     [[nodiscard]] std::vector<std::byte> serialize();
 
     [[nodiscard]] TcpOptions &options() { return options_; }

@@ -35,6 +35,43 @@ TEST(IpHeaderViewTest, CheckAllFields) {
     EXPECT_EQ(iph.dest_addr(), ntohl(0xC0A80102));
 }
 
+TEST(IpHeaderViewTest, ConvertFromOwned)
+{
+    const netparser::IpHeader owned{ip_header};
+    const netparser::IpHeaderView iph{owned};
+    EXPECT_EQ(iph.version(), 4);
+    EXPECT_EQ(iph.ihl(), 5);
+    EXPECT_EQ(iph.type_of_service(), 0);
+    EXPECT_EQ(iph.total_len(), 40);
+    EXPECT_EQ(iph.id(), 0x1234);
+    EXPECT_TRUE(iph.dont_fragment());
+    EXPECT_FALSE(iph.more_fragments());
+    EXPECT_EQ(iph.frag_offset(), 0);
+    EXPECT_EQ(iph.ttl(), 64);
+    EXPECT_EQ(iph.protocol(), 6);
+    EXPECT_EQ(iph.checksum(), 0x0000);
+    EXPECT_EQ(iph.source_addr(), ntohl(0xC0A80101));
+    EXPECT_EQ(iph.dest_addr(), ntohl(0xC0A80102));
+}
+
+TEST(IpHeaderTest, ConstructFromRaw)
+{
+    const netparser::IpHeader iph{ip_header};
+    EXPECT_EQ(iph.version(), 4);
+    EXPECT_EQ(iph.ihl(), 5);
+    EXPECT_EQ(iph.type_of_service(), 0);
+    EXPECT_EQ(iph.total_len(), 40);
+    EXPECT_EQ(iph.id(), 0x1234);
+    EXPECT_TRUE(iph.dont_fragment());
+    EXPECT_FALSE(iph.more_fragments());
+    EXPECT_EQ(iph.frag_offset(), 0);
+    EXPECT_EQ(iph.ttl(), 64);
+    EXPECT_EQ(iph.protocol(), 6);
+    EXPECT_EQ(iph.checksum(), 0x0000);
+    EXPECT_EQ(iph.source_addr(), ntohl(0xC0A80101));
+    EXPECT_EQ(iph.dest_addr(), ntohl(0xC0A80102));
+}
+
 TEST(IpHeaderTest, CheckAllFieldsOwned) {
     const netparser::IpHeaderView iph_view{ip_header};
     const netparser::IpHeader iph{iph_view};

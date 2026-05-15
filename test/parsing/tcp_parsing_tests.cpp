@@ -120,7 +120,40 @@ TEST(TcpHeaderViewTest, MalformedOptionLengthDoesNotCrash) {
     EXPECT_NO_THROW(tcph.mss());
 }
 
+TEST(TcpHeaderVIewTest, ConvertFromOwned)
+{
+    const netparser::TcpHeader _{tcp_header};
+    const netparser::TcpHeaderView tcph{_};
+    EXPECT_EQ(tcph.source_port(), 80);
+    EXPECT_EQ(tcph.dest_port(), 8080);
+    EXPECT_EQ(tcph.seqn(), 1);
+    EXPECT_EQ(tcph.ackn(), 2);
+    EXPECT_EQ(tcph.data_off(), 5);
+    EXPECT_TRUE(tcph.ack());
+    EXPECT_TRUE(tcph.syn());
+    EXPECT_EQ(tcph.window(), 65535);
+    EXPECT_EQ(tcph.checksum(), 0x00);
+    EXPECT_EQ(tcph.urg_ptr(), 0);
+    EXPECT_FALSE(tcph.urg());
+}
+
 // TcpHeader (owned) tests
+
+TEST(TcpHeaderTest, ConstructFromRaw)
+{
+    const netparser::TcpHeader tcph{tcp_header};
+    EXPECT_EQ(tcph.source_port(), 80);
+    EXPECT_EQ(tcph.dest_port(), 8080);
+    EXPECT_EQ(tcph.seqn(), 1);
+    EXPECT_EQ(tcph.ackn(), 2);
+    EXPECT_EQ(tcph.data_off(), 5);
+    EXPECT_TRUE(tcph.ack());
+    EXPECT_TRUE(tcph.syn());
+    EXPECT_EQ(tcph.window(), 65535);
+    EXPECT_EQ(tcph.checksum(), 0x00);
+    EXPECT_EQ(tcph.urg_ptr(), 0);
+    EXPECT_FALSE(tcph.urg());
+}
 
 TEST(TcpHeaderTest, CheckAllFieldsOwned) {
     const netparser::TcpHeaderView tcph_view{tcp_header};

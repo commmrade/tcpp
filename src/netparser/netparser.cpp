@@ -17,6 +17,10 @@ IpHeaderView::IpHeaderView(const std::span<const std::byte> bytes)
     if (bytes.size() < IPV4H_MIN_SIZE) { throw std::logic_error{ "Array must be 20 bytes> for IP header" }; }
 }
 
+IpHeaderView::IpHeaderView(const IpHeader &iph)
+    : IpHeaderView(std::span<const std::byte>{ reinterpret_cast<const std::byte *>(&iph.inner()),
+                                               sizeof(iph.inner()) }) {}
+
 [[nodiscard]] std::uint8_t IpHeaderView::version() const
 {
     return std::to_integer<std::uint8_t>(bytes_[IPV4H_VER_OFFSET] >> 4);
@@ -60,7 +64,7 @@ std::uint16_t IpHeaderView::frag_offset() const
 {
     auto frag_off = details::extract_from_byte_sequence<std::uint16_t>(bytes_, IPV4H_FRAG_OFFSET);
     frag_off = ntohs(frag_off);
-    frag_off = frag_off & 0x1FFFU; //NOLINT
+    frag_off = frag_off & 0x1FFFU;//NOLINT
     return frag_off;
 }
 
@@ -100,6 +104,11 @@ IpHeader::IpHeader(const IpHeaderView &iph)
 {
     const auto bytes = iph.data();
     std::memcpy(&hdr_, bytes.data(), bytes.size());
+}
+
+IpHeader::IpHeader(std::span<const std::byte> data)
+{
+    std::memcpy(&hdr_, data.data(), data.size());
 }
 
 std::uint8_t IpHeader::version() const { return hdr_.version; }
@@ -153,12 +162,12 @@ void IpHeader::calculate_checksum()
     hdr_.check = 0;
 
     std::uint32_t sum = 0;
-    const auto*ptr = reinterpret_cast<const uint16_t *>(&hdr_);//NOLINT
+    const auto *ptr = reinterpret_cast<const uint16_t *>(&hdr_);//NOLINT
     int length = hdr_.ihl * 4;// IHL field is in 32-bit words
 
     // Sum all 16-bit words in the header
     while (length > 1) {
-        sum += *ptr++; //NOLINT
+        sum += *ptr++;//NOLINT
         length -= 2;
     }
 
@@ -225,6 +234,10 @@ TcpHeaderView::TcpHeaderView(const std::span<const std::byte> bytes)
 {
     if (bytes_.size() < TCPH_MIN_SIZE) { throw std::runtime_error("Bytes is too small for a tcp header"); }
 }
+
+// Does not use options
+TcpHeaderView::TcpHeaderView(const TcpHeader &tcph) : bytes_(std::span<const std::byte>{reinterpret_cast<const std::byte*>(&tcph.inner()), sizeof(tcph.inner())})
+{}
 
 std::uint16_t TcpHeaderView::source_port() const
 {
@@ -368,19 +381,18 @@ std::pair<bool, std::size_t> TcpHeaderView::has_option_inner(const TcpOptionKind
         const auto kind_byte = options_bytes[offset];
         const auto kind_type = static_cast<TcpOptionKind>(kind_byte);
 
-        if (kind_type == kind) {
-            return std::pair{true, offset};
-        }
+        if (kind_type == kind) { return std::pair{ true, offset }; }
 
         if (kind_type == TcpOptionKind::NO_OP || kind_type == TcpOptionKind::END_OF_LIST) {
-            offset += 1; // move past this option
+            offset += 1;// move past this option
         } else {
             const auto subsp = options_bytes.subspan(offset);
             if (subsp.size_bytes() < 2) {
-                break; // Should exit the loop since TCP options are kind of ill-formed
+                break;// Should exit the loop since TCP options are kind of ill-formed
             }
             const auto size = static_cast<const std::uint8_t>(subsp[1]);
-            offset += size; // We are at "kind" byte, so to get past current TCP option, we need to increment offset by size
+            offset += size;
+            // We are at "kind" byte, so to get past current TCP option, we need to increment offset by size
         }
     }
     return { false, 0 };
@@ -460,18 +472,19 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
         }
         case static_cast<std::byte>(TcpOptionKind::END_OF_LIST): {
             // Stop parsing
-            offset = std::numeric_limits<std::size_t>::max(); // Exit the while loop
+            offset = std::numeric_limits<std::size_t>::max();// Exit the while loop
             break;
         }
         default: {
             // At this point offset points to "kind", this kind is likely to be unknown
             const auto subsp = options_bytes.subspan(offset);
-            if (subsp.size() < 2) { // 1 for "kind", 1 for "size"
+            if (subsp.size() < 2) {
+                // 1 for "kind", 1 for "size"
                 throw std::runtime_error("Option is weird");
             }
 
             const auto size = static_cast<const std::uint8_t>(options_bytes[1]);
-            offset += size; // Skip unknown option
+            offset += size;// Skip unknown option
             // If it is really big, then it will just exit out of the loop
         }
         }
@@ -494,7 +507,8 @@ std::vector<std::byte> TcpOptions::serialize() const
     }
     if (win_scale_option_.has_value()) {
         const auto &wnscl = win_scale_option_.value();
-        const details::TcpWinScaleOptionInner inner{ .kind = wnscl.kind, .size = wnscl.size, .shift_cnt = wnscl.shift_cnt };
+        const details::TcpWinScaleOptionInner inner{ .kind = wnscl.kind, .size = wnscl.size,
+                                                     .shift_cnt = wnscl.shift_cnt };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
@@ -506,7 +520,8 @@ std::vector<std::byte> TcpOptions::serialize() const
     }
     if (timestamp_option_.has_value()) {
         const auto &timestamp = timestamp_option_.value();
-        const details::TcpTimestampOptionInner inner{ .kind = timestamp.kind, .size = timestamp.size, .tv = htonl(timestamp.tv), .tr = htonl(timestamp.tr) };
+        const details::TcpTimestampOptionInner inner{ .kind = timestamp.kind, .size = timestamp.size,
+                                                      .tv = htonl(timestamp.tv), .tr = htonl(timestamp.tr) };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
@@ -526,9 +541,7 @@ std::size_t TcpOptions::options_size() const
     if (win_scale_option_.has_value()) { res += sizeof(details::TcpWinScaleOptionInner); }
     if (sack_perm_option_.has_value()) { res += sizeof(details::TcpSackPermOptionInner); }
     if (timestamp_option_.has_value()) { res += sizeof(details::TcpTimestampOptionInner); }
-    if (res % 4 != 0) {
-        res += 4 - (res % 4);
-    }
+    if (res % 4 != 0) { res += 4 - (res % 4); }
     return res;
 }
 
@@ -542,6 +555,9 @@ TcpHeader::TcpHeader(const TcpHeaderView &tcph)
     const auto options_data = data.subspan(TCPH_MIN_SIZE, options_size);
     if (!options_data.empty()) { options_.parse(options_data); }
 }
+
+TcpHeader::TcpHeader(std::span<const std::byte> data) : TcpHeader(TcpHeaderView{data})
+{}
 
 std::uint16_t TcpHeader::source_port() const { return ntohs(hdr_.source); }
 
@@ -637,7 +653,7 @@ void TcpHeader::calculate_checksum(const netparser::IpHeader &iph, std::span<con
         }
 
         // Odd trailing byte — pad with zero
-        if (length == 1) { sum += *reinterpret_cast<const uint8_t *>(ptr); } //NOLINT
+        if (length == 1) { sum += *reinterpret_cast<const uint8_t *>(ptr); }//NOLINT
     };
 
     const auto opt_bytes = options_.serialize();
