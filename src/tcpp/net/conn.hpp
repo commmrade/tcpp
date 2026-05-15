@@ -231,7 +231,7 @@ private:
         const std::uint32_t daddr,
         const std::uint16_t dport);
 
-    void retransmit(Timer& timer);
+    std::uint32_t retransmit(Timer& timer);
     void update_timers();
 
     friend class Tcp;

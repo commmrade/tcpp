@@ -41,12 +41,10 @@ TEST_F(TcpConnRetransmit, RetransmitsAfterRto)
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&output());
 }
-
-TEST_F(TcpConnRetransmit, RtoResetsAfterAck)
+TEST_F(TcpConnRetransmit, RtoRemainsDoubledAfterRetransmitAck)
 {
     do_handshake();
 
-    // Round 1: send, let it retransmit once, then ACK
     std::vector<std::byte> data(100);
     EXPECT_CALL(output(), send).WillOnce(Return(44));
     write(data);
@@ -54,13 +52,13 @@ TEST_F(TcpConnRetransmit, RtoResetsAfterAck)
     const std::uint32_t seq_after_first = get_send_nxt();
     Mock::VerifyAndClearExpectations(&output());
 
-    // First retransmit fires
+    // Retransmit fires, RTO doubles to ~2000ms
     EXPECT_CALL(output(), send).WillOnce(Return(44));
     static_cast<FakeClock&>(get_clock()).advance(1100);
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&output());
 
-    // ACK the data — clears retransmit queue, resets RTO
+    // ACK — no RTT sample taken (Karn), RTO stays doubled
     EXPECT_CALL(output(), send).Times(AnyNumber()).WillRepeatedly(Return(44));
     auto ack = helpers::make_tcp({
         .sport = PEER_PORT, .dport = LOCAL_PORT,
@@ -72,21 +70,21 @@ TEST_F(TcpConnRetransmit, RtoResetsAfterAck)
     conn_.on_packet(netparser::TcpHeaderView{ack_d}, {});
     Mock::VerifyAndClearExpectations(&output());
 
-    // Round 2: send again, RTO should be back to base (~1000ms), not doubled
+    // Round 2: RTO is still ~2000ms
     EXPECT_CALL(output(), send).WillOnce(Return(44));
     write(data);
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&output());
 
-    // Should NOT retransmit before base RTO
+    // No retransmit at 1100ms — RTO is doubled, not base
     EXPECT_CALL(output(), send).Times(0);
-    static_cast<FakeClock&>(get_clock()).advance(500);
+    static_cast<FakeClock&>(get_clock()).advance(1100);
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&output());
 
-    // Should retransmit at base RTO, not doubled
+    // Retransmit fires at ~2000ms
     EXPECT_CALL(output(), send).WillOnce(Return(44));
-    static_cast<FakeClock&>(get_clock()).advance(600);
+    static_cast<FakeClock&>(get_clock()).advance(1000);
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&output());
 }

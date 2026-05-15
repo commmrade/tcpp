@@ -256,4 +256,9 @@ protected:
     {
         return conn_.recv_mss_;
     }
+
+    auto& rtt()
+    {
+        return conn_.rtt_measurement_;
+    }
 };

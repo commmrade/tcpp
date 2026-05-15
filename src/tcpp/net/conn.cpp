@@ -755,7 +755,7 @@ void TcpConnection::open_active(const std::uint32_t saddr,
     state_ = TcpState::SYN_SENT;
 }
 
-void TcpConnection::retransmit(Timer &timer)
+std::uint32_t TcpConnection::retransmit(Timer &timer)
 {
     // Retransmission should happen
     rtt_measurement_.stop();// Must not measure on retransmits
@@ -765,7 +765,7 @@ void TcpConnection::retransmit(Timer &timer)
     retrans_seg.set_ackn(recv_.nxt());
     send_retransmit(retrans_seg, timer.data_len());
 
-    timer.retransmitted(clock_->now(), send_.una());
+    return timer.retransmitted(clock_->now(), send_.una());
 }
 
 void TcpConnection::update_timers()
@@ -773,7 +773,8 @@ void TcpConnection::update_timers()
     const auto time_now = clock_->now();
     const bool should_retrans = r_timer_.update(time_now, rtt_measurement_.rto(), send_.nxt(), send_.una());
     if (should_retrans) {
-        retransmit(r_timer_);
+        const auto new_rto = retransmit(r_timer_);
+        rtt_measurement_.set_rto(new_rto);
     }
     const bool should_zwp = z_timer_.update(time_now);
     if (should_zwp) {
