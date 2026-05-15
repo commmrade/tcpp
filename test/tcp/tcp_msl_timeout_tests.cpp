@@ -1,7 +1,7 @@
 //
 // Created by klewy on 5/11/26.
 //
-#include "tcp_conn_test.hpp"
+#include "include/tcp_common.hpp"
 #include <gmock/gmock.h>
 
 class TcpConnMslTimeoutTest : public TcpConnectionTest
@@ -14,10 +14,10 @@ protected:
     void do_active_close()
     {
         // We initiate close — FIN is sent on next tick
-        EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+        EXPECT_CALL(output(), send).Times(AnyNumber());
         conn_.shutdown(ShutdownType::WRITE);
         conn_.on_tick(); // sends FIN
-        Mock::VerifyAndClearExpectations(&mock_io_);
+        Mock::VerifyAndClearExpectations(&output());
 
         // Peer ACKs our FIN
         peer_send_ack(get_send_nxt()); // ACKs the FIN byte
@@ -26,9 +26,9 @@ protected:
         peer_send_fin(PEER_ISN + 1);
 
         // We ACK peer's FIN — transition to TIME_WAIT
-        EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+        EXPECT_CALL(output(), send).Times(AnyNumber());
         conn_.on_tick();
-        Mock::VerifyAndClearExpectations(&mock_io_);
+        Mock::VerifyAndClearExpectations(&output());
     }
 
     // Send a pure ACK from peer (no payload)
@@ -84,9 +84,9 @@ TEST_F(TcpConnMslTimeoutTest, StaysInTimeWaitBefore2Msl)
     do_active_close();
 
     advance_clock(TWO_MSL_MS - 1);
-    EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+    EXPECT_CALL(output(), send).Times(AnyNumber());
     conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     EXPECT_EQ(conn_.get_state(), TcpState::TIME_WAIT);
 }
@@ -98,9 +98,9 @@ TEST_F(TcpConnMslTimeoutTest, TransitionToClosedAt2Msl)
     do_active_close();
 
     advance_clock(TWO_MSL_MS);
-    EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+    EXPECT_CALL(output(), send).Times(AnyNumber());
     conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     EXPECT_EQ(conn_.get_state(), TcpState::CLOSED);
 }
@@ -115,9 +115,9 @@ TEST_F(TcpConnMslTimeoutTest, TimeWaitDropsIncomingData)
 
     // Peer retransmits data — we should send ACK but not change state
     // (RFC 9293: in TIME_WAIT, retransmitted FIN gets re-ACKed, 2MSL restarts)
-    EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+    EXPECT_CALL(output(), send).Times(AnyNumber());
     peer_send_fin(PEER_ISN + 1); // retransmit of peer FIN
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     EXPECT_EQ(conn_.get_state(), TcpState::TIME_WAIT);
 }
@@ -130,29 +130,29 @@ TEST_F(TcpConnMslTimeoutTest, RetransmittedFinResets2MslTimer)
 
     // Advance almost to timeout
     advance_clock(TWO_MSL_MS - 100);
-    EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+    EXPECT_CALL(output(), send).Times(AnyNumber());
     conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
     ASSERT_EQ(conn_.get_state(), TcpState::TIME_WAIT);
 
     // Peer retransmits FIN — 2MSL timer should restart
-    EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+    EXPECT_CALL(output(), send).Times(AnyNumber());
     peer_send_fin(PEER_ISN + 2);
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     // Another almost-full 2MSL after the reset — should still be TIME_WAIT
     advance_clock(TWO_MSL_MS - 1);
-    EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+    EXPECT_CALL(output(), send).Times(AnyNumber());
     conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     EXPECT_EQ(conn_.get_state(), TcpState::TIME_WAIT);
 
     // Now expire
     advance_clock(1);
-    EXPECT_CALL(mock_io_, write(_)).Times(AnyNumber());
+    EXPECT_CALL(output(), send).Times(AnyNumber());
     conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     EXPECT_EQ(conn_.get_state(), TcpState::CLOSED);
 }

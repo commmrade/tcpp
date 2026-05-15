@@ -44,7 +44,7 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
                 bound_.find(quad.src_port)->second.push_back(quad);
                 accept_var_.notify_all();
             } else {
-                auto [conn_iter, inserted] = syn_recv_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_, std::make_unique<Clock>()));
+                auto [conn_iter, inserted] = syn_recv_connections_.emplace(quad, std::make_unique<TcpConnection>(std::make_unique<SegmentOutput>(tun_), std::make_unique<Clock>()));
                 assert(inserted);
                 conn_iter->second->open_passive(iph, tcph);
             }
@@ -120,7 +120,7 @@ Quad Tcp::connect(const std::uint32_t daddr, const std::uint16_t dport)
 
     Quad quad{ .src_addr = s_addr, .src_port = port, .dst_addr = daddr, .dst_port = dport };
 
-    auto [iter, inserted] = established_connections_.emplace(quad, std::make_unique<TcpConnection>(tun_, std::make_unique<Clock>()));
+    auto [iter, inserted] = established_connections_.emplace(quad, std::make_unique<TcpConnection>(std::make_unique<SegmentOutput>(tun_), std::make_unique<Clock>()));
     assert(inserted);
     auto &conn = iter->second;
 

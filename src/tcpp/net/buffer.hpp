@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <vector>
 #include <span>
 
@@ -64,6 +65,15 @@ public:
         : payload_(payload.begin(), payload.end()), syn_(syn), fin_(fin),
         seq_n_(seq_start), end_seq_n_(seq_n_ + static_cast<std::uint32_t>(payload.size()) + (fin_ ? 1 : 0) + (syn_ ? 1 : 0))
     {
+    }
+
+    void set_mss(const std::uint16_t mss)
+    {
+        mss_.emplace(mss);
+    }
+    [[nodiscard]] std::optional<std::uint16_t> mss() const
+    {
+        return mss_;
     }
 
     [[nodiscard]] bool ack() const
@@ -133,6 +143,8 @@ private:
     std::uint32_t end_seq_n_{};
 
     std::uint32_t ack_n_{};
+
+    std::optional<std::uint16_t> mss_{};
 };
 
 class TcpBuffer
@@ -141,10 +153,16 @@ public:
     friend class TcpBufferTest;
     friend class TcpReceiverBufferTest;
 
-     [[nodiscard]] std::size_t free_space() const
-     {
-         return std::numeric_limits<std::uint16_t>::max() - size_bytes();
-     }
+    void set_max_size(const std::size_t new_size)
+    {
+        max_size_ = new_size;
+    }
+    [[nodiscard]] std::size_t max_size() const
+    {
+        return max_size_;
+    }
+
+    [[nodiscard]] std::size_t available_space() const;
     // Inserts a new node
     bool insert(const TcpSegment& seg);
     std::size_t consume_seq(const std::uint32_t seq_range_to);
@@ -174,6 +192,8 @@ public:
     }
 protected:
     std::list<TcpSegment> segs_;
+    std::size_t cur_size_{};
+    std::size_t max_size_{2 * 1024 * 1024};
 };
 
 class TcpSenderBuffer : public TcpBuffer

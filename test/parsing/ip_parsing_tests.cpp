@@ -1,4 +1,4 @@
-#include "../src/netparser/netparser.hpp"
+#include "../../src/netparser/netparser.hpp"
 #include <gtest/gtest.h>
 #include <cstddef>
 #include <span>

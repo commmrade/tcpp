@@ -2,7 +2,7 @@
 // Created by klewy on 5/6/26.
 //
 
-#include "tcp_conn_test.hpp"
+#include "include/tcp_common.hpp"
 #include <gmock/gmock.h>
 
 class TcpDelAckTest : public TcpConnectionTest
@@ -36,9 +36,9 @@ TEST_F(TcpDelAckTest, SingleSmallSegment_NoImmediateAck)
     // One segment well below 2*RMSS — no ACK should be sent immediately
     std::vector<std::byte> payload(100, std::byte{0xAA});
 
-    EXPECT_CALL(mock_io_, write(_)).Times(0);
+    EXPECT_CALL(output(), send).Times(0);
     peer_send_no_ack(PEER_ISN + 1, payload);
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 }
 
 TEST_F(TcpDelAckTest, SingleSmallSegment_AckAfterTimeout)
@@ -47,21 +47,21 @@ TEST_F(TcpDelAckTest, SingleSmallSegment_AckAfterTimeout)
 
     std::vector<std::byte> payload(100, std::byte{0xAA});
 
-    EXPECT_CALL(mock_io_, write(_)).Times(0);
+    EXPECT_CALL(output(), send).Times(0);
     peer_send_no_ack(PEER_ISN + 1, payload);
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     // Advance clock just under 200ms — still no ACK
     advance_clock(199);
-    EXPECT_CALL(mock_io_, write(_)).Times(0);
+    EXPECT_CALL(output(), send).Times(0);
     conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     // Advance past 200ms — ACK fires
     advance_clock(1);
-    EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE));
+    EXPECT_CALL(output(), send).WillOnce(Return(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE));
     conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 }
 
 TEST_F(TcpDelAckTest, TwoSegmentsReaching2Rmss_ImmediateAck)
@@ -73,14 +73,14 @@ TEST_F(TcpDelAckTest, TwoSegmentsReaching2Rmss_ImmediateAck)
     std::vector<std::byte> p2(rmss, std::byte{2});
 
     // First segment — below threshold, no ACK
-    EXPECT_CALL(mock_io_, write(_)).Times(0);
+    EXPECT_CALL(output(), send).Times(0);
     peer_send_no_ack(PEER_ISN + 1, p1);
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     // Second segment pushes total to 2*RMSS — immediate ACK
-    EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE));
+    EXPECT_CALL(output(), send).WillOnce(Return(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE));
     peer_send_no_ack(PEER_ISN + 1 + rmss, p2);
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 }
 
 TEST_F(TcpDelAckTest, TwoSegmentsNotReaching2Rmss_NoImmediateAck)
@@ -92,14 +92,14 @@ TEST_F(TcpDelAckTest, TwoSegmentsNotReaching2Rmss_NoImmediateAck)
     std::vector<std::byte> p2(rmss, std::byte{2});
 
     // First segment — below threshold, no ACK
-    EXPECT_CALL(mock_io_, write(_)).Times(0);
+    EXPECT_CALL(output(), send).Times(0);
     peer_send_no_ack(PEER_ISN + 1, p1);
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     // Second segment pushes total to RMSS - no immediate ACK
-    EXPECT_CALL(mock_io_, write(_)).Times(0);
+    EXPECT_CALL(output(), send).Times(0);
     peer_send_no_ack(PEER_ISN + 1 + rmss, p2);
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 }
 
 TEST_F(TcpDelAckTest, PiggybackOnOutgoingData)
@@ -108,18 +108,18 @@ TEST_F(TcpDelAckTest, PiggybackOnOutgoingData)
 
     // Peer sends data — delayed ACK armed, no immediate ACK
     std::vector<std::byte> incoming(100, std::byte{0xBB});
-    EXPECT_CALL(mock_io_, write(_)).Times(0);
+    EXPECT_CALL(output(), send).Times(0);
     peer_send_no_ack(PEER_ISN + 1, incoming);
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     // We have data to send — on_tick should piggyback ACK on the data segment
     std::vector<std::byte> outgoing(send_mss(), std::byte{0xCC});
     write(outgoing);
 
     // on_tick triggers send — one write (data + piggybacked ACK), not two separate writes
-    EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + send_mss()));
+    EXPECT_CALL(output(), send).WillOnce(Return(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + send_mss()));
     conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 }
 
 TEST_F(TcpDelAckTest, MultipleSmallSegments_AckFiresOncAtTimeout)
@@ -128,15 +128,15 @@ TEST_F(TcpDelAckTest, MultipleSmallSegments_AckFiresOncAtTimeout)
 
     std::vector<std::byte> p(50, std::byte{1});
 
-    EXPECT_CALL(mock_io_, write(_)).Times(0);
+    EXPECT_CALL(output(), send).Times(0);
     peer_send_no_ack(PEER_ISN + 1,      p);
     peer_send_no_ack(PEER_ISN + 1 + 50, p);
     peer_send_no_ack(PEER_ISN + 1 + 100, p);
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 
     // Only one ACK at timeout, not three
     advance_clock(200);
-    EXPECT_CALL(mock_io_, write(_)).WillOnce(Return(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE));
+    EXPECT_CALL(output(), send).WillOnce(Return(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE));
     conn_.on_tick();
-    Mock::VerifyAndClearExpectations(&mock_io_);
+    Mock::VerifyAndClearExpectations(&output());
 }

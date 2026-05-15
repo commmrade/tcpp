@@ -1,5 +1,7 @@
+#include "include/tcp_common.hpp"
+
 #include <gtest/gtest.h>
-#include "../src/tcpp/net/buffer.hpp"
+#include "../../src/tcpp/net/buffer.hpp"
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -626,4 +628,463 @@ TEST_F(TcpReceiverBufferIntegrationTest, SingleByteSegmentsContiguous) {
     for (int i = 0; i < 256; ++i) {
         EXPECT_EQ(result[i], static_cast<std::byte>(i));
     }
+}
+
+class TcpReceiverBufTest : public TcpConnectionTest
+{
+protected:
+    // Sends an arbitrary segment from the peer side.
+    // Always expects exactly one write() call (ACK or dup-ACK).
+    void peer_send(const std::uint32_t seqn,
+                   std::span<const std::byte> payload,
+                   const bool fin = false)
+    {
+        auto seg = helpers::make_tcp({
+            .sport  = PEER_PORT,
+            .dport  = LOCAL_PORT,
+            .seqn   = seqn,
+            .ackn   = get_send_iss() + 1,
+            .window = 65535,
+            .ack    = true,
+            .fin    = fin,
+        });
+        const auto seg_d = seg.serialize();
+        const netparser::TcpHeaderView seg_view{seg_d};
+
+        EXPECT_CALL(output(), send).Times(AnyNumber());
+        conn_.on_packet(seg_view, payload);
+        Mock::VerifyAndClearExpectations(&output());
+    }
+
+    ssize_t conn_read(void* buf, const std::size_t n)
+    {
+        return conn_.read(buf, n);
+    }
+};
+
+// -------------------------------------------------------------------
+// Test 1: read all data, then read again → EOF (0)
+// -------------------------------------------------------------------
+TEST_F(TcpReceiverBufTest, ReadDataThenFin_ReturnsDataThenEof)
+{
+    do_handshake();
+
+    constexpr std::size_t DATA_LEN = 200;
+    std::vector<std::byte> payload(DATA_LEN);
+    std::memset(payload.data(), 'A', DATA_LEN);
+
+    // In-order data segment: seq [PEER_ISN+1, PEER_ISN+201)
+    peer_send(PEER_ISN + 1, payload);
+    ASSERT_EQ(recv_nxt(), PEER_ISN + 1 + DATA_LEN);
+
+    // FIN: seq = PEER_ISN+201, no payload
+    peer_send(PEER_ISN + 1 + DATA_LEN, {}, /*fin=*/true);
+
+    // Read all data
+    std::vector<std::byte> read_buf(DATA_LEN + 64, std::byte{0});
+    ssize_t n = conn_read(read_buf.data(), read_buf.size());
+    ASSERT_EQ(n, static_cast<ssize_t>(DATA_LEN));
+    ASSERT_EQ(std::memcmp(read_buf.data(), payload.data(), DATA_LEN), 0);
+
+    // Second read: FIN consumed → EOF
+    n = conn_read(read_buf.data(), read_buf.size());
+    ASSERT_EQ(n, 0);
+}
+
+// -------------------------------------------------------------------
+// Test 2: partial read doesn't consume more than requested
+// -------------------------------------------------------------------
+TEST_F(TcpReceiverBufTest, PartialRead_ConsumesOnlyRequested)
+{
+    do_handshake();
+
+    constexpr std::size_t DATA_LEN = 300;
+    std::vector<std::byte> payload(DATA_LEN);
+    for (std::size_t i = 0; i < DATA_LEN; ++i)
+        payload[i] = static_cast<std::byte>(i & 0xFF);
+
+    peer_send(PEER_ISN + 1, payload);
+
+    std::vector<std::byte> buf(100, std::byte{0});
+
+    ssize_t n = conn_read(buf.data(), 100);
+    ASSERT_EQ(n, 100);
+    ASSERT_EQ(std::memcmp(buf.data(), payload.data(), 100), 0);
+
+    n = conn_read(buf.data(), 100);
+    ASSERT_EQ(n, 100);
+    ASSERT_EQ(std::memcmp(buf.data(), payload.data() + 100, 100), 0);
+
+    n = conn_read(buf.data(), 100);
+    ASSERT_EQ(n, 100);
+    ASSERT_EQ(std::memcmp(buf.data(), payload.data() + 200, 100), 0);
+}
+
+// -------------------------------------------------------------------
+// Test 3: out-of-order arrival; recv.nxt doesn't advance until gap filled
+// -------------------------------------------------------------------
+TEST_F(TcpReceiverBufTest, OutOfOrder_RecvNxtHoldsUntilGapFilled)
+{
+    conn_.set_option(ConnectionOption::QUICKACK, true);
+    do_handshake();
+
+    // In-order [0, 1200): seq PEER_ISN+1 .. PEER_ISN+1201
+    std::vector<std::byte> p1(1200, std::byte{1});
+    peer_send(PEER_ISN + 1, p1);
+    ASSERT_EQ(recv_nxt(), PEER_ISN + 1201);
+
+    // OOO: [1400, 1500): gap at [1200, 1400)
+    std::vector<std::byte> p3(100, std::byte{3});
+    peer_send(PEER_ISN + 1401, p3);
+    // recv.nxt must NOT advance past the gap
+    ASSERT_EQ(recv_nxt(), PEER_ISN + 1201);
+
+    // Fill lower half of gap [1200, 1300)
+    std::vector<std::byte> p2a(100, std::byte{2});
+    peer_send(PEER_ISN + 1201, p2a);
+    ASSERT_EQ(recv_nxt(), PEER_ISN + 1301);
+
+    // Fill upper half of gap [1300, 1400): now gap is closed, p3 becomes contiguous
+    std::vector<std::byte> p2b(100, std::byte{2});
+    peer_send(PEER_ISN + 1301, p2b);
+    ASSERT_EQ(recv_nxt(), PEER_ISN + 1501);
+}
+
+// -------------------------------------------------------------------
+// Test 4: single large OOO segment, then in-order fill, recv.nxt jumps
+// -------------------------------------------------------------------
+TEST_F(TcpReceiverBufTest, OutOfOrder_SingleGapFill_RecvNxtJumps)
+{
+    do_handshake();
+
+    // OOO first: [500, 1000) — nothing in order yet
+    std::vector<std::byte> late(500, std::byte{0xBB});
+    peer_send(PEER_ISN + 501, late);
+    ASSERT_EQ(recv_nxt(), PEER_ISN + 1); // nxt still at start
+
+    // In-order [0, 500): fills the gap, chained with the OOO segment
+    std::vector<std::byte> early(500, std::byte{0xAA});
+    peer_send(PEER_ISN + 1, early);
+    ASSERT_EQ(recv_nxt(), PEER_ISN + 1001);
+
+    // Data is readable in order: first 'early', then 'late'
+    std::vector<std::byte> buf(1000);
+    const ssize_t n = conn_read(buf.data(), buf.size());
+    ASSERT_EQ(n, 1000);
+    ASSERT_EQ(buf[0],   std::byte{0xAA});
+    ASSERT_EQ(buf[499], std::byte{0xAA});
+    ASSERT_EQ(buf[500], std::byte{0xBB});
+    ASSERT_EQ(buf[999], std::byte{0xBB});
+}
+
+
+class TcpConnectionSendBufTest : public TcpConnectionTest
+{
+
+};
+
+TEST_F(TcpConnectionSendBufTest, InsertSeveralUnderMss)
+{
+    do_handshake();
+
+    std::array<std::byte, 4> buf{};
+    std::memset(buf.data(), 'c', buf.size());
+
+    write(buf);
+    write(buf);
+    write(buf);
+    ASSERT_EQ(send_buf_size_segs(), 1);
+    ASSERT_EQ(send_buf_pl_size(), 4 * 3);
+}
+
+TEST_F(TcpConnectionSendBufTest, InsertSeveralOverMss)
+{
+    do_handshake();
+
+    const auto send_mss_ = send_mss();
+    std::vector<std::byte> buf;
+    buf.resize(send_mss_);
+    std::memset(buf.data(), 'c', buf.size());
+
+    write(std::span<const std::byte>{buf.data(), static_cast<std::size_t>(send_mss_ - 10)});
+    write(buf);
+    ASSERT_EQ(send_buf_size_segs(), 2);
+    ASSERT_EQ(send_buf_pl_size(), send_mss_ - 10 + buf.size());
+}
+
+TEST_F(TcpConnectionSendBufTest, InsertSeveralMss)
+{
+    do_handshake();
+
+    const auto send_mss_ = send_mss();
+    std::vector<std::byte> buf;
+    buf.resize(send_mss_ * 3);
+    std::memset(buf.data(), 'c', buf.size());
+
+    write(buf);
+    ASSERT_EQ(send_buf_size_segs(), 3);
+    ASSERT_EQ(send_buf_pl_size(), buf.size());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TcpBuffer cur_size_ tracking
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class TcpBufferCurSizeTest : public TcpBufferTest {};
+
+// ─── insert ──────────────────────────────────────────────────────────────────
+
+TEST_F(TcpBufferCurSizeTest, InsertDataSegment)
+{
+    buf.insert(TcpSegment{0, make_payload(100)});
+    EXPECT_EQ(buf.size_bytes(), 100u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertSynOnlyCountsOne)
+{
+    buf.insert(TcpSegment{0, {}, true, false});
+    EXPECT_EQ(buf.size_bytes(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertFinOnlyCountsOne)
+{
+    buf.insert(TcpSegment{0, {}, false, true});
+    EXPECT_EQ(buf.size_bytes(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertSynFinNoPayload)
+{
+    buf.insert(TcpSegment{0, {}, true, true});
+    EXPECT_EQ(buf.size_bytes(), 2u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertSynWithPayload)
+{
+    buf.insert(TcpSegment{0, make_payload(99), true, false});
+    EXPECT_EQ(buf.size_bytes(), 100u); // 99 + SYN
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertFinWithPayload)
+{
+    buf.insert(TcpSegment{0, make_payload(50), false, true});
+    EXPECT_EQ(buf.size_bytes(), 51u); // 50 + FIN
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertSynDataFin)
+{
+    buf.insert(TcpSegment{0, make_payload(100), true, true});
+    EXPECT_EQ(buf.size_bytes(), 102u); // SYN + 100 + FIN
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertMultipleSegmentsAccumulates)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(200)});
+    buf.insert(TcpSegment{300, make_payload(50)});
+    EXPECT_EQ(buf.size_bytes(), 350u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertOutOfOrderAccumulates)
+{
+    buf.insert(TcpSegment{200, make_payload(50)});
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(100)});
+    EXPECT_EQ(buf.size_bytes(), 250u);
+}
+
+TEST_F(TcpBufferCurSizeTest, InsertDuplicateDoesNotChangeCurSize)
+{
+    buf.insert(TcpSegment{0, make_payload(100)});
+    buf.insert(TcpSegment{0, make_payload(100)});
+    EXPECT_EQ(buf.size_bytes(), 100u);
+    EXPECT_EQ(buf.size_segs(), 1u);
+}
+
+// ─── consume_seq ─────────────────────────────────────────────────────────────
+
+TEST_F(TcpBufferCurSizeTest, ConsumeFullSegment)
+{
+    buf.insert(TcpSegment{0, make_payload(100)});
+    buf.consume_seq(100);
+    EXPECT_EQ(buf.size_bytes(), 0u);
+    EXPECT_EQ(buf.size_segs(), 0u);
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumePartialSegment)
+{
+    buf.insert(TcpSegment{0, make_payload(100)});
+    buf.consume_seq(50);
+    EXPECT_EQ(buf.size_bytes(), 50u);
+    EXPECT_EQ(buf.size_segs(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeMultipleFullSegments)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(100)});
+    buf.insert(TcpSegment{200, make_payload(100)});
+    buf.consume_seq(200);
+    EXPECT_EQ(buf.size_bytes(), 100u);
+    EXPECT_EQ(buf.size_segs(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeAtExactSegmentBoundary)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(200)});
+    buf.consume_seq(100);
+    EXPECT_EQ(buf.size_bytes(), 200u);
+    EXPECT_EQ(buf.size_segs(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeAll)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(100)});
+    buf.consume_seq(200);
+    EXPECT_EQ(buf.size_bytes(), 0u);
+    EXPECT_TRUE(buf.empty());
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeZeroDoesNothing)
+{
+    buf.insert(TcpSegment{0, make_payload(100)});
+    buf.consume_seq(0);
+    EXPECT_EQ(buf.size_bytes(), 100u);
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeFinOnlySegment)
+{
+    buf.insert(TcpSegment{0, {}, false, true});
+    buf.consume_seq(1);
+    EXPECT_EQ(buf.size_bytes(), 0u);
+    EXPECT_TRUE(buf.empty());
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeSynOnlySegment)
+{
+    buf.insert(TcpSegment{0, {}, true, false});
+    buf.consume_seq(1);
+    EXPECT_EQ(buf.size_bytes(), 0u);
+    EXPECT_TRUE(buf.empty());
+}
+
+TEST_F(TcpBufferCurSizeTest, ConsumeEmptyBufferDoesNothing)
+{
+    EXPECT_NO_THROW(buf.consume_seq(100));
+    EXPECT_EQ(buf.size_bytes(), 0u);
+}
+
+TEST_F(TcpBufferCurSizeTest, CurSizeConsistentAfterMixedOperations)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(100)});
+    buf.consume_seq(50);
+    buf.insert(TcpSegment{200, make_payload(100)});
+    buf.consume_seq(200);
+    // remaining: last 100 bytes segment
+    EXPECT_EQ(buf.size_bytes(), 100u);
+    EXPECT_EQ(buf.size_segs(), 1u);
+}
+
+TEST_F(TcpBufferCurSizeTest, CurSizeConsistentAfterSynFinInsertConsume)
+{
+    buf.insert(TcpSegment{0,   make_payload(100)});
+    buf.insert(TcpSegment{100, make_payload(50), false, true}); // data + FIN = 51
+    EXPECT_EQ(buf.size_bytes(), 151u);
+    buf.consume_seq(100);
+    EXPECT_EQ(buf.size_bytes(), 51u);
+    buf.consume_seq(151);
+    EXPECT_EQ(buf.size_bytes(), 0u);
+}
+
+// ─── free_space ──────────────────────────────────────────────────────────────
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceFullWhenEmpty)
+{
+    const auto expected = std::min<std::size_t>(
+        std::numeric_limits<std::uint16_t>::max(),
+        buf.max_size()
+    );
+    EXPECT_EQ(buf.available_space(), expected);
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceDecreasesAfterInsert)
+{
+    buf.set_max_size(std::numeric_limits<std::uint16_t>::max());
+
+    const auto before = buf.available_space();
+    buf.insert(TcpSegment{0, make_payload(100)});
+    EXPECT_EQ(buf.available_space(), before - 100);
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceIncreasesAfterConsume)
+{
+    buf.set_max_size(std::numeric_limits<std::uint16_t>::max());
+
+    buf.insert(TcpSegment{0, make_payload(100)});
+    const auto after_insert = buf.available_space();
+    buf.consume_seq(100);
+    EXPECT_GT(buf.available_space(), after_insert);
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceCappedAtUint16Max)
+{
+    buf.set_max_size(std::numeric_limits<std::uint32_t>::max());
+    EXPECT_EQ(buf.available_space(), std::numeric_limits<std::uint16_t>::max());
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceZeroWhenFull)
+{
+    const std::size_t cap = std::numeric_limits<std::uint16_t>::max();
+    buf.set_max_size(cap);
+    buf.insert(TcpSegment{0, make_payload(cap)});
+    EXPECT_EQ(buf.available_space(), 0u);
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceConsistentAfterPartialConsume)
+{
+    const std::size_t cap = 1000;
+    buf.set_max_size(cap);
+    buf.insert(TcpSegment{0, make_payload(500)});
+    buf.consume_seq(200);
+    EXPECT_EQ(buf.available_space(), cap - 300);
+}
+
+TEST_F(TcpBufferCurSizeTest, FreeSpaceSynFinCountedAgainstCap)
+{
+    const std::size_t cap = 1000;
+    buf.set_max_size(cap);
+    buf.insert(TcpSegment{0, make_payload(100), true, true}); // 102 seq bytes
+    EXPECT_EQ(buf.available_space(), cap - 102);
+}
+
+// ─── append_back (TcpSenderBuffer) ───────────────────────────────────────────
+
+class TcpSenderBufferCurSizeTest : public testing::Test
+{
+protected:
+    TcpSenderBuffer buf_;
+};
+
+TEST_F(TcpSenderBufferCurSizeTest, AppendBackUpdatesCurSize)
+{
+    buf_.insert(TcpSegment{0, make_payload(100)});
+    const auto extra = make_payload(50);
+    buf_.append_back(extra);
+    EXPECT_EQ(buf_.size_bytes(), 150u);
+}
+
+TEST_F(TcpSenderBufferCurSizeTest, AppendBackOnEmptyThrows)
+{
+    const auto extra = make_payload(50);
+    EXPECT_THROW(buf_.append_back(extra), std::out_of_range);
+}
+
+TEST_F(TcpSenderBufferCurSizeTest, AppendBackMultipleTimes)
+{
+    buf_.insert(TcpSegment{0, make_payload(100)});
+    buf_.append_back(make_payload(50));
+    buf_.append_back(make_payload(25));
+    EXPECT_EQ(buf_.size_bytes(), 175u);
 }

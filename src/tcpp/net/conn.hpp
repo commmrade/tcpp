@@ -151,8 +151,8 @@ struct Config
 class TcpConnection
 {
 public:
-    TcpConnection(IOInterface &tun, std::unique_ptr<ClockInterface> clock)
-        : output_(tun), clock_(std::move(clock)) {}
+    TcpConnection(std::unique_ptr<OutputInterface> output, std::unique_ptr<ClockInterface> clock)
+        : output_(std::move(output)), clock_(std::move(clock)) {}
 
     // Helpers
     [[nodiscard]] std::condition_variable &get_connect_var() { return conn_var_; }
@@ -164,6 +164,10 @@ public:
         return recv_buf_.empty() ? false : recv_buf_.back().fin();
     }
     [[nodiscard]] TcpState get_state() const { return state_; }
+    [[nodiscard]] std::size_t send_buf_free_space() const
+    {
+        return send_buf_.available_space();
+    }
 
     // "Userspace" kinda functions -------------------------------------
     void shutdown(ShutdownType sht);
@@ -231,13 +235,13 @@ private:
         const std::uint32_t daddr,
         const std::uint16_t dport);
 
-    void retransmit(Timer& timer);
+    std::uint32_t retransmit(Timer& timer);
     void update_timers();
 
     friend class Tcp;
     friend class TcpConnectionTest;
 
-    SegmentOutput output_;
+    std::unique_ptr<OutputInterface> output_;
 
     std::condition_variable recv_var_;// Notified when something is received
     std::condition_variable conn_var_;// Notified when 3 way handshake is done (both active and passive)
