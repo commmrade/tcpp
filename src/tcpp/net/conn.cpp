@@ -440,8 +440,9 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
             ack_seg.set_ack(true);
             ack_seg.set_ackn(recv_.nxt());
 
-            if (tcph.timestamp().has_value()) {
-                update_ts(tcph);
+            const auto tsopt = tcph.timestamp();
+            if (tsopt.has_value()) {
+                recv_.set_ts_recent(tsopt->tv);
                 is_tsopt = true;
                 ack_seg.set_timestamp(static_cast<std::uint32_t>(clock_->now()), recv_.ts_recent());
             }
