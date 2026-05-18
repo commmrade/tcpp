@@ -75,6 +75,14 @@ public:
     {
         return mss_;
     }
+    void set_timestamp(const std::uint32_t tsval, const std::uint32_t tsecr)
+    {
+        tsopt_.emplace(tsval, tsecr);
+    }
+    [[nodiscard]] std::optional<std::pair<std::uint32_t, std::uint32_t>> timestamp() const
+    {
+        return tsopt_;
+    }
 
     [[nodiscard]] bool ack() const
     {
@@ -145,6 +153,7 @@ private:
     std::uint32_t ack_n_{};
 
     std::optional<std::uint16_t> mss_{};
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> tsopt_{};
 };
 
 class TcpBuffer

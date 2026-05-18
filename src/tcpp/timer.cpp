@@ -17,7 +17,16 @@ void RttMeasurement::start(const std::int64_t now_ms, const std::uint32_t seq_n)
     }
 }
 
-void RttMeasurement::update(const std::int64_t now_ms, const std::uint32_t ack_n) {
+void RttMeasurement::update_ts(const std::int64_t now_ms, const std::uint32_t tsecr)
+{
+    // This condition is in case RTTM is halted due to retransmissions
+    if (send_at_.has_value()) {
+        send_at_.emplace(tsecr); // TSecr is the time at which the segment was sent
+        update_no_ts(now_ms, send_seq_at_ + 1);
+    }
+}
+
+void RttMeasurement::update_no_ts(const std::int64_t now_ms, const std::uint32_t ack_n) {
     if (send_at_.has_value() && wrapping_gt(ack_n, send_seq_at_)) {
         const std::int64_t res = now_ms - send_at_.value();// cur. rtt
 
