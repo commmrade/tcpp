@@ -159,7 +159,7 @@ class TcpConnectionTest;
 enum class ConnectionOption : std::uint8_t
 {
     NODELAY,
-    QUICKACK
+    QUICKACK,
 };
 
 struct Config
@@ -167,6 +167,7 @@ struct Config
     bool is_nodelay{false};
     bool is_quickack{false};
 };
+static inline constexpr bool is_timestamp = true;
 
 class TcpConnection
 {

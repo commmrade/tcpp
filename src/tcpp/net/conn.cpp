@@ -364,7 +364,7 @@ bool TcpConnection::on_fin()
     switch (state_) {
     case TcpState::ESTAB: {
         state_ = TcpState::CLOSE_WAIT;
-        // add_fin_segment();
+        add_fin_segment();
         break;
     }
     case TcpState::FIN_WAIT_2: {
@@ -441,7 +441,7 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
             ack_seg.set_ackn(recv_.nxt());
 
             const auto tsopt = tcph.timestamp();
-            if (tsopt.has_value()) {
+            if (is_timestamp && tsopt.has_value()) {
                 recv_.set_ts_recent(tsopt->tv);
                 is_tsopt = true;
                 ack_seg.set_timestamp(static_cast<std::uint32_t>(clock_->now()), recv_.ts_recent());
@@ -770,7 +770,7 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
         synack_seg.set_mss(recv_mss_);
 
         const auto tcph_ts = tcph.timestamp();
-        if (tcph_ts.has_value()) {
+        if (is_timestamp && tcph_ts.has_value()) {
             recv_.set_ts_recent(tcph_ts.value().tv);
             is_tsopt = true;
         }
@@ -807,7 +807,10 @@ void TcpConnection::open_active(const std::uint32_t saddr,
 
     TcpSegment seg{ iss, {}, true };
     seg.set_mss(recv_mss_);
-    seg.set_timestamp(static_cast<std::uint32_t>(clock_->now()), 0); // Because this does not contain an ACK, IDC about what tsecr is set to, really hope it does not overflow or something
+    if (is_timestamp) {
+        seg.set_timestamp(static_cast<std::uint32_t>(clock_->now()), 0); // Because this does not contain an ACK, IDC about what tsecr is set to, really hope it does not overflow or something
+    }
+
     send_buf_.insert(seg);
 
     send_.set_iss(iss);
