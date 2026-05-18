@@ -52,6 +52,9 @@ namespace helpers {
         bool          fin     = false;
         bool          rst     = false;
         std::uint16_t mss     = 0;       // 0 = don't add MSS option
+        std::uint32_t tsval   = 0;
+        std::uint32_t tsecr   = 0;
+        bool          has_ts  = false;  // explicit flag; needed when tsval==0 is intentional (e.g. SYN)
     };
 
     inline netparser::IpHeader make_ip(const IpArgs& a) {
@@ -87,6 +90,9 @@ namespace helpers {
         tcph.urg_ptr(0);
         if (a.mss != 0) {
             tcph.options().mss(a.mss);
+        }
+        if (a.has_ts) {
+            tcph.options().timestamp(a.tsval, a.tsecr);
         }
         const auto hdr_size = netparser::TCPH_MIN_SIZE + tcph.options().options_size();
         tcph.data_off(static_cast<std::uint8_t>(hdr_size / 4));
@@ -260,5 +266,15 @@ protected:
     auto& rtt()
     {
         return conn_.rtt_measurement_;
+    }
+
+    bool is_tsopt() const
+    {
+        return conn_.is_tsopt;
+    }
+
+    std::uint32_t ts_recent() const
+    {
+        return conn_.recv_.ts_recent();
     }
 };

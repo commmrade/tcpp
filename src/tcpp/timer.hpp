@@ -19,7 +19,8 @@ public:
 
     void start(const std::int64_t now_ms, const std::uint32_t seq_n);
     void stop() { send_at_.reset(); }
-    void update(const std::int64_t now_ms, const std::uint32_t ack_n);
+    void update_no_ts(const std::int64_t now_ms, const std::uint32_t ack_n);
+    void update_ts(const std::int64_t now_ms, const std::uint32_t tsecr);
 
     void set_rto(const std::uint32_t rto_ms)
     {

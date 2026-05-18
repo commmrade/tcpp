@@ -123,8 +123,6 @@ bool TcpConnection::on_syn(const netparser::TcpHeaderView &tcph)
 
 bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
 {
-    rtt_measurement_.update(clock_->now(), tcph.ackn());
-
     std::println("Got ack n {}, SEND.NXT {}, UNA", tcph.ackn(), send_.nxt(), send_.una());
     switch (state_) {
     case TcpState::SYN_RCVD: {
@@ -162,6 +160,14 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
             send_pure(ack_seg);
         }
         if (is_between_wrapped(send_.una(), tcph.ackn(), send_.nxt() + 1)) {
+            // This segment advances SND.UNA, therefore can be used for RTT measurement
+            const auto tcph_ts = tcph.timestamp();
+            if (is_tsopt) { // there is TS opt 100% because of the guard in on_packet()
+                rtt_measurement_.update_ts(clock_->now(), tcph_ts.value().tr);
+            } else if (!is_tsopt) {
+                rtt_measurement_.update_no_ts(clock_->now(), tcph.ackn());
+            }
+
             // const auto acked_bytes_n = tcph.ackn() - send_.una();// This wraps fine
             if (!send_buf_.empty()) {
                 const auto res = send_buf_.consume_seq(tcph.ackn());
@@ -358,6 +364,7 @@ bool TcpConnection::on_fin()
     switch (state_) {
     case TcpState::ESTAB: {
         state_ = TcpState::CLOSE_WAIT;
+        add_fin_segment();
         break;
     }
     case TcpState::FIN_WAIT_2: {
@@ -432,23 +439,31 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
             TcpSegment ack_seg{ send_.nxt(), {} };
             ack_seg.set_ack(true);
             ack_seg.set_ackn(recv_.nxt());
+
+            const auto tsopt = tcph.timestamp();
+            if (is_timestamp && tsopt.has_value()) {
+                recv_.set_ts_recent(tsopt->tv);
+                is_tsopt = true;
+                ack_seg.set_timestamp(static_cast<std::uint32_t>(clock_->now()), recv_.ts_recent());
+            }
+
             send_pure(ack_seg);
 
             // 3 way handshake is done at this point
             conn_var_.notify_all();
         } else {
             // TODO: how to handle this in terms of *conn_var_*? Simultaneous open
-            state_ = TcpState::SYN_RCVD;// Sim. open things
-
-            TcpSegment synack_seg{ send_.iss(), {}, true };
-            synack_seg.set_ack(true);
-            synack_seg.set_ackn(recv_.nxt());
-            send_buf_.insert(synack_seg);
-            send_data(1, 0);
-
-            // tcph_.ack(true);
-            // tcph_.syn(true);
-            // send(send_.iss(), 0);
+            // state_ = TcpState::SYN_RCVD;// Sim. open things
+            //
+            // TcpSegment synack_seg{ send_.iss(), {}, true };
+            // synack_seg.set_ack(true);
+            // synack_seg.set_ackn(recv_.nxt());
+            // send_buf_.insert(synack_seg);
+            // send_data(1, 0);
+            //
+            // // tcph_.ack(true);
+            // // tcph_.syn(true);
+            // // send(send_.iss(), 0);
         }
 
         if (auto opt = tcph.mss(); opt.has_value()) { send_mss_ = opt.value().mss; }
@@ -467,6 +482,23 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
 bool TcpConnection::segment_arrived_other(const netparser::TcpHeaderView &tcph,
     std::span<const std::byte> payload)
 {
+    // PAWS check
+    const auto tsopt = tcph.timestamp();
+    if (is_tsopt && tsopt.has_value()) {
+        if (tsopt->tv < recv_.ts_recent() && !tcph.rst()) {
+            // <SEQ=SND.NXT><ACK=RCV.NXT><CTL=ACK>
+            TcpSegment seg{send_.nxt(), {}};
+            seg.set_ack(true);
+            seg.set_ackn(recv_.nxt());
+            send_pure(seg);
+            return false;
+        }
+        update_ts(tcph);
+    } else if (is_tsopt) {
+        // TS options are negotiated but this segment does not contain it -> drop silently
+        return false;
+    }
+
     // First, check sequence number
     if (!validate_seq_n(tcph.seqn(), payload.size(), recv_.wnd(), recv_.nxt()) && recv_.wnd() != 0) {
         // wnd != 0 because: If the RCV.WND is zero, no segments will be acceptable, but special allowance should be made to accept valid ACKs, URGs, and RSTs
@@ -518,6 +550,14 @@ void TcpConnection::add_fin_segment()
     fin_seg.set_ack(true);
     fin_seg.set_ackn(recv_.nxt());
     send_buf_.insert(fin_seg);
+}
+
+void TcpConnection::update_ts(const netparser::TcpHeaderView &tcph)
+{
+    const auto tsval = tcph.timestamp().value().tv;
+    if (tsval >= recv_.ts_recent() && tcph.seqn() <= recv_.last_ack()) {
+        recv_.set_ts_recent(tsval);
+    }
 }
 
 bool TcpConnection::handle_send()
@@ -591,6 +631,12 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
         // Same goes for settings SND.NXT evry time
         TcpSegment &seg = send_buf_.at(i);
         seg.set_ackn(recv_.nxt());
+        if (is_tsopt) {
+            seg.set_timestamp(static_cast<std::uint32_t>(clock_->now()), recv_.ts_recent());
+            if (seg.ack()) {
+                recv_.set_last_ack(seg.ackn());
+            }
+        }
 
         update_recv_window();
 
@@ -603,6 +649,7 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
         const auto time_now = clock_->now();
         if (wrapping_gt(seg.seq_start(), send_.nxt() - 1) && !rtt_started) {
             // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
+            // RTTM.start() is called even if timestamps are used
             rtt_measurement_.start(time_now, seg.seq_start());
             rtt_started = true;
         }
@@ -647,17 +694,29 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
     return static_cast<ssize_t>(total_written_pl);
 }
 
-ssize_t TcpConnection::send_pure(const TcpSegment &seg)
+ssize_t TcpConnection::send_pure(TcpSegment &seg)
 {
     update_recv_window();
     const auto wnd_to_adv = static_cast<std::uint16_t>(recv_.wnd());
+    if (is_tsopt) {
+        seg.set_timestamp(static_cast<std::uint32_t>(clock_->now()), recv_.ts_recent());
+        if (seg.ack()) {
+            recv_.set_last_ack(seg.ackn());
+        }
+    }
     return output_->send(seg, 0, wnd_to_adv);
 }
 
-ssize_t TcpConnection::send_retransmit(const TcpSegment &retrans_seg, const std::size_t max_size_pl)
+ssize_t TcpConnection::send_retransmit(TcpSegment &retrans_seg, const std::size_t max_size_pl)
 {
     update_recv_window();
     const auto wnd_to_adv = static_cast<std::uint16_t>(recv_.wnd());
+    if (is_tsopt) {
+        retrans_seg.set_timestamp(static_cast<std::uint32_t>(clock_->now()), recv_.ts_recent());
+        if (retrans_seg.ack()) {
+            recv_.set_last_ack(retrans_seg.ackn());
+        }
+    }
     return output_->send(retrans_seg, max_size_pl, wnd_to_adv);
 }
 
@@ -704,10 +763,17 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
         auto iss = dis(gen);
         // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
 
+
         TcpSegment synack_seg{ iss, {}, true };
         synack_seg.set_ack(true);
         synack_seg.set_ackn(recv_.nxt());
         synack_seg.set_mss(recv_mss_);
+
+        const auto tcph_ts = tcph.timestamp();
+        if (is_timestamp && tcph_ts.has_value()) {
+            recv_.set_ts_recent(tcph_ts.value().tv);
+            is_tsopt = true;
+        }
         send_buf_.insert(synack_seg);// Put it onto retrans. queue
 
         // tcph_.options().mss(recv_mss_);
@@ -741,6 +807,10 @@ void TcpConnection::open_active(const std::uint32_t saddr,
 
     TcpSegment seg{ iss, {}, true };
     seg.set_mss(recv_mss_);
+    if (is_timestamp) {
+        seg.set_timestamp(static_cast<std::uint32_t>(clock_->now()), 0); // Because this does not contain an ACK, IDC about what tsecr is set to, really hope it does not overflow or something
+    }
+
     send_buf_.insert(seg);
 
     send_.set_iss(iss);

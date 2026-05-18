@@ -124,11 +124,31 @@ public:
     {
         irs_ = irs;
     }
+
+    void set_ts_recent(const std::uint32_t val)
+    {
+        ts_recent_ = val;
+    }
+    std::uint32_t ts_recent() const
+    {
+        return ts_recent_;
+    }
+    void set_last_ack(const std::uint32_t val)
+    {
+        last_ack_sent_ = val;
+    }
+    std::uint32_t last_ack() const
+    {
+        return last_ack_sent_;
+    }
 private:
     std::uint32_t nxt_;// next to receive, which is +1 byte. so this equals to the next seqn that is expected
     std::uint32_t wnd_;// receiver window size. It is recommended to use 32 bit int for WND
     std::uint16_t up_;// urgent pointer
     std::uint32_t irs_;// initial receiver seq n
+
+    std::uint32_t ts_recent_{};
+    std::uint32_t last_ack_sent_{};
 
     std::uint32_t right_wnd_edge_;
 };
@@ -139,7 +159,7 @@ class TcpConnectionTest;
 enum class ConnectionOption : std::uint8_t
 {
     NODELAY,
-    QUICKACK
+    QUICKACK,
 };
 
 struct Config
@@ -147,6 +167,7 @@ struct Config
     bool is_nodelay{false};
     bool is_quickack{false};
 };
+static inline constexpr bool is_timestamp = true;
 
 class TcpConnection
 {
@@ -199,6 +220,7 @@ public:
 private:
     // Helpers
     void add_fin_segment();
+    void update_ts(const netparser::TcpHeaderView& tcph);
     // void append_recv_data(const std::span<const std::byte> data);
     // void erase_recv_data(const std::size_t bytes_n);
 
@@ -225,8 +247,8 @@ private:
 
     // Used for sending data segments
     ssize_t send_data(const int segs, const std::size_t max_size_pl);
-    ssize_t send_pure(const TcpSegment& seg);
-    ssize_t send_retransmit(const TcpSegment& retrans_seg, const std::size_t max_size_pl);
+    ssize_t send_pure(TcpSegment& seg);
+    ssize_t send_retransmit(TcpSegment& retrans_seg, const std::size_t max_size_pl);
 
     // Conn. establishment functions
     void open_passive(const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph);
@@ -288,6 +310,8 @@ private:
     // retransmissions -----
 
     Config config_;
+
+    bool is_tsopt{false};
 };
 
 

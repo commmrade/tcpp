@@ -7,6 +7,12 @@
 ssize_t SegmentOutput::send(const TcpSegment &seg, const std::size_t max_size_pl, const std::uint32_t rwnd) {
     // TODO: How to support options
 
+    if (auto mssopt = seg.mss(); mssopt.has_value()) {
+        tcph_.options().mss(mssopt.value());
+    }
+    if (auto tsopt = seg.timestamp(); tsopt.has_value()) {
+        tcph_.options().timestamp(tsopt.value().first, tsopt.value().second);
+    }
     iph_.total_len(
         static_cast<std::uint16_t>(static_cast<std::size_t>(iph_.ihl() * 4) + (
                                        netparser::TCPH_MIN_SIZE + tcph_.options().options_size()) +
@@ -25,12 +31,14 @@ ssize_t SegmentOutput::send(const TcpSegment &seg, const std::size_t max_size_pl
     tcph_.fin(seg.fin());
     tcph_.rst(seg.rst());
 
+
     tcph_.window(static_cast<std::uint16_t>(rwnd));
     const auto tcph_size = static_cast<std::uint8_t>(netparser::TCPH_MIN_SIZE + tcph_.options().options_size());
     tcph_.data_off(tcph_size / 4);
     tcph_.calculate_checksum(iph_, seg.payload());
 
     const auto tcp_data = tcph_.serialize();
+    tcph_.options().clear();
 
     std::vector<std::byte> buf{};
     buf.reserve(
