@@ -192,11 +192,9 @@ int main()
         auto rd = sock.read(buf.data(), buf.size());
         if (rd == 0) {
             std::println("user: DATA FINISHED, CLOSING...");
+            sock.close();
             break;
         } else {
-            // sock.close();
-            // break;
-
             auto wr = sock.write(std::span<const std::byte>(buf.data(), static_cast<std::size_t>(rd)));
         }
     }

@@ -177,6 +177,7 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
                 // if empty, probably means that SYN/FIN was ACKed
                 // erase_send_data(acked_bytes_n);
             }
+            std::println("SEND.UNA IS SET TO {}", tcph.ackn());
             send_.set_una(tcph.ackn());
         } else if (wrapping_lt(tcph.ackn(), send_.una() + 1)) {
             // duplicate ACK
@@ -207,6 +208,12 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
     }
     case TcpState::LAST_ACK: {
         // The only thing that can arrive in this state is an acknowledgment of our FIN
+        send_buf_.consume_seq(tcph.ackn());
+        if (!send_buf_.empty()) {
+            std::println("LAST_ACK: Fin was not ACKed");
+            return false;
+        }
+
         state_ = TcpState::CLOSED;
         break;
     }
@@ -225,6 +232,12 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
 
         // if FIN segment is ACKed, then continue in FIN_WAIT_2
         // TOOD: actually make sure fin is acked
+        if (send_.nxt() != send_.una()) { // That means all wasn't ACKed, including the FIN
+            std::println(stderr, "FIN_WAIT_1: FIN was not acked");
+            return false;
+        }
+
+        assert(send_buf_.empty());
         state_ = TcpState::FIN_WAIT_2;
         [[fallthrough]];
     }
@@ -364,7 +377,6 @@ bool TcpConnection::on_fin()
     switch (state_) {
     case TcpState::ESTAB: {
         state_ = TcpState::CLOSE_WAIT;
-        add_fin_segment();
         break;
     }
     case TcpState::FIN_WAIT_2: {

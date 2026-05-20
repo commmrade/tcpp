@@ -48,7 +48,12 @@ bool TcpBuffer::insert(const TcpSegment &seg)
 std::size_t TcpBuffer::consume_seq(const std::uint32_t seq_range_to)
 {
     std::size_t res = 0;
+
     auto iter = segs_.begin();
+    if (seq_range_to < iter->seq_start()) {
+        return res;
+    }
+
     while (iter != segs_.end()) {
         auto old_iter = iter;
         ++iter;
