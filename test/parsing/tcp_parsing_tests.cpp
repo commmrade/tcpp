@@ -287,14 +287,10 @@ TEST(TcpHeaderTest, RoundTripWithOptions) {
 
     auto mss = view.mss();
     ASSERT_TRUE(mss.has_value());
-    EXPECT_EQ(mss->kind, 2);
-    EXPECT_EQ(mss->size, 4);
     EXPECT_EQ(mss->mss, 1460);
 
     auto sack = view.sack_perm();
     ASSERT_TRUE(sack.has_value());
-    EXPECT_EQ(sack->kind, 4);
-    EXPECT_EQ(sack->size, 2);
 
     auto ts = view.timestamp();
     ASSERT_TRUE(ts.has_value());

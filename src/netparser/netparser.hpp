@@ -22,6 +22,9 @@ namespace details {
 #pragma pack(push, 1)
     struct TcpMssOptionInner
     {
+        constexpr static std::uint8_t KIND = 2;
+        constexpr static std::uint8_t SIZE = 4;
+
         std::uint8_t kind;
         std::uint8_t size;
         std::uint16_t mss;
@@ -29,12 +32,16 @@ namespace details {
 
     struct TcpSackPermOptionInner
     {
+        constexpr static std::uint8_t KIND = 4;
+        constexpr static std::uint8_t SIZE = 2;
         std::uint8_t kind;
         std::uint8_t size;
     };
 
     struct TcpTimestampOptionInner
     {
+        constexpr static std::uint8_t KIND = 8;
+        constexpr static std::uint8_t SIZE = 10;
         std::uint8_t kind;
         std::uint8_t size;
         std::uint32_t tv;
@@ -43,6 +50,8 @@ namespace details {
 
     struct TcpWinScaleOptionInner
     {
+        constexpr static std::uint8_t KIND = 3;
+        constexpr static std::uint8_t SIZE = 3;
         std::uint8_t kind;
         std::uint8_t size;
         std::uint8_t shift_cnt;
@@ -197,60 +206,39 @@ enum class TcpOptionKind : std::uint8_t
 
 struct TcpMssOption
 {
-    constexpr static std::uint8_t KIND = 2;
-    constexpr static std::uint8_t SIZE = 4;
     TcpMssOption() = default;
 
     explicit TcpMssOption(const details::TcpMssOptionInner inner)
-        : kind(inner.kind), size(inner.size), mss(ntohs(inner.mss)) {}
+        : mss(ntohs(inner.mss)) {}
 
-    std::uint8_t kind{ KIND };
-    std::uint8_t size{ SIZE };
     std::uint16_t mss{};
 };
 
 
 struct TcpSackPermOption
 {
-    constexpr static std::uint8_t KIND = 4;
-    constexpr static std::uint8_t SIZE = 2;
     TcpSackPermOption() = default;
-
-    explicit TcpSackPermOption(const details::TcpSackPermOptionInner inner)
-        : kind(inner.kind), size(inner.size) {}
-
-    std::uint8_t kind{ KIND };
-    std::uint8_t size{ SIZE };
+    explicit TcpSackPermOption([[maybe_unused]] const details::TcpSackPermOptionInner inner) {}
 };
 
 struct TcpTimestampOption
 {
-    constexpr static std::uint8_t KIND = 8;
-    constexpr static std::uint8_t SIZE = 10;
-
     TcpTimestampOption() = default;
 
     explicit TcpTimestampOption(const details::TcpTimestampOptionInner inner)
-        : kind(inner.kind), size(inner.size), tv(ntohl(inner.tv)), tr(ntohl(inner.tr)) {}
+        : tv(ntohl(inner.tv)), tr(ntohl(inner.tr)) {}
 
-    std::uint8_t kind{ KIND };
-    std::uint8_t size{ SIZE };
     std::uint32_t tv{};
     std::uint32_t tr{};
 };
 
 struct TcpWinScaleOption
 {
-    constexpr static std::uint8_t KIND = 3;
-    constexpr static std::uint8_t SIZE = 3;
-
     TcpWinScaleOption() = default;
 
     explicit TcpWinScaleOption(const details::TcpWinScaleOptionInner inner)
-        : kind(inner.kind), size(inner.size), shift_cnt(inner.shift_cnt) {}
+        : shift_cnt(inner.shift_cnt) {}
 
-    std::uint8_t kind{ KIND };
-    std::uint8_t size{ SIZE };
     std::uint8_t shift_cnt{};
 };
 

@@ -414,8 +414,6 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
 
             win_scale_option_.emplace();
             auto &temp_win_scale = win_scale_option_.value();
-            temp_win_scale.kind = wnscl.kind;
-            temp_win_scale.size = wnscl.size;
             temp_win_scale.shift_cnt = wnscl.shift_cnt;
 
             offset += sizeof(wnscl);
@@ -429,8 +427,6 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
 
             mss_option_.emplace();
             auto &temp_mss = mss_option_.value();
-            temp_mss.kind = mss.kind;
-            temp_mss.size = mss.size;
             temp_mss.mss = ntohs(mss.mss);
 
             offset += sizeof(mss);
@@ -448,8 +444,6 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
 
             sack_perm_option_.emplace();
             auto &temp_s = sack_perm_option_.value();
-            temp_s.size = sack.size;
-            temp_s.kind = sack.kind;
 
             offset += sizeof(sack);
             break;
@@ -462,8 +456,6 @@ void TcpOptions::parse(const std::span<const std::byte> options_bytes)
 
             timestamp_option_.emplace();
             auto &temp_ts = timestamp_option_.value();
-            temp_ts.kind = tso.kind;
-            temp_ts.size = tso.size;
             temp_ts.tv = ntohl(tso.tv);
             temp_ts.tr = ntohl(tso.tr);
 
@@ -501,26 +493,26 @@ std::vector<std::byte> TcpOptions::serialize() const
     std::ptrdiff_t offset = 0;
     if (mss_option_.has_value()) {
         const auto &mss = mss_option_.value();
-        const details::TcpMssOptionInner inner{ .kind = mss.kind, .size = mss.size, .mss = htons(mss.mss) };
+        const details::TcpMssOptionInner inner{ .kind = details::TcpMssOptionInner::KIND, .size = details::TcpMssOptionInner::SIZE, .mss = htons(mss.mss) };
         std::memcpy(bytes.data(), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
     if (win_scale_option_.has_value()) {
         const auto &wnscl = win_scale_option_.value();
-        const details::TcpWinScaleOptionInner inner{ .kind = wnscl.kind, .size = wnscl.size,
+        const details::TcpWinScaleOptionInner inner{ .kind = details::TcpWinScaleOptionInner::KIND, .size = details::TcpWinScaleOptionInner::SIZE,
                                                      .shift_cnt = wnscl.shift_cnt };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
     if (sack_perm_option_.has_value()) {
         const auto &sackperm = sack_perm_option_.value();
-        const details::TcpSackPermOptionInner inner{ .kind = sackperm.kind, .size = sackperm.size };
+        const details::TcpSackPermOptionInner inner{ .kind = details::TcpSackPermOptionInner::KIND, .size = details::TcpSackPermOptionInner::SIZE };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
     }
     if (timestamp_option_.has_value()) {
         const auto &timestamp = timestamp_option_.value();
-        const details::TcpTimestampOptionInner inner{ .kind = timestamp.kind, .size = timestamp.size,
+        const details::TcpTimestampOptionInner inner{ .kind = details::TcpTimestampOptionInner::KIND, .size = details::TcpTimestampOptionInner::SIZE,
                                                       .tv = htonl(timestamp.tv), .tr = htonl(timestamp.tr) };
         std::memcpy(std::next(bytes.data(), offset), &inner, sizeof(inner));
         offset += sizeof(inner);
