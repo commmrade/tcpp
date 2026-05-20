@@ -50,10 +50,6 @@ std::size_t TcpBuffer::consume_seq(const std::uint32_t seq_range_to)
     std::size_t res = 0;
 
     auto iter = segs_.begin();
-    if (seq_range_to < iter->seq_start()) {
-        return res;
-    }
-
     while (iter != segs_.end()) {
         auto old_iter = iter;
         ++iter;
@@ -75,6 +71,8 @@ std::size_t TcpBuffer::consume_seq(const std::uint32_t seq_range_to)
             cur_size_ -= to_erase_n;
             old_iter->erase(to_erase_n);
             // old_iter->set_seq_start(range_to);
+        } else { // range_to < iter.seq_start
+            break;
         }
     }
     return res;

@@ -303,8 +303,11 @@ private:
     RetransTimer r_timer_{};
     ZwpTimer z_timer_{};
     SwsTimer s_timer_{};
-    ExpireTimer ack_timer_{};
     ExpireTimer time_wait_timer_{};
+
+    // Del. Ack
+    ExpireTimer ack_timer_{};
+    int fs_segs_cnt_{0};
 
     std::unique_ptr<ClockInterface> clock_;
     // retransmissions -----

@@ -140,3 +140,40 @@ TEST_F(TcpDelAckTest, MultipleSmallSegments_AckFiresOncAtTimeout)
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&output());
 }
+
+TEST_F(TcpDelAckTest, TwoFullSizedSegments_ImmediateAck)
+{
+    do_handshake();
+
+    const auto rmss = recv_mss();
+    std::vector<std::byte> p1(rmss, std::byte{1});
+    std::vector<std::byte> p2(rmss, std::byte{2});
+
+    // First full-sized segment — count is 1, no ACK yet
+    EXPECT_CALL(output(), send).Times(0);
+    peer_send_no_ack(PEER_ISN + 1, p1);
+    Mock::VerifyAndClearExpectations(&output());
+
+    // Second full-sized segment — count hits 2, immediate ACK
+    EXPECT_CALL(output(), send).WillOnce(Return(netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE));
+    peer_send_no_ack(PEER_ISN + 1 + rmss, p2);
+    Mock::VerifyAndClearExpectations(&output());
+}
+
+TEST_F(TcpDelAckTest, OneFullSizedOneSmall_NoImmediateAck)
+{
+    do_handshake();
+
+    const auto rmss = recv_mss();
+    std::vector<std::byte> full(rmss, std::byte{1});
+    std::vector<std::byte> small(rmss - 1, std::byte{2}); // just under full-sized
+
+    EXPECT_CALL(output(), send).Times(0);
+    peer_send_no_ack(PEER_ISN + 1, full);
+    Mock::VerifyAndClearExpectations(&output());
+
+    // Second segment is not full-sized — full-segment count stays at 1, no immediate ACK
+    EXPECT_CALL(output(), send).Times(0);
+    peer_send_no_ack(PEER_ISN + 1 + rmss, small);
+    Mock::VerifyAndClearExpectations(&output());
+}
