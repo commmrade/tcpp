@@ -246,7 +246,7 @@ private:
     // ssize_t send(const std::uint32_t seqn_from, [[maybe_unused]] const std::size_t max_size);
 
     // Used for sending data segments
-    ssize_t send_data(const int segs, const std::size_t max_size_pl);
+    ssize_t send_data(const std::size_t max_size_pl);
     ssize_t send_pure(TcpSegment& seg);
     ssize_t send_retransmit(TcpSegment& retrans_seg, const std::size_t max_size_pl);
 

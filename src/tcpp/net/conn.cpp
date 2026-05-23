@@ -592,7 +592,7 @@ bool TcpConnection::handle_send()
         const auto usable_wnd = send_.wnd() - in_flight_n;
         // const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n,
         // static_cast<std::size_t>(send_.wnd - in_flight_n) });
-        const auto bytes_to_send = std::min<std::size_t>({ send_mss_, unsent, usable_wnd });
+        const auto bytes_to_send = std::min<std::size_t>({ unsent, usable_wnd });
         if (bytes_to_send == 0) { return true; }
 
         const bool nagle = config_.is_nodelay ? send_.nxt() == send_.una() : true;
@@ -610,9 +610,7 @@ bool TcpConnection::handle_send()
                 unsent,
                 in_flight_n);
 
-            // tcph_.ack(true); // ACK is supposed to be already set in all data segments
-            // send(send_.nxt(), bytes_to_send);
-            send_data(1, bytes_to_send);
+            send_data(bytes_to_send);
         } else {
             std::println("Start SWS override timer. send nxt: {}, send una: {}, data len {}",
                 send_.nxt(),
@@ -640,14 +638,16 @@ void TcpConnection::on_tick()
     if (!handle_send()) { return; }
 }
 
-ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
+ssize_t TcpConnection::send_data(const std::size_t max_size)
 {
-    std::size_t total_written_pl = 0;
+    std::size_t total_written = 0;
     bool rtt_started = false;
 
-    for (auto i = 0; i < segs && total_written_pl <= max_size_pl; ++i) {
+    const auto start_idx = send_buf_.find_pos(send_.nxt());
+    assert(start_idx.has_value());
+    for (auto i = start_idx.value(); i < send_buf_.size_segs() && total_written < max_size; ++i) {
         // Same goes for settings SND.NXT evry time
-        TcpSegment &seg = send_buf_.at(i);
+        TcpSegment &seg = send_buf_.at(static_cast<std::ptrdiff_t>(i));
         seg.set_ackn(recv_.nxt());
         if (is_tsopt) {
             seg.set_timestamp(static_cast<std::uint32_t>(clock_->now()), recv_.ts_recent());
@@ -659,9 +659,9 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
         update_recv_window();
 
         const auto wnd_to_adv = static_cast<std::uint16_t>(recv_.wnd());
-        const auto to_send_max = std::min(seg.payload_size(), max_size_pl - total_written_pl);
+        const auto to_send_max = std::min(seg.payload_size(), max_size - total_written);
         output_->send(seg, to_send_max, wnd_to_adv);
-        total_written_pl += to_send_max;
+        total_written += to_send_max + (seg.syn() ? 1 : 0) + (seg.fin() ? 1 : 0);
 
         const auto data_size = seg.size_in_seq();
         const auto time_now = clock_->now();
@@ -709,7 +709,7 @@ ssize_t TcpConnection::send_data(const int segs, const std::size_t max_size_pl)
             static_cast<std::uint32_t>(seg.payload_size()));
     }
 
-    return static_cast<ssize_t>(total_written_pl);
+    return static_cast<ssize_t>(total_written);
 }
 
 ssize_t TcpConnection::send_pure(TcpSegment &seg)
@@ -802,7 +802,7 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
         send_.set_iss(iss);
         send_.set_una(iss);
         send_.set_nxt(iss);// 1 goes for SYN (in send()), since it uses up a SEQ number
-        send_data(1, 0);
+        send_data(1);
         // send(iss, 0);
 
         state_ = TcpState::SYN_RCVD;
@@ -838,7 +838,7 @@ void TcpConnection::open_active(const std::uint32_t saddr,
     recv_.set_wnd(std::numeric_limits<std::uint16_t>::max());
     send_.set_wnd(send_mss_);
 
-    send_data(1, 0);
+    send_data(1);
 
     state_ = TcpState::SYN_SENT;
 }

@@ -96,6 +96,18 @@ TcpSegment &TcpBuffer::find(const std::uint32_t seq)
     return *iter;
 }
 
+std::optional<std::size_t> TcpBuffer::find_pos(const std::uint32_t seq) const
+{
+    int idx = 0;
+    for (auto beg = segs_.begin(); beg != segs_.end(); ++beg) {
+        if (beg->seq_start() == seq) {
+            return {idx};
+        }
+        ++idx;
+    }
+    return std::nullopt;
+}
+
 std::size_t TcpBuffer::size_segs() const { return segs_.size(); }
 
 std::size_t TcpBuffer::size_bytes() const
