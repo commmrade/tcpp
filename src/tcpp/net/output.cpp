@@ -4,21 +4,20 @@
 
 #include "output.hpp"
 
-ssize_t SegmentOutput::send(const TcpSegment &seg, const std::size_t max_size_pl, const std::uint32_t rwnd) {
+ssize_t SegmentOutput::send(const TcpSegment &seg, const std::size_t max_size_pl, const std::uint32_t rwnd)
+{
     // TODO: How to support options
 
-    if (auto mssopt = seg.mss(); mssopt.has_value()) {
-        tcph_.options().mss(mssopt.value());
-    }
+    if (auto mssopt = seg.mss(); mssopt.has_value()) { tcph_.options().mss(mssopt.value()); }
     if (auto tsopt = seg.timestamp(); tsopt.has_value()) {
         tcph_.options().timestamp(tsopt.value().first, tsopt.value().second);
     }
     iph_.total_len(
-        static_cast<std::uint16_t>(static_cast<std::size_t>(iph_.ihl() * 4) + (
-                                       netparser::TCPH_MIN_SIZE + tcph_.options().options_size()) +
-                                   seg.payload_size()));
-
+        static_cast<std::uint16_t>(iph_.ihl() * 4 +
+                                   netparser::TCPH_MIN_SIZE + tcph_.options().options_size() +
+                                   max_size_pl));
     iph_.calculate_checksum();
+
     const auto ip_data = iph_.serialize();
 
     tcph_.seqn(seg.seq_start());
@@ -35,7 +34,7 @@ ssize_t SegmentOutput::send(const TcpSegment &seg, const std::size_t max_size_pl
     tcph_.window(static_cast<std::uint16_t>(rwnd));
     const auto tcph_size = static_cast<std::uint8_t>(netparser::TCPH_MIN_SIZE + tcph_.options().options_size());
     tcph_.data_off(tcph_size / 4);
-    tcph_.calculate_checksum(iph_, seg.payload());
+    tcph_.calculate_checksum(iph_, seg.payload().subspan(0, max_size_pl));
 
     const auto tcp_data = tcph_.serialize();
     tcph_.options().clear();
@@ -52,10 +51,8 @@ ssize_t SegmentOutput::send(const TcpSegment &seg, const std::size_t max_size_pl
         std::copy(payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(max_size_pl), std::back_inserter(buf));
     }
 
-    const auto written = io_.write(std::span<const std::byte>{buf.data(), buf.size()});
-    if (written < 0) {
-        throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno)));
-    }
+    const auto written = io_.write(std::span<const std::byte>{ buf.data(), buf.size() });
+    if (written < 0) { throw std::runtime_error(std::format("Write failed: {}", std::strerror(errno))); }
     std::println("Written {} bytes, buf is {} bytes", written, buf.size());
     // assert(static_cast<std::size_t>(written) == buf.size());
 
@@ -65,7 +62,8 @@ ssize_t SegmentOutput::send(const TcpSegment &seg, const std::size_t max_size_pl
 void SegmentOutput::init(const std::uint32_t src_addr,
     const std::uint32_t dst_addr,
     const std::uint16_t src_port,
-    const std::uint16_t dst_port) {
+    const std::uint16_t dst_port)
+{
     iph_.version(4);
     iph_.ihl(5);
     iph_.dont_fragment(true);

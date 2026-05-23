@@ -589,7 +589,8 @@ bool TcpConnection::handle_send()
     // unsent may actually be more than there are payload bytes, but IDC because it won't send more that there are bytes anyhow
     if (unsent > 0 && send_.wnd() > 0) {
         // Sender SWS
-        const auto usable_wnd = send_.wnd() - in_flight_n;
+        const auto usable_wnd = send_.wnd() > in_flight_n ? send_.wnd() - in_flight_n : 0;
+
         // const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n,
         // static_cast<std::size_t>(send_.wnd - in_flight_n) });
         const auto bytes_to_send = std::min<std::size_t>({ unsent, usable_wnd });
@@ -643,7 +644,7 @@ ssize_t TcpConnection::send_data(const std::size_t max_size)
     std::size_t total_written = 0;
     bool rtt_started = false;
 
-    const auto start_idx = send_buf_.find_pos(send_.nxt());
+    const auto start_idx = send_buf_.find_pos_containing(send_.nxt());
     assert(start_idx.has_value());
     for (auto i = start_idx.value(); i < send_buf_.size_segs() && total_written < max_size; ++i) {
         // Same goes for settings SND.NXT evry time
@@ -659,7 +660,13 @@ ssize_t TcpConnection::send_data(const std::size_t max_size)
         update_recv_window();
 
         const auto wnd_to_adv = static_cast<std::uint16_t>(recv_.wnd());
-        const auto to_send_max = std::min(seg.payload_size(), max_size - total_written);
+
+        const auto remaining = max_size - total_written;
+        if (seg.payload_size() > remaining && !seg.syn() && !seg.fin()) {
+            break;
+        }
+        const auto to_send_max = std::min(seg.payload_size(), remaining);
+
         output_->send(seg, to_send_max, wnd_to_adv);
         total_written += to_send_max + (seg.syn() ? 1 : 0) + (seg.fin() ? 1 : 0);
 
@@ -678,8 +685,8 @@ ssize_t TcpConnection::send_data(const std::size_t max_size)
             ack_timer_.stop();
         }
 
-        if (wrapping_gt(seg.seq_start() + static_cast<std::uint32_t>(data_size), send_.nxt() - 1)) {
-            send_.set_nxt(seg.seq_start() + static_cast<std::uint32_t>(data_size));
+        if (wrapping_gt(seg.seq_start() + static_cast<std::uint32_t>(to_send_max + (seg.syn() ? 1 : 0) + (seg.fin() ? 1 : 0)), send_.nxt() - 1)) {
+            send_.set_nxt(seg.seq_start() + static_cast<std::uint32_t>(to_send_max + (seg.syn() ? 1 : 0) + (seg.fin() ? 1 : 0)));
         }
 
         // This is kinda weird, but I have no idea where else to place this

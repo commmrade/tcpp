@@ -178,7 +178,7 @@ int main()
             sock.close();
             break;
         } else {
-            std::array<std::byte, 1440 * 10> data{};
+            std::array<std::byte, 1440 * 150> data{};
             auto wr = sock.write(std::span<const std::byte>(data.data(), data.size()));
         }
     }
