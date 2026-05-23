@@ -644,7 +644,7 @@ ssize_t TcpConnection::send_data(const std::size_t max_size)
     std::size_t total_written = 0;
     bool rtt_started = false;
 
-    const auto start_idx = send_buf_.find_pos_containing(send_.nxt());
+    const auto start_idx = send_buf_.find_pos(send_.nxt());
     assert(start_idx.has_value());
     for (auto i = start_idx.value(); i < send_buf_.size_segs() && total_written < max_size; ++i) {
         // Same goes for settings SND.NXT evry time
@@ -668,9 +668,10 @@ ssize_t TcpConnection::send_data(const std::size_t max_size)
         const auto to_send_max = std::min(seg.payload_size(), remaining);
 
         output_->send(seg, to_send_max, wnd_to_adv);
-        total_written += to_send_max + (seg.syn() ? 1 : 0) + (seg.fin() ? 1 : 0);
 
-        const auto data_size = seg.size_in_seq();
+        const auto data_size = to_send_max + (seg.syn() ? 1 : 0) + (seg.fin() ? 1 : 0);
+        total_written += data_size;
+
         const auto time_now = clock_->now();
         if (wrapping_gt(seg.seq_start(), send_.nxt() - 1) && !rtt_started) {
             // Karn algorithm says that you shouldn't measure RTT on retransmitted segments, so this send is not retranmitting if and only if SEG.SEQ >= SND.NXT
@@ -685,8 +686,8 @@ ssize_t TcpConnection::send_data(const std::size_t max_size)
             ack_timer_.stop();
         }
 
-        if (wrapping_gt(seg.seq_start() + static_cast<std::uint32_t>(to_send_max + (seg.syn() ? 1 : 0) + (seg.fin() ? 1 : 0)), send_.nxt() - 1)) {
-            send_.set_nxt(seg.seq_start() + static_cast<std::uint32_t>(to_send_max + (seg.syn() ? 1 : 0) + (seg.fin() ? 1 : 0)));
+        if (wrapping_gt(seg.seq_start() + static_cast<std::uint32_t>(data_size), send_.nxt() - 1)) {
+            send_.set_nxt(seg.seq_start() + static_cast<std::uint32_t>(data_size));
         }
 
         // This is kinda weird, but I have no idea where else to place this
