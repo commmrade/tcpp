@@ -115,7 +115,7 @@ std::optional<std::size_t> TcpBuffer::find_pos_containing(const std::uint32_t se
 {
     int idx = 0;
     for (auto beg = segs_.begin(); beg != segs_.end(); ++beg) {
-        if (!wrapping_lt(beg->seq_start(), seq) && wrapping_lt(seq, beg->seq_end())) {
+        if (!wrapping_lt(seq, beg->seq_start()) && wrapping_lt(seq, beg->seq_end())) {
             return idx;
         }
         ++idx;

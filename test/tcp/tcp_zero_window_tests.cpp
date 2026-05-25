@@ -81,7 +81,7 @@ TEST_F(TcpConnZeroWindow, AcksProbesWhenWindowClosed)
                 ResultOf([](const TcpSegment& s){ return s.ack(); }, true),
                 ResultOf([](const TcpSegment& s){ return s.ackn(); }, peer_seq)
             ),
-            _, 0u  // advertised window must be zero
+            _, _, 0u  // advertised window must be zero
         )).WillOnce(Return(44));
 
         auto probe = helpers::make_tcp({
@@ -138,7 +138,7 @@ TEST_F(TcpConnZeroWindow, WindowReopensAfterRead)
     std::vector<std::byte> probe_payload(1);
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.ack(); }, true),
-        _, Gt(0u)  // window must be > 0
+        _, _, Gt(0u)  // window must be > 0
     )).WillOnce(Return(44));
 
     auto probe = helpers::make_tcp({
@@ -198,7 +198,7 @@ TEST_F(TcpConnSenderZwp, ProbesWithBackoff)
 
     // First ZWP fires — 1 byte probe
     EXPECT_CALL(output(), send(
-        _, 1u, _  // max_size_pl == 1 means probe
+        _, _, 1u, _  // max_size_pl == 1 means probe
     )).WillOnce(Return(44));
     static_cast<FakeClock&>(get_clock()).advance(600); // ~1000ms total
     conn_.on_tick();
@@ -222,7 +222,7 @@ TEST_F(TcpConnSenderZwp, ProbesWithBackoff)
     Mock::VerifyAndClearExpectations(&output());
 
     EXPECT_CALL(output(), send(
-        _, 1u, _  // max_size_pl == 1 means probe
+        _, _, 1u, _  // max_size_pl == 1 means probe
     )).WillOnce(Return(44));
     static_cast<FakeClock&>(get_clock()).advance(600); // ~2000ms after first
     conn_.on_tick();
@@ -238,7 +238,7 @@ TEST_F(TcpConnSenderZwp, ProbesWithBackoff)
     Mock::VerifyAndClearExpectations(&output());
 
     EXPECT_CALL(output(), send(
-    _, 1u, _  // max_size_pl == 1 means probe
+    _, _, 1u, _  // max_size_pl == 1 means probe
     )).WillOnce(Return(44));
     static_cast<FakeClock&>(get_clock()).advance(600); // ~4000ms after second
     conn_.on_tick();
@@ -284,7 +284,7 @@ TEST_F(TcpConnSenderZwp, ResumesAfterWindowReopens)
     // Peer reopens window
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.payload_size() > 0 && !s.fin(); }, true),
-        _, Gt(0u)
+        _, _, Gt(0u)
     )).WillOnce(Return(44));
 
     auto wnd_open = helpers::make_tcp({

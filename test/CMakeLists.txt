@@ -34,7 +34,8 @@ add_executable(tests
         tcp/tcp_retransmit_data_tests.cpp
         tcp/tcp_zero_window_tests.cpp
         tcp/tcp_rto_calc_tests.cpp
-        tcp/tcp_timestamp_opt_tests.cpp)
+        tcp/tcp_timestamp_opt_tests.cpp
+        tcp/tcp_slow_start_tests.cpp)
 
 set(SPDLOG_FMT_EXTERNAL ON)
 target_link_libraries(tests PRIVATE fmt::fmt)

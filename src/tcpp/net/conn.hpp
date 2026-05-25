@@ -153,6 +153,65 @@ private:
     std::uint32_t right_wnd_edge_;
 };
 
+class CongestionControl
+{
+public:
+    std::uint32_t get_cwnd() const
+    {
+        return cwnd_;
+    }
+    void set_cwnd(const std::uint32_t cwnd)
+    {
+        cwnd_ = cwnd;
+    }
+
+    std::uint32_t get_ssthresh() const
+    {
+        return ssthresh_;
+    }
+    void set_ssthresh(const std::uint32_t ssth)
+    {
+        ssthresh_ = ssth;
+    }
+
+    void on_ack(const std::uint32_t snd_una, const std::uint32_t ackn, const std::uint32_t send_mss)
+    {
+        if (wrapping_gt(ackn, snd_una)) {
+            // Cong. control stuff
+            if (cwnd_ < ssthresh_) {
+                const auto acked_bytes = ackn - snd_una;
+                cwnd_ += std::min<std::uint32_t>(acked_bytes, send_mss);
+            } else {
+                // Congestion avoidance
+            }
+        }
+    }
+
+    void init(const std::uint32_t send_mss)
+    {
+        ssthresh_ = std::numeric_limits<std::uint16_t>::max();
+        const auto smss = std::max<std::uint16_t>(536, send_mss);
+        if (smss > 2190) {
+            cwnd_ = 2 * send_mss;
+        } else if (smss > 1095 && smss <= 2190) {
+            cwnd_ = 3 * send_mss;
+        } else if (smss <= 1095) {
+            cwnd_ = 4 * send_mss;
+        }
+    }
+
+    void retrans(const std::uint32_t send_mss, const std::uint32_t nxt, const std::uint32_t una)
+    {
+        const auto in_flight = nxt - una;
+        ssthresh_ = std::max<std::uint32_t>(in_flight / 2, send_mss * 2);
+        cwnd_ = send_mss;
+        // TODO: if the same segment is about to be retransmitted, dont change sshthresh
+    }
+private:
+    std::uint32_t cwnd_;
+    std::uint32_t ssthresh_;
+};
+
 class Tcp;
 class TcpConnectionTest;
 
@@ -221,6 +280,7 @@ private:
     // Helpers
     void add_fin_segment();
     void update_ts(const netparser::TcpHeaderView& tcph);
+    bool is_sync() const;
     // void append_recv_data(const std::span<const std::byte> data);
     // void erase_recv_data(const std::size_t bytes_n);
 
@@ -315,6 +375,9 @@ private:
     Config config_;
 
     bool is_tsopt{false};
+
+    // Cong. control
+    CongestionControl cong_;
 };
 
 

@@ -124,6 +124,7 @@ bool TcpConnection::on_syn(const netparser::TcpHeaderView &tcph)
 bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
 {
     std::println("Got ack n {}, SEND.NXT {}, UNA", tcph.ackn(), send_.nxt(), send_.una());
+
     switch (state_) {
     case TcpState::SYN_RCVD: {
         // got ACK for our SYNACK
@@ -159,8 +160,13 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
             ack_seg.set_ackn(recv_.nxt());
             send_pure(ack_seg);
         }
+
+        if (!send_buf_.empty() && !send_buf_.front().syn() && is_sync()) {
+            cong_.on_ack(send_.una(), tcph.ackn(), send_mss_);
+        }
+
         if (is_between_wrapped(send_.una(), tcph.ackn(), send_.nxt() + 1)) {
-            // This segment advances SND.UNA, therefore can be used for RTT measurement
+            // This segment advances SND.UNA, therefore can be used for RTT measurement, cong. control
             const auto tcph_ts = tcph.timestamp();
             if (is_tsopt) { // there is TS opt 100% because of the guard in on_packet()
                 rtt_measurement_.update_ts(clock_->now(), tcph_ts.value().tr);
@@ -485,10 +491,10 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
         }
 
         if (auto opt = tcph.mss(); opt.has_value()) { send_mss_ = opt.value().mss; }
-        // send_.wnd = tcph.window();
         send_.set_wnd(tcph.window());
         send_.set_wl1(tcph.seqn());
         send_.set_wl2(tcph.ackn());
+        cong_.init(send_mss_);
     }
 
     if (!tcph.syn() && !tcph.rst()) {
@@ -578,6 +584,11 @@ void TcpConnection::update_ts(const netparser::TcpHeaderView &tcph)
     }
 }
 
+bool TcpConnection::is_sync() const
+{
+    return (state_ == TcpState::ESTAB || state_ == TcpState::FIN_WAIT_1 || state_ == TcpState::FIN_WAIT_2 || state_ == TcpState::CLOSE_WAIT || state_ == TcpState::CLOSING);
+}
+
 bool TcpConnection::handle_send()
 {
     const auto in_flight_n = send_.nxt() - send_.una();
@@ -589,7 +600,8 @@ bool TcpConnection::handle_send()
     // unsent may actually be more than there are payload bytes, but IDC because it won't send more that there are bytes anyhow
     if (unsent > 0 && send_.wnd() > 0) {
         // Sender SWS
-        const auto usable_wnd = send_.wnd() > in_flight_n ? send_.wnd() - in_flight_n : 0;
+        const auto wnd = std::min(cong_.get_cwnd(), send_.wnd());
+        const auto usable_wnd = wnd > in_flight_n ? wnd - in_flight_n : 0;
 
         // const auto bytes_to_send = std::min({ static_cast<std::size_t>(send_mss_), send_buf_.size() - in_flight_n,
         // static_cast<std::size_t>(send_.wnd - in_flight_n) });
@@ -610,6 +622,7 @@ bool TcpConnection::handle_send()
                 bytes_to_send,
                 unsent,
                 in_flight_n);
+
 
             send_data(bytes_to_send);
         } else {
@@ -644,7 +657,7 @@ ssize_t TcpConnection::send_data(const std::size_t max_size)
     std::size_t total_written = 0;
     bool rtt_started = false;
 
-    const auto start_idx = send_buf_.find_pos(send_.nxt());
+    const auto start_idx = send_buf_.find_pos_containing(send_.nxt());
     assert(start_idx.has_value());
     for (auto i = start_idx.value(); i < send_buf_.size_segs() && total_written < max_size; ++i) {
         // Same goes for settings SND.NXT evry time
@@ -658,16 +671,11 @@ ssize_t TcpConnection::send_data(const std::size_t max_size)
         }
 
         update_recv_window();
-
         const auto wnd_to_adv = static_cast<std::uint16_t>(recv_.wnd());
 
-        const auto remaining = max_size - total_written;
-        if (seg.payload_size() > remaining && !seg.syn() && !seg.fin()) {
-            break;
-        }
-        const auto to_send_max = std::min(seg.payload_size(), remaining);
-
-        output_->send(seg, to_send_max, wnd_to_adv);
+        const auto offset = send_.nxt() - seg.seq_start();
+        const auto to_send_max = std::min(seg.payload_size() - offset, max_size - total_written);
+        output_->send(seg, offset, to_send_max, wnd_to_adv);
 
         const auto data_size = to_send_max + (seg.syn() ? 1 : 0) + (seg.fin() ? 1 : 0);
         total_written += data_size;
@@ -686,8 +694,8 @@ ssize_t TcpConnection::send_data(const std::size_t max_size)
             ack_timer_.stop();
         }
 
-        if (wrapping_gt(seg.seq_start() + static_cast<std::uint32_t>(data_size), send_.nxt() - 1)) {
-            send_.set_nxt(seg.seq_start() + static_cast<std::uint32_t>(data_size));
+        if (wrapping_gt(seg.seq_start() + offset + static_cast<std::uint32_t>(data_size), send_.nxt())) {
+            send_.set_nxt(seg.seq_start() + offset + static_cast<std::uint32_t>(data_size));
         }
 
         // This is kinda weird, but I have no idea where else to place this
@@ -730,7 +738,7 @@ ssize_t TcpConnection::send_pure(TcpSegment &seg)
             recv_.set_last_ack(seg.ackn());
         }
     }
-    return output_->send(seg, 0, wnd_to_adv);
+    return output_->send(seg, 0, 0, wnd_to_adv);
 }
 
 ssize_t TcpConnection::send_retransmit(TcpSegment &retrans_seg, const std::size_t max_size_pl)
@@ -743,7 +751,7 @@ ssize_t TcpConnection::send_retransmit(TcpSegment &retrans_seg, const std::size_
             recv_.set_last_ack(retrans_seg.ackn());
         }
     }
-    return output_->send(retrans_seg, max_size_pl, wnd_to_adv);
+    return output_->send(retrans_seg, 0, max_size_pl, wnd_to_adv);
 }
 
 
@@ -777,9 +785,12 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
         // recv_.wnd()= recv_mss_ * 3;
         recv_.set_wnd(std::numeric_limits<std::uint16_t>::max());
 
-        if (auto opt = tcph.mss(); opt.has_value()) { send_mss_ = opt.value().mss; }
         // send_.wnd = tcph.window();
         send_.set_wnd(tcph.window());
+        if (auto opt = tcph.mss(); opt.has_value()) {
+            send_mss_ = opt.value().mss;
+        }
+        cong_.init(send_mss_);
 
         // SEt ISS
         std::random_device rnd;
@@ -788,7 +799,6 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
             std::numeric_limits<std::uint32_t>::max());
         auto iss = dis(gen);
         // <SEQ=ISS><ACK=RCV.NXT><CTL=SYN,ACK>
-
 
         TcpSegment synack_seg{ iss, {}, true };
         synack_seg.set_ack(true);
@@ -869,6 +879,8 @@ void TcpConnection::update_timers()
     const auto time_now = clock_->now();
     const bool should_retrans = r_timer_.update(time_now, rtt_measurement_.rto(), send_.nxt(), send_.una());
     if (should_retrans) {
+        cong_.retrans(send_mss_, send_.nxt(), send_.una());
+
         const auto new_rto = retransmit(r_timer_);
         rtt_measurement_.set_rto(new_rto);
     }
