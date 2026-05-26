@@ -879,8 +879,7 @@ void TcpConnection::update_timers()
     const auto time_now = clock_->now();
     const bool should_retrans = r_timer_.update(time_now, rtt_measurement_.rto(), send_.nxt(), send_.una());
     if (should_retrans) {
-        cong_.retrans(send_mss_, send_.nxt(), send_.una());
-
+        cong_.retransmitted(send_mss_, send_.nxt(), send_.una());
         const auto new_rto = retransmit(r_timer_);
         rtt_measurement_.set_rto(new_rto);
     }

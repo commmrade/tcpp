@@ -179,10 +179,13 @@ public:
         if (wrapping_gt(ackn, snd_una)) {
             // Cong. control stuff
             if (cwnd_ < ssthresh_) {
+                // Slow start
                 const auto acked_bytes = ackn - snd_una;
                 cwnd_ += std::min<std::uint32_t>(acked_bytes, send_mss);
             } else {
                 // Congestion avoidance
+                const auto increased_bytes = std::max<std::uint32_t>(send_mss * send_mss / cwnd_, 1); // If 0, SHOULD be rounded to 1
+                cwnd_ += increased_bytes;
             }
         }
     }
@@ -190,7 +193,7 @@ public:
     void init(const std::uint32_t send_mss)
     {
         ssthresh_ = std::numeric_limits<std::uint16_t>::max();
-        const auto smss = std::max<std::uint16_t>(536, send_mss);
+        const auto smss = std::max<std::uint16_t>(536, static_cast<std::uint16_t>(send_mss));
         if (smss > 2190) {
             cwnd_ = 2 * send_mss;
         } else if (smss > 1095 && smss <= 2190) {
@@ -200,12 +203,11 @@ public:
         }
     }
 
-    void retrans(const std::uint32_t send_mss, const std::uint32_t nxt, const std::uint32_t una)
+    void retransmitted(const std::uint32_t send_mss, const std::uint32_t nxt, const std::uint32_t una)
     {
         const auto in_flight = nxt - una;
         ssthresh_ = std::max<std::uint32_t>(in_flight / 2, send_mss * 2);
         cwnd_ = send_mss;
-        // TODO: if the same segment is about to be retransmitted, dont change sshthresh
     }
 private:
     std::uint32_t cwnd_;

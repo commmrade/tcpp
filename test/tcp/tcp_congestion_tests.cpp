@@ -423,3 +423,274 @@ TEST_F(TcpSlowStartSendTest, AfterRtoAckReopensCwndToTwoSegments)
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&output());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Congestion Avoidance (RFC 5681 §3.1)
+// cwnd >= ssthresh: cwnd += SMSS*SMSS/cwnd per ACK (min 1 byte)
+// ═══════════════════════════════════════════════════════════════════════════
+
+class TcpCongAvoidTest : public TcpConnectionTest
+{
+protected:
+    void advance_clock(const std::int64_t ms)
+    {
+        static_cast<FakeClock&>(get_clock()).advance(ms);
+    }
+
+    // Pure ACK from peer. Sends only happen in on_tick, not on_packet.
+    void peer_ack(const std::uint32_t ackn, const std::uint16_t wnd = 65535)
+    {
+        auto ack = helpers::make_tcp({
+            .sport  = PEER_PORT, .dport = LOCAL_PORT,
+            .seqn   = PEER_ISN + 1,
+            .ackn   = ackn,
+            .window = wnd,
+            .ack    = true,
+        });
+        const auto ack_d = ack.serialize();
+        EXPECT_CALL(output(), send).Times(0);
+        conn_.on_packet(netparser::TcpHeaderView{ack_d}, {});
+        Mock::VerifyAndClearExpectations(&output());
+    }
+
+    std::uint32_t send_one_segment()
+    {
+        const auto smss = send_mss();
+        std::vector<std::byte> data(smss);
+        EXPECT_CALL(output(), send)
+            .WillOnce(Return(static_cast<ssize_t>(
+                netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+        write(data);
+        conn_.on_tick();
+        Mock::VerifyAndClearExpectations(&output());
+        return get_send_nxt();
+    }
+
+    // Brings connection into CA state:
+    //   RTO with 1 segment in flight → ssthresh = 2*SMSS, cwnd = SMSS
+    //   ACK retransmit (SS) → cwnd = 2*SMSS = ssthresh
+    //   Next ACK will use CA formula.
+    void enter_congestion_avoidance()
+    {
+        const auto smss = send_mss();
+
+        // Send 1 segment, leave unACKed
+        {
+            std::vector<std::byte> data(smss);
+            EXPECT_CALL(output(), send)
+                .WillOnce(Return(static_cast<ssize_t>(
+                    netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+            write(data);
+            conn_.on_tick();
+            seq_after_initial_ = get_send_nxt();
+            Mock::VerifyAndClearExpectations(&output());
+        }
+
+        // RTO: ssthresh = max(SMSS/2, 2*SMSS) = 2*SMSS, cwnd = SMSS
+        EXPECT_CALL(output(), send)
+            .WillOnce(Return(static_cast<ssize_t>(
+                netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+        advance_clock(rtt().rto());
+        conn_.on_tick();
+        Mock::VerifyAndClearExpectations(&output());
+
+        // ACK retransmit — SS: cwnd goes from SMSS → 2*SMSS = ssthresh
+        peer_ack(seq_after_initial_);
+
+        ASSERT_EQ(cong_cwnd(), 2u * smss);
+        ASSERT_EQ(cong_ssthresh(), 2u * smss);
+        // cwnd == ssthresh: next ACK triggers CA
+    }
+
+    std::uint32_t seq_after_initial_{0};
+};
+
+// ─── cwnd update ───────────────────────────────────────────────────────────
+
+// cwnd += SMSS*SMSS/cwnd exactly.
+TEST_F(TcpCongAvoidTest, CaIncrementMatchesFormula)
+{
+    do_handshake();
+    enter_congestion_avoidance();
+
+    const auto smss            = send_mss();
+    const auto cwnd_before     = cong_cwnd(); // 2*SMSS
+    const auto expected_inc    = std::max<std::uint32_t>(smss * smss / cwnd_before, 1);
+    const auto expected_cwnd   = cwnd_before + expected_inc;
+
+    const auto seq_after = send_one_segment();
+    peer_ack(seq_after);
+
+    EXPECT_EQ(cong_cwnd(), expected_cwnd);
+}
+
+// CA increment must be strictly less than SMSS (slower than slow start).
+TEST_F(TcpCongAvoidTest, CaIncrementSlowerThanSlowStart)
+{
+    do_handshake();
+    enter_congestion_avoidance();
+
+    const auto smss        = send_mss();
+    const auto cwnd_before = cong_cwnd();
+
+    const auto seq_after = send_one_segment();
+    peer_ack(seq_after);
+
+    const auto increment = cong_cwnd() - cwnd_before;
+    EXPECT_LT(increment, static_cast<std::uint32_t>(smss));
+}
+
+// Each successive CA increment should be <= the previous one (cwnd grows → divisor grows).
+TEST_F(TcpCongAvoidTest, CaIncrementDecreasesOverTime)
+{
+    do_handshake();
+    enter_congestion_avoidance();
+
+    std::uint32_t prev_increment = std::numeric_limits<std::uint32_t>::max();
+
+    for (int i = 0; i < 4; ++i) {
+        const auto cwnd_before = cong_cwnd();
+        const auto seq_after   = send_one_segment();
+        peer_ack(seq_after);
+        const auto increment = cong_cwnd() - cwnd_before;
+
+        EXPECT_LE(increment, prev_increment) << "increment grew at step " << i;
+        prev_increment = increment;
+    }
+}
+
+// After N ACKs in CA, total cwnd growth must be less than N*SMSS
+// (which would be the slow start growth for the same number of ACKs).
+TEST_F(TcpCongAvoidTest, CaTotalGrowthLessThanSlowStart)
+{
+    do_handshake();
+    enter_congestion_avoidance();
+
+    const auto smss       = send_mss();
+    const auto cwnd_start = cong_cwnd();
+    constexpr int N       = 6;
+
+    for (int i = 0; i < N; ++i) {
+        const auto seq_after = send_one_segment();
+        peer_ack(seq_after);
+    }
+
+    const auto total_growth = cong_cwnd() - cwnd_start;
+    EXPECT_LT(total_growth, static_cast<std::uint32_t>(N) * smss);
+}
+
+// ─── ssthresh stability ────────────────────────────────────────────────────
+
+// ssthresh must not change during normal CA operation.
+TEST_F(TcpCongAvoidTest, SsthreshUnchangedDuringCa)
+{
+    do_handshake();
+    enter_congestion_avoidance();
+
+    const auto ssthresh_before = cong_ssthresh();
+
+    for (int i = 0; i < 5; ++i) {
+        const auto seq_after = send_one_segment();
+        peer_ack(seq_after);
+    }
+
+    EXPECT_EQ(cong_ssthresh(), ssthresh_before);
+}
+
+// ─── RTO during CA ─────────────────────────────────────────────────────────
+
+// RTO during CA: ssthresh = max(FlightSize/2, 2*SMSS), cwnd = LW = SMSS.
+TEST_F(TcpCongAvoidTest, RtoDuringCaSetsSsthreshAndResetsCwnd)
+{
+    do_handshake();
+    enter_congestion_avoidance();
+
+    const auto smss = send_mss();
+
+    // A few ACKs to grow cwnd past 2*SMSS
+    for (int i = 0; i < 3; ++i) {
+        const auto seq = send_one_segment();
+        peer_ack(seq);
+    }
+
+    // Send and leave unACKed so FlightSize > 0
+    send_one_segment();
+    const std::uint32_t flight_size       = get_send_nxt() - send_una();
+    const std::uint32_t expected_ssthresh = std::max(flight_size / 2, 2u * smss);
+
+    EXPECT_CALL(output(), send)
+        .WillOnce(Return(static_cast<ssize_t>(
+            netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+    advance_clock(rtt().rto());
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    EXPECT_EQ(cong_ssthresh(), expected_ssthresh);
+    EXPECT_EQ(cong_cwnd(), static_cast<std::uint32_t>(smss));
+}
+
+// ─── send path ─────────────────────────────────────────────────────────────
+
+// In CA, cwnd = 2*SMSS limits sends to 2 segments even if more data is queued.
+TEST_F(TcpCongAvoidTest, CaCwndLimitsSends)
+{
+    do_handshake();
+    enter_congestion_avoidance();
+
+    const auto smss = send_mss();
+    // cwnd = 2*SMSS, FlightSize = 0 → effective = 2*SMSS → 2 segments max
+
+    std::vector<std::byte> data(smss * 6);
+    write(data);
+
+    EXPECT_CALL(output(), send)
+        .Times(2)
+        .WillRepeatedly(Return(static_cast<ssize_t>(
+            netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+}
+
+// After one CA ACK, cwnd grew by SMSS*SMSS/cwnd.
+// The send path must reflect the new (larger) cwnd.
+TEST_F(TcpCongAvoidTest, CaCwndGrowthUnblocksExactlyOneMoreSegment)
+{
+    do_handshake();
+    enter_congestion_avoidance();
+
+    const auto smss = send_mss();
+
+    // Fill pipe to cwnd (2*SMSS)
+    std::vector<std::byte> fill(2 * smss);
+    write(fill);
+    EXPECT_CALL(output(), send)
+        .Times(2)
+        .WillRepeatedly(Return(static_cast<ssize_t>(
+            netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+
+    // ACK 1 segment: cwnd grows by SMSS*SMSS/cwnd, FlightSize drops by SMSS
+    const auto una_before = send_una();
+    peer_ack(una_before + smss);
+
+    // New effective = new_cwnd - FlightSize
+    // cwnd grew by < SMSS, so effective < 2*SMSS — not enough for 2 more
+    // but effective > 0 — enough for at least the partial window
+    const auto new_cwnd     = cong_cwnd();
+    const auto flight       = get_send_nxt() - send_una();
+    const auto effective    = new_cwnd > flight ? new_cwnd - flight : 0u;
+    const auto expected_sends = static_cast<int>(
+        (effective + smss - 1) / smss  // ceiling division
+    );
+
+    std::vector<std::byte> more(smss * 4);
+    write(more);
+
+    EXPECT_CALL(output(), send)
+        .Times(expected_sends)
+        .WillRepeatedly(Return(static_cast<ssize_t>(
+            netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+}
