@@ -9,7 +9,8 @@
 #include <stdexcept>
 #include <algorithm>
 
-std::size_t TcpBuffer::available_space() const {
+std::size_t TcpBuffer::available_space() const
+{
     // This is like this because Window Scale is not implemented -> TODO
     const auto left_size = std::min<std::size_t>(std::numeric_limits<std::uint16_t>::max(), max_size_ - cur_size_);
     return left_size;
@@ -74,7 +75,8 @@ std::size_t TcpBuffer::consume_seq(const std::uint32_t seq_range_to)
             cur_size_ -= to_erase_n;
             old_iter->erase(to_erase_n);
             // old_iter->set_seq_start(range_to);
-        } else { // range_to < iter.seq_start
+        } else {
+            // range_to < iter.seq_start
             break;
         }
     }
@@ -103,9 +105,7 @@ std::optional<std::size_t> TcpBuffer::find_pos(const std::uint32_t seq) const
 {
     int idx = 0;
     for (auto beg = segs_.begin(); beg != segs_.end(); ++beg) {
-        if (beg->seq_start() == seq) {
-            return {idx};
-        }
+        if (beg->seq_start() == seq) { return { idx }; }
         ++idx;
     }
     return std::nullopt;
@@ -115,9 +115,7 @@ std::optional<std::size_t> TcpBuffer::find_pos_containing(const std::uint32_t se
 {
     int idx = 0;
     for (auto beg = segs_.begin(); beg != segs_.end(); ++beg) {
-        if (!wrapping_lt(seq, beg->seq_start()) && wrapping_lt(seq, beg->seq_end())) {
-            return idx;
-        }
+        if (!wrapping_lt(seq, beg->seq_start()) && wrapping_lt(seq, beg->seq_end())) { return idx; }
         ++idx;
     }
     return std::nullopt;
@@ -150,10 +148,11 @@ void TcpSenderBuffer::append_back(std::span<const std::byte> payload)
     segs_.back().append(payload);
 }
 
-std::pair<std::vector<std::byte>, std::uint32_t> TcpReceiverBuffer::read(const std::size_t max_size, const std::uint32_t recv_nxt)
+std::pair<std::vector<std::byte>, std::uint32_t> TcpReceiverBuffer::read(const std::size_t max_size,
+    const std::uint32_t recv_nxt)
 {
     std::vector<std::byte> res;
-    if (empty()) { return {res, 0}; }
+    if (empty()) { return { res, 0 }; }
     res.reserve(max_size);
 
     auto iter = segs_.cbegin();
@@ -162,7 +161,7 @@ std::pair<std::vector<std::byte>, std::uint32_t> TcpReceiverBuffer::read(const s
 
     if (current_read_seq >= recv_nxt) {
         // This means that buffer contains only out-of-order segments.
-        return {res, current_read_seq};
+        return { res, current_read_seq };
     }
 
     while (iter != segs_.end() &&
@@ -179,15 +178,13 @@ std::pair<std::vector<std::byte>, std::uint32_t> TcpReceiverBuffer::read(const s
         ++iter;
     }
 
-    return {res, current_read_seq};
+    return { res, current_read_seq };
 }
 
 std::uint32_t TcpReceiverBuffer::check_gaps(const std::uint32_t recv_nxt) const
 {
     // My idea is that it is gonna iterate through consequential segments until it finds a gap or comes to the end and return that seq. num which will be new RECV.NXT
-    if (empty()) {
-        return recv_nxt;
-    }
+    if (empty()) { return recv_nxt; }
     auto iter = segs_.cbegin();
     if (iter->seq_start() > recv_nxt) {
         // This means that even the first segment's seq_start is more than recv_nxt which means that there is an unfilled gap

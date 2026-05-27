@@ -4,7 +4,10 @@
 
 #include "output.hpp"
 
-ssize_t SegmentOutput::send(const TcpSegment &seg, const std::size_t offset, const std::size_t max_size_pl, const std::uint32_t rwnd)
+ssize_t SegmentOutput::send(const TcpSegment &seg,
+    const std::size_t offset,
+    const std::size_t max_size_pl,
+    const std::uint32_t rwnd)
 {
     if (auto mssopt = seg.mss(); mssopt.has_value()) { tcph_.options().mss(mssopt.value()); }
     if (auto tsopt = seg.timestamp(); tsopt.has_value()) {

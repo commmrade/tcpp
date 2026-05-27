@@ -59,7 +59,8 @@ struct TcpSocket
         auto &conn = ctx_.tcp.get_connection(quad_);
 
         // It isn't supposed to go into TcpConnection::read() until either new data comes in or conneciton is terminated
-        conn.get_recv_var().wait(recv_lock, [&conn] { return !conn.is_recv_empty() || (conn.is_finished() && conn.is_recv_empty()); });
+        conn.get_recv_var().wait(recv_lock,
+            [&conn] { return !conn.is_recv_empty() || (conn.is_finished() && conn.is_recv_empty()); });
         return conn.read(buf, buf_sz);
     }
 
@@ -91,11 +92,10 @@ struct TcpSocket
         } else { throw std::runtime_error("Unimplemented other shutdown types"); }
     }
 
-    template<typename Value>
-    void set_option(const ConnectionOption opt, const Value& val)
+    template<typename Value> void set_option(const ConnectionOption opt, const Value &val)
     {
-        auto& ctx = Context::instance();
-        std::unique_lock ctx_lock { ctx.mx };
+        auto &ctx = Context::instance();
+        std::unique_lock ctx_lock{ ctx.mx };
         ctx.tcp.get_connection(quad_).set_option(opt, val);
     }
 

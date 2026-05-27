@@ -22,18 +22,10 @@ public:
     void update_no_ts(const std::int64_t now_ms, const std::uint32_t ack_n);
     void update_ts(const std::int64_t now_ms, const std::uint32_t tsecr);
 
-    void set_rto(const std::uint32_t rto_ms)
-    {
-        rto_ms_ = rto_ms;
-    }
-    [[nodiscard]] std::uint32_t rto() const
-    {
-        return rto_ms_;
-    }
-    void rto(const std::uint32_t rto_ms)
-    {
-        rto_ms_ = rto_ms;
-    }
+    void set_rto(const std::uint32_t rto_ms) { rto_ms_ = rto_ms; }
+    [[nodiscard]] std::uint32_t rto() const { return rto_ms_; }
+    void rto(const std::uint32_t rto_ms) { rto_ms_ = rto_ms; }
+
 private:
     std::optional<std::int64_t> send_at_;// Time at which oldest UNACKed segment was sent.
     std::uint32_t send_seq_at_{};// Seq n at which send_at_ segmetn was sent
@@ -51,13 +43,13 @@ public:
 
     virtual ~Timer() = default;
 
-    Timer(const Timer&) = delete;
+    Timer(const Timer &) = delete;
 
-    Timer& operator=(const Timer&) = delete;
+    Timer &operator=(const Timer &) = delete;
 
-    Timer(Timer&&) = delete;
+    Timer(Timer &&) = delete;
 
-    Timer& operator=(Timer&&) = delete;
+    Timer &operator=(Timer &&) = delete;
 
     [[nodiscard]] bool is_armed() const { return start_time_.has_value(); }
 
@@ -69,14 +61,9 @@ public:
 
     virtual std::uint32_t retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) = 0;
 
-    [[nodiscard]] std::uint32_t start_seq() const
-    {
-        return start_seq_at_;
-    }
-    [[nodiscard]] std::uint32_t data_len() const
-    {
-        return data_length_;
-    }
+    [[nodiscard]] std::uint32_t start_seq() const { return start_seq_at_; }
+    [[nodiscard]] std::uint32_t data_len() const { return data_length_; }
+
 protected:
     std::optional<std::int64_t> start_time_;
     std::uint32_t start_seq_at_{};
@@ -87,7 +74,10 @@ protected:
 
 struct RetransTimer : public Timer
 {
-    bool update(const std::int64_t cur_time_ms, const std::uint32_t rto_ms, const std::uint32_t send_nxt, const std::uint32_t ack_n);
+    bool update(const std::int64_t cur_time_ms,
+        const std::uint32_t rto_ms,
+        const std::uint32_t send_nxt,
+        const std::uint32_t ack_n);
     std::uint32_t retransmitted(const std::int64_t cur_time, const std::uint32_t send_una) override;
 };
 

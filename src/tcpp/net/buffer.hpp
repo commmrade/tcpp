@@ -20,125 +20,66 @@ class TcpSegment
     friend class TcpBuffer;
     friend class TcpSenderBuffer;
     friend class TcpSegmentTest;
+
 private:
     void set_syn(bool val)
     {
-        if (!syn_ && val) {
-            ++end_seq_n_;
-        } else if (syn_ && !val) {
-            --end_seq_n_;
-        }
+        if (!syn_ && val) { ++end_seq_n_; } else if (syn_ && !val) { --end_seq_n_; }
 
         syn_ = val;
     }
+
     void set_fin(bool val)
     {
-        if (!fin_ && val) {
-            ++end_seq_n_;
-        } else if (fin_ && !val) {
-            --end_seq_n_;
-        }
+        if (!fin_ && val) { ++end_seq_n_; } else if (fin_ && !val) { --end_seq_n_; }
 
         fin_ = val;
     }
+
     void append(std::span<const std::byte> payload)
     {
         payload_.append_range(payload);
         end_seq_n_ += payload.size();
     }
+
     void erase(const std::size_t range_to)
     {
         assert(range_to <= payload_.size());
         payload_.erase(payload_.begin(), payload_.begin() + static_cast<std::ptrdiff_t>(range_to));
         seq_n_ += range_to;
     }
-    void set_seq_start(const std::uint32_t seq)
-    {
-        seq_n_ = seq;
-    }
-    void set_seq_end(const std::uint32_t seq)
-    {
-        end_seq_n_ = seq;
-    }
+
+    void set_seq_start(const std::uint32_t seq) { seq_n_ = seq; }
+    void set_seq_end(const std::uint32_t seq) { end_seq_n_ = seq; }
+
 public:
     TcpSegment(const std::uint32_t seq_start, std::span<const std::byte> payload, bool syn = false, bool fin = false)
         : payload_(payload.begin(), payload.end()), syn_(syn), fin_(fin),
-        seq_n_(seq_start), end_seq_n_(seq_n_ + static_cast<std::uint32_t>(payload.size()) + (fin_ ? 1 : 0) + (syn_ ? 1 : 0))
-    {
-    }
+          seq_n_(seq_start),
+          end_seq_n_(seq_n_ + static_cast<std::uint32_t>(payload.size()) + (fin_ ? 1 : 0) + (syn_ ? 1 : 0)) {}
 
-    void set_mss(const std::uint16_t mss)
-    {
-        mss_.emplace(mss);
-    }
-    [[nodiscard]] std::optional<std::uint16_t> mss() const
-    {
-        return mss_;
-    }
-    void set_timestamp(const std::uint32_t tsval, const std::uint32_t tsecr)
-    {
-        tsopt_.emplace(tsval, tsecr);
-    }
-    [[nodiscard]] std::optional<std::pair<std::uint32_t, std::uint32_t>> timestamp() const
-    {
-        return tsopt_;
-    }
+    void set_mss(const std::uint16_t mss) { mss_.emplace(mss); }
+    [[nodiscard]] std::optional<std::uint16_t> mss() const { return mss_; }
+    void set_timestamp(const std::uint32_t tsval, const std::uint32_t tsecr) { tsopt_.emplace(tsval, tsecr); }
+    [[nodiscard]] std::optional<std::pair<std::uint32_t, std::uint32_t>> timestamp() const { return tsopt_; }
 
-    [[nodiscard]] bool ack() const
-    {
-        return ack_;
-    }
-    void set_ack(bool val)
-    {
-        ack_ = val;
-    }
-    [[nodiscard]] std::uint32_t ackn() const
-    {
-        return ack_n_;
-    }
-    void set_ackn(const std::uint32_t seq)
-    {
-        ack_n_ = seq;
-    }
-    [[nodiscard]] bool syn() const
-    {
-        return syn_;
-    }
-    [[nodiscard]] bool fin() const
-    {
-        return fin_;
-    }
-    [[nodiscard]] bool rst() const
-    {
-        return rst_;
-    }
-    void set_rst(bool val)
-    {
-        rst_ = val;
-    }
+    [[nodiscard]] bool ack() const { return ack_; }
+    void set_ack(bool val) { ack_ = val; }
+    [[nodiscard]] std::uint32_t ackn() const { return ack_n_; }
+    void set_ackn(const std::uint32_t seq) { ack_n_ = seq; }
+    [[nodiscard]] bool syn() const { return syn_; }
+    [[nodiscard]] bool fin() const { return fin_; }
+    [[nodiscard]] bool rst() const { return rst_; }
+    void set_rst(bool val) { rst_ = val; }
 
-    [[nodiscard]] std::size_t size_in_seq() const
-    {
-        return end_seq_n_ - seq_n_;
-    }
-    [[nodiscard]] std::size_t payload_size() const
-    {
-        return payload_.size();
-    }
+    [[nodiscard]] std::size_t size_in_seq() const { return end_seq_n_ - seq_n_; }
+    [[nodiscard]] std::size_t payload_size() const { return payload_.size(); }
 
-    [[nodiscard]] std::uint32_t seq_start() const
-    {
-        return seq_n_;
-    }
-    [[nodiscard]] std::uint32_t seq_end() const
-    {
-        return end_seq_n_;
-    }
+    [[nodiscard]] std::uint32_t seq_start() const { return seq_n_; }
+    [[nodiscard]] std::uint32_t seq_end() const { return end_seq_n_; }
 
-    [[nodiscard]] std::span<const std::byte> payload() const
-    {
-        return {payload_};
-    }
+    [[nodiscard]] std::span<const std::byte> payload() const { return { payload_ }; }
+
 private:
     std::vector<std::byte> payload_;
 
@@ -162,22 +103,16 @@ public:
     friend class TcpBufferTest;
     friend class TcpReceiverBufferTest;
 
-    void set_max_size(const std::size_t new_size)
-    {
-        max_size_ = new_size;
-    }
-    [[nodiscard]] std::size_t max_size() const
-    {
-        return max_size_;
-    }
+    void set_max_size(const std::size_t new_size) { max_size_ = new_size; }
+    [[nodiscard]] std::size_t max_size() const { return max_size_; }
 
     [[nodiscard]] std::size_t available_space() const;
     // Inserts a new node
-    bool insert(const TcpSegment& seg);
+    bool insert(const TcpSegment &seg);
     std::size_t consume_seq(const std::uint32_t seq_range_to);
 
-    TcpSegment& at(const std::ptrdiff_t idx);
-    TcpSegment& find(const std::uint32_t seq);
+    TcpSegment &at(const std::ptrdiff_t idx);
+    TcpSegment &find(const std::uint32_t seq);
     std::optional<std::size_t> find_pos(const std::uint32_t seq) const;
     std::optional<std::size_t> find_pos_containing(const std::uint32_t seq) const;
 
@@ -185,26 +120,25 @@ public:
     [[nodiscard]] std::size_t size_bytes() const;
     [[nodiscard]] std::size_t size_payload_bytes() const;
 
-    [[nodiscard]] bool empty() const
-    {
-        return size_segs() == 0;
-    }
+    [[nodiscard]] bool empty() const { return size_segs() == 0; }
 
     // I guess this is used for sending, but what if we are sending several segments in 1 RTT, then I need to access nodes after front()
-    const TcpSegment& front() const
+    const TcpSegment &front() const
     {
         assert(!empty());
         return segs_.front();
     }
-    const TcpSegment& back() const
+
+    const TcpSegment &back() const
     {
         assert(!empty());
         return segs_.back();
     }
+
 protected:
     std::list<TcpSegment> segs_;
     std::size_t cur_size_{};
-    std::size_t max_size_{2 * 1024 * 1024};
+    std::size_t max_size_{ 2 * 1024 * 1024 };
 };
 
 class TcpSenderBuffer : public TcpBuffer
@@ -218,7 +152,8 @@ class TcpReceiverBuffer : public TcpBuffer
 {
 public:
     // Returns (data, sequence number up to which you should consume)
-    [[nodiscard]] std::pair<std::vector<std::byte>, std::uint32_t> read(const std::size_t max_size, const std::uint32_t recv_nxt);
+    [[nodiscard]] std::pair<std::vector<std::byte>, std::uint32_t> read(const std::size_t max_size,
+        const std::uint32_t recv_nxt);
 
     // This function should be called after a segment was inserted on receive. It checks if that segment had filled a gap and therefore updated RECV.NXT
     [[nodiscard]] std::uint32_t check_gaps(const std::uint32_t recv_nxt) const;

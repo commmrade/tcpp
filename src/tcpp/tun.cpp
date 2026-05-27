@@ -5,10 +5,7 @@
 #include "tun.hpp"
 
 Tun::Tun(std::string_view dev_name)
-    : dev_name_(dev_name)
-{
-    open(dev_name);
-}
+    : dev_name_(dev_name) { open(dev_name); }
 
 void Tun::set_addr(const std::string_view addr)
 {

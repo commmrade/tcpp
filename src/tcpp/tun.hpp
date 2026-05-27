@@ -32,22 +32,23 @@ private:
     int tun_fd_{};
     int tun_sock_fd_{};
     std::string dev_name_;
+
 public:
     explicit Tun(std::string_view dev_name);
 
     ~Tun() override { close(); }
 
-    Tun(const Tun&) = delete;
+    Tun(const Tun &) = delete;
 
-    Tun& operator=(const Tun&) = delete;
+    Tun &operator=(const Tun &) = delete;
 
-    Tun(Tun&& rhs) noexcept
+    Tun(Tun &&rhs) noexcept
     {
         std::swap(tun_fd_, rhs.tun_fd_);
         std::swap(dev_name_, rhs.dev_name_);
     }
 
-    Tun& operator=(Tun&& rhs) noexcept
+    Tun &operator=(Tun &&rhs) noexcept
     {
         std::swap(tun_fd_, rhs.tun_fd_);
         std::swap(dev_name_, rhs.dev_name_);
@@ -66,9 +67,9 @@ public:
 
     void close();
 
-    ssize_t write(std::span<const std::byte> payload) override // NOLINT
+    ssize_t write(std::span<const std::byte> payload) override// NOLINT
     {
-        return ::write(tun_fd_, static_cast<const void*>(payload.data()), payload.size());
+        return ::write(tun_fd_, static_cast<const void *>(payload.data()), payload.size());
     }
 
     [[nodiscard]] ssize_t read(void *buf, const std::size_t buf_len) const { return ::read(tun_fd_, buf, buf_len); }

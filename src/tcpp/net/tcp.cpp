@@ -27,24 +27,23 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
                                                       buf.size() - static_cast<std::size_t>(rd_offset) };
             conn->on_packet(tcph, payload);
             std::println("CONN STATE: {}", (int)conn->get_state());
-            if (conn->get_state() == TcpState::CLOSED) {
-                established_connections_.erase(eiter);
-            }
+            if (conn->get_state() == TcpState::CLOSED) { established_connections_.erase(eiter); }
         } else if (bound_.contains(quad.src_port)) {
             if (auto riter = syn_recv_connections_.find(quad); riter != syn_recv_connections_.end()) {
                 auto &conn = riter->second;
-                conn->on_packet(tcph, {}); // ACK for SYNACK cannot contain data
+                conn->on_packet(tcph, {});// ACK for SYNACK cannot contain data
                 std::println("State: {}", (int)conn->get_state());
-                assert(conn->get_state() == TcpState::ESTAB); // It can't really be in other states
+                assert(conn->get_state() == TcpState::ESTAB);// It can't really be in other states
 
-                std::unique_ptr<TcpConnection> conn_ptr{conn.release()};
+                std::unique_ptr<TcpConnection> conn_ptr{ conn.release() };
                 syn_recv_connections_.erase(riter);
 
                 established_connections_.emplace(quad, std::move(conn_ptr));
                 bound_.find(quad.src_port)->second.push_back(quad);
                 accept_var_.notify_all();
             } else {
-                auto [conn_iter, inserted] = syn_recv_connections_.emplace(quad, std::make_unique<TcpConnection>(std::make_unique<SegmentOutput>(tun_), std::make_unique<Clock>()));
+                auto [conn_iter, inserted] = syn_recv_connections_.emplace(quad,
+                    std::make_unique<TcpConnection>(std::make_unique<SegmentOutput>(tun_), std::make_unique<Clock>()));
                 assert(inserted);
                 conn_iter->second->open_passive(iph, tcph);
             }
@@ -76,9 +75,7 @@ void Tcp::process_packet()
         if (conn->get_state() == TcpState::CLOSED) {
             iter = established_connections_.erase(iter);
             // Returns 1 iter after the erased element
-        } else {
-            ++iter;
-        }
+        } else { ++iter; }
     }
 
     if (ret == 0) {
@@ -120,7 +117,8 @@ Quad Tcp::connect(const std::uint32_t daddr, const std::uint16_t dport)
 
     Quad quad{ .src_addr = s_addr, .src_port = port, .dst_addr = daddr, .dst_port = dport };
 
-    auto [iter, inserted] = established_connections_.emplace(quad, std::make_unique<TcpConnection>(std::make_unique<SegmentOutput>(tun_), std::make_unique<Clock>()));
+    auto [iter, inserted] = established_connections_.emplace(quad,
+        std::make_unique<TcpConnection>(std::make_unique<SegmentOutput>(tun_), std::make_unique<Clock>()));
     assert(inserted);
     auto &conn = iter->second;
 

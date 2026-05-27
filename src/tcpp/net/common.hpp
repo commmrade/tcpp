@@ -37,14 +37,9 @@ enum class TcpState// NOLINT
     TIME_WAIT,
 };
 
-inline bool is_fin_state(const TcpState state) {
-    return state == TcpState::FIN_WAIT_1 || state == TcpState::LAST_ACK;
-}
+inline bool is_fin_state(const TcpState state) { return state == TcpState::FIN_WAIT_1 || state == TcpState::LAST_ACK; }
 
-inline bool is_syn_state(const TcpState state)
-{
-    return state == TcpState::SYN_RCVD || state == TcpState::SYN_SENT;
-}
+inline bool is_syn_state(const TcpState state) { return state == TcpState::SYN_RCVD || state == TcpState::SYN_SENT; }
 
 struct Quad
 {

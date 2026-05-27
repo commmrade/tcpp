@@ -18,7 +18,8 @@ class Clock : public ClockInterface
 {
     [[nodiscard]] std::int64_t now() const override
     {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
     }
 };
 
