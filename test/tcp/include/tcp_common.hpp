@@ -16,7 +16,7 @@ public:
 class MockOutput : public OutputInterface
 {
 public:
-    MOCK_METHOD(ssize_t, send, (const TcpSegment& seg, const std::size_t max_size_pl, const std::uint32_t rwnd), (override));
+    MOCK_METHOD(ssize_t, send, (const TcpSegment& seg, const std::size_t offset, const std::size_t max_size_pl, const std::uint32_t rwnd), (override));
     void init([[maybe_unused]] const std::uint32_t src_addr, [[maybe_unused]] const std::uint32_t dst_addr, [[maybe_unused]] const std::uint16_t src_port, [[maybe_unused]] const std::uint16_t dst_port) override
     {}
 };
@@ -276,5 +276,14 @@ protected:
     std::uint32_t ts_recent() const
     {
         return conn_.recv_.ts_recent();
+    }
+
+    std::uint32_t cong_cwnd() const
+    {
+        return conn_.cong_.get_cwnd();
+    }
+    std::uint32_t cong_ssthresh() const
+    {
+        return conn_.cong_.get_ssthresh();
     }
 };

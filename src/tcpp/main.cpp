@@ -162,24 +162,7 @@ int main()
 {
     auto net_thread = run_underlying_stuff();
 
-    // sleep(3);
 
-    // std::jthread conn_thread{[] {
-    //     TcpSocket sock{};
-    //     sock.connect("10.0.0.1", 8090);
-    //
-    //     while (true) {
-    //         std::array<char, 512> buf{};
-    //         auto rd = sock.read(buf.data(), buf.size());
-    //         std::println("user: rd {}", rd);
-    //         if (rd == 0) {
-    //             std::println("user: FIN");
-    //             break;
-    //         }
-    //     }
-    // }};
-
-    //
     TcpListener listener{};
     listener.bind(8090);
     listener.listen(999);
@@ -195,7 +178,8 @@ int main()
             sock.close();
             break;
         } else {
-            auto wr = sock.write(std::span<const std::byte>(buf.data(), static_cast<std::size_t>(rd)));
+            std::array<std::byte, 1440 * 150> data{};
+            auto wr = sock.write(std::span<const std::byte>(data.data(), data.size()));
         }
     }
 

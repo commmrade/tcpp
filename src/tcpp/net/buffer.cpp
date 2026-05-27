@@ -3,6 +3,9 @@
 //
 
 #include "buffer.hpp"
+
+#include "../util.hpp"
+
 #include <stdexcept>
 #include <algorithm>
 
@@ -94,6 +97,31 @@ TcpSegment &TcpBuffer::find(const std::uint32_t seq)
         [seq](const TcpSegment &seg) { return seg.seq_start() == seq; });
     assert(iter != segs_.end());
     return *iter;
+}
+
+std::optional<std::size_t> TcpBuffer::find_pos(const std::uint32_t seq) const
+{
+    int idx = 0;
+    for (auto beg = segs_.begin(); beg != segs_.end(); ++beg) {
+        if (beg->seq_start() == seq) {
+            return {idx};
+        }
+        ++idx;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::size_t> TcpBuffer::find_pos_containing(const std::uint32_t seq) const
+{
+    int idx = 0;
+    for (auto beg = segs_.begin(); beg != segs_.end(); ++beg) {
+        if (!wrapping_lt(seq, beg->seq_start()) && wrapping_lt(seq, beg->seq_end())) {
+            return idx;
+        }
+        ++idx;
+    }
+    return std::nullopt;
+
 }
 
 std::size_t TcpBuffer::size_segs() const { return segs_.size(); }

@@ -15,7 +15,7 @@ TEST_F(TcpConnHandshake, PassiveOpen_SynAckSent)
             ResultOf([](const TcpSegment& s){ return s.syn(); }, true),
             ResultOf([](const TcpSegment& s){ return s.ack(); }, true)
         ),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
 
     auto iph  = helpers::make_ip({.src = PEER_IP, .dst = LOCAL_IP});
@@ -73,7 +73,7 @@ TEST_F(TcpConnActiveOpen, SendsSyn)
             ResultOf([](const TcpSegment& s){ return s.syn(); }, true),
             ResultOf([](const TcpSegment& s){ return s.ack(); }, false)
         ),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
 
     active_open(LOCAL_IP, LOCAL_PORT, PEER_IP, PEER_PORT);
@@ -91,7 +91,7 @@ TEST_F(TcpConnActiveOpen, HandshakeCompletes)
 
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.ack() && !s.syn(); }, true),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
 
     auto synack = helpers::make_tcp({

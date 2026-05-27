@@ -16,7 +16,7 @@ TEST_F(TcpConnActiveTeardown, FullSequence)
 
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.fin(); }, true),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
     conn_.close();
     conn_.on_tick();
@@ -37,7 +37,7 @@ TEST_F(TcpConnActiveTeardown, FullSequence)
 
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.ack() && !s.fin(); }, true),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
     // FIXME: I wanna use WilLOnce return here, but now i cant because it delays ack for fin
     auto peer_fin = helpers::make_tcp({
@@ -64,7 +64,7 @@ TEST_F(TcpConnPassiveTeardown, FullSequence)
 
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.ack() && !s.fin(); }, true),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
     // FIXME: I wanna use WilLOnce return here, but now i cant because it delays ack for fin
     auto peer_fin = helpers::make_tcp({
@@ -82,7 +82,7 @@ TEST_F(TcpConnPassiveTeardown, FullSequence)
 
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.fin(); }, true),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
     // FIXME: I wanna use WilLOnce return here, but now i cant because it delays ack for fin
     conn_.close();

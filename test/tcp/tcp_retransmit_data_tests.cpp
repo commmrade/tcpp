@@ -194,7 +194,7 @@ TEST_F(TcpConnRetransmit, SynRetransmitsWithBackoff)
     // Active open — SYN goes out
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.syn() && !s.ack(); }, true),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
 
     active_open(LOCAL_IP, LOCAL_PORT, PEER_IP, PEER_PORT);
@@ -211,7 +211,7 @@ TEST_F(TcpConnRetransmit, SynRetransmitsWithBackoff)
     // First retransmit — RTO ~1000ms
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.syn() && !s.ack(); }, true),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
     static_cast<FakeClock&>(get_clock()).advance(600);
     conn_.on_tick();
@@ -225,7 +225,7 @@ TEST_F(TcpConnRetransmit, SynRetransmitsWithBackoff)
 
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.syn() && !s.ack(); }, true),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
     static_cast<FakeClock&>(get_clock()).advance(600);
     conn_.on_tick();
@@ -239,7 +239,7 @@ TEST_F(TcpConnRetransmit, SynRetransmitsWithBackoff)
 
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.syn() && !s.ack(); }, true),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
     static_cast<FakeClock&>(get_clock()).advance(600);
     conn_.on_tick();
@@ -248,7 +248,7 @@ TEST_F(TcpConnRetransmit, SynRetransmitsWithBackoff)
     // SYN-ACK finally arrives — handshake completes
     EXPECT_CALL(output(), send(
         ResultOf([](const TcpSegment& s){ return s.ack() && !s.syn(); }, true),
-        _, _
+        _, _, _
     )).WillOnce(Return(44));
     auto synack = helpers::make_tcp({
         .sport = PEER_PORT, .dport = LOCAL_PORT,

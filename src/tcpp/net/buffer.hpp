@@ -178,6 +178,8 @@ public:
 
     TcpSegment& at(const std::ptrdiff_t idx);
     TcpSegment& find(const std::uint32_t seq);
+    std::optional<std::size_t> find_pos(const std::uint32_t seq) const;
+    std::optional<std::size_t> find_pos_containing(const std::uint32_t seq) const;
 
     [[nodiscard]] std::size_t size_segs() const;
     [[nodiscard]] std::size_t size_bytes() const;
