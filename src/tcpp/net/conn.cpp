@@ -124,6 +124,7 @@ bool TcpConnection::on_syn(const netparser::TcpHeaderView &tcph)
 bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
 {
     std::println("Got ack n {}, SEND.NXT {}, UNA", tcph.ackn(), send_.nxt(), send_.una());
+    const auto old_wnd = send_.wnd();
 
     switch (state_) {
     case TcpState::SYN_RCVD: {
@@ -159,10 +160,6 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
             ack_seg.set_ack(true);
             ack_seg.set_ackn(recv_.nxt());
             send_pure(ack_seg);
-        }
-
-        if (!send_buf_.empty() && !send_buf_.front().syn() && is_sync()) {
-            cong_.on_ack(send_.una(), tcph.ackn(), send_mss_);
         }
 
         if (is_between_wrapped(send_.una(), tcph.ackn(), send_.nxt() + 1)) {
@@ -495,6 +492,7 @@ bool TcpConnection::segment_arrived_syn_sent(const netparser::TcpHeaderView &tcp
         send_.set_wl1(tcph.seqn());
         send_.set_wl2(tcph.ackn());
         cong_.init(send_mss_);
+        cong_.set_last_window(send_.wnd());
     }
 
     if (!tcph.syn() && !tcph.rst()) {
@@ -546,6 +544,11 @@ bool TcpConnection::segment_arrived_other(const netparser::TcpHeaderView &tcph,
     // Fourth
     if (tcph.syn()) { if (!on_syn(tcph)) { return false; } }// NOLINT
 
+    // Handle congestion
+    if (is_sync()) { // which means if we are past handshake
+        cong_.on_ack(tcph, payload.size_bytes(), send_, send_mss_);
+    }
+
     // Fifth, check the ACK field
     if (!tcph.ack()) { return false; }
     if (!on_ack(tcph)) { return false; }
@@ -554,6 +557,10 @@ bool TcpConnection::segment_arrived_other(const netparser::TcpHeaderView &tcph,
 
     const auto payload_size = payload.size() + (tcph.syn() ? 1 : 0) + (tcph.fin() ? 1 : 0);
     if (payload_size > 0) { if (!on_data(tcph, payload)) { return false; } }
+
+    if (cong_.dup_acks() > 0) {
+        fast_recovery(tcph, payload.size_bytes()); // handle dup. ack stuff after we updated state
+    }
 
     if (tcph.fin()) { if (!on_fin()) { return false; } }// NOLINT
 
@@ -587,6 +594,32 @@ void TcpConnection::update_ts(const netparser::TcpHeaderView &tcph)
 bool TcpConnection::is_sync() const
 {
     return (state_ == TcpState::ESTAB || state_ == TcpState::FIN_WAIT_1 || state_ == TcpState::FIN_WAIT_2 || state_ == TcpState::CLOSE_WAIT || state_ == TcpState::CLOSING);
+}
+
+void TcpConnection::fast_recovery(const netparser::TcpHeaderView &tcph, const std::size_t pl_size)
+{
+    const auto dup_ack = cong_.dup_acks();
+    const auto in_flight = send_.nxt() - send_.una();
+    const auto unsent = send_buf_.size_bytes() - in_flight;
+    if (dup_ack > 0 && dup_ack < 3) { // Limited retransmit
+        const auto usable_wnd = send_.wnd() > in_flight ? send_.wnd() - in_flight : 0;
+        const auto bytes_to_send = std::min<std::size_t>({ unsent, usable_wnd });
+
+        if (bytes_to_send > 0 && in_flight <= cong_.get_cwnd() + 2 * send_mss_) {
+            send_data(bytes_to_send, 1UL); // Sends new data, capped by 1 segment as per RFC
+        }
+    } else if (dup_ack == 3) {
+        TcpSegment &retrans_seg = send_buf_.find(send_.una());
+        retrans_seg.set_ackn(recv_.nxt());
+        send_retransmit(retrans_seg, retrans_seg.payload_size());
+    } else if (dup_ack > 3) {
+        const auto wnd = std::min(cong_.get_cwnd(), send_.wnd());
+        const auto usable_wnd = wnd > in_flight ? wnd - in_flight : 0;
+        const auto bytes_to_send = std::min<std::size_t>({ unsent, usable_wnd });
+        if (bytes_to_send > 0) {
+            send_data(std::min<std::size_t>(bytes_to_send, send_mss_));
+        }
+    }
 }
 
 bool TcpConnection::handle_send()
@@ -652,14 +685,14 @@ void TcpConnection::on_tick()
     if (!handle_send()) { return; }
 }
 
-ssize_t TcpConnection::send_data(const std::size_t max_size)
+ssize_t TcpConnection::send_data(const std::size_t max_size, const std::size_t segments_limit /* = std::numeric_limits<int>::max() */)
 {
     std::size_t total_written = 0;
     bool rtt_started = false;
 
     const auto start_idx = send_buf_.find_pos_containing(send_.nxt());
     assert(start_idx.has_value());
-    for (auto i = start_idx.value(); i < send_buf_.size_segs() && total_written < max_size; ++i) {
+    for (auto i = start_idx.value(); i < send_buf_.size_segs() && total_written < max_size && i - start_idx.value() < segments_limit; ++i) {
         // Same goes for settings SND.NXT evry time
         TcpSegment &seg = send_buf_.at(static_cast<std::ptrdiff_t>(i));
         seg.set_ackn(recv_.nxt());
@@ -791,6 +824,7 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
             send_mss_ = opt.value().mss;
         }
         cong_.init(send_mss_);
+        cong_.set_last_window(send_.wnd());
 
         // SEt ISS
         std::random_device rnd;

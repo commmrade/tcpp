@@ -694,3 +694,276 @@ TEST_F(TcpCongAvoidTest, CaCwndGrowthUnblocksExactlyOneMoreSegment)
     conn_.on_tick();
     Mock::VerifyAndClearExpectations(&output());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fast Retransmit + Fast Recovery (RFC 5681 §3.2)
+// ═══════════════════════════════════════════════════════════════════════════
+
+class TcpFastRetransTest : public TcpConnectionTest
+{
+protected:
+    void advance_clock(const std::int64_t ms)
+    {
+        static_cast<FakeClock&>(get_clock()).advance(ms);
+    }
+
+    // Send a pure duplicate ACK (no data, SYN/FIN off, same ackn as SND.UNA).
+    // Caller sets EXPECT_CALL before invoking.
+    void send_dup_ack(const std::uint32_t ackn, const std::uint16_t wnd = 65535)
+    {
+        auto seg = helpers::make_tcp({
+            .sport  = PEER_PORT, .dport  = LOCAL_PORT,
+            .seqn   = PEER_ISN + 1,
+            .ackn   = ackn,
+            .window = wnd,
+            .ack    = true,
+        });
+        const auto seg_d = seg.serialize();
+        conn_.on_packet(netparser::TcpHeaderView{seg_d}, {});
+    }
+
+    // Send a new ACK that advances SND.UNA (exits fast recovery).
+    void send_new_ack(const std::uint32_t ackn, const std::uint16_t wnd = 65535)
+    {
+        auto seg = helpers::make_tcp({
+            .sport  = PEER_PORT, .dport  = LOCAL_PORT,
+            .seqn   = PEER_ISN + 1,
+            .ackn   = ackn,
+            .window = wnd,
+            .ack    = true,
+        });
+        const auto seg_d = seg.serialize();
+        EXPECT_CALL(output(), send).Times(0);
+        conn_.on_packet(netparser::TcpHeaderView{seg_d}, {});
+        Mock::VerifyAndClearExpectations(&output());
+    }
+
+    // Sends exactly n full SMSS segments without ACKing any.
+    // FlightSize = n*SMSS after.
+    void send_n_segments(const int n)
+    {
+        const auto smss = send_mss();
+        std::vector<std::byte> data(static_cast<std::size_t>(n) * smss);
+        write(data);
+        EXPECT_CALL(output(), send)
+            .Times(n)
+            .WillRepeatedly(Return(static_cast<ssize_t>(
+                netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+        conn_.on_tick();
+        Mock::VerifyAndClearExpectations(&output());
+    }
+
+    // Sends IW segments in flight, drives to fast recovery via 3 dupACKs.
+    // Retransmit expected on dupACK #3.
+    // Returns SND.UNA (= the dupACK ackn value).
+    std::uint32_t enter_fast_recovery()
+    {
+        const auto smss    = send_mss();
+        const auto iw_segs = static_cast<int>(cong_cwnd() / smss);
+
+        send_n_segments(iw_segs);
+        const auto una = send_una();
+
+        EXPECT_CALL(output(), send).Times(0);
+        send_dup_ack(una);
+        Mock::VerifyAndClearExpectations(&output());
+
+        EXPECT_CALL(output(), send).Times(0);
+        send_dup_ack(una);
+        Mock::VerifyAndClearExpectations(&output());
+
+        EXPECT_CALL(output(), send)
+            .Times(1)
+            .WillOnce(Return(static_cast<ssize_t>(
+                netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+        send_dup_ack(una);
+        Mock::VerifyAndClearExpectations(&output());
+
+        return una;
+    }
+};
+
+// ─── dupACK #1 and #2 — no side effects ────────────────────────────────────
+
+// RFC 5681: cwnd MUST NOT change on first two dupACKs.
+TEST_F(TcpFastRetransTest, DupAck1And2LeaveCwndUnchanged)
+{
+    do_handshake();
+    const auto smss    = send_mss();
+    const auto iw_segs = static_cast<int>(cong_cwnd() / smss);
+    send_n_segments(iw_segs);
+
+    const auto una        = send_una();
+    const auto cwnd_before = cong_cwnd();
+
+    EXPECT_CALL(output(), send).Times(0);
+    send_dup_ack(una);
+    Mock::VerifyAndClearExpectations(&output());
+    EXPECT_EQ(cong_cwnd(), cwnd_before) << "cwnd changed on dupACK #1";
+
+    EXPECT_CALL(output(), send).Times(0);
+    send_dup_ack(una);
+    Mock::VerifyAndClearExpectations(&output());
+    EXPECT_EQ(cong_cwnd(), cwnd_before) << "cwnd changed on dupACK #2";
+}
+
+// No retransmit must fire on the first two dupACKs.
+TEST_F(TcpFastRetransTest, DupAck1And2DontRetransmit)
+{
+    do_handshake();
+    const auto iw_segs = static_cast<int>(cong_cwnd() / send_mss());
+    send_n_segments(iw_segs);
+    const auto una = send_una();
+
+    EXPECT_CALL(output(), send).Times(0);
+    send_dup_ack(una);
+    Mock::VerifyAndClearExpectations(&output());
+
+    EXPECT_CALL(output(), send).Times(0);
+    send_dup_ack(una);
+    Mock::VerifyAndClearExpectations(&output());
+}
+
+// ─── dupACK #3 — fast retransmit ───────────────────────────────────────────
+
+// Exactly one retransmit must fire on the third dupACK, no more.
+TEST_F(TcpFastRetransTest, DupAck3TriggersExactlyOneRetransmit)
+{
+    do_handshake();
+    const auto smss    = send_mss();
+    const auto iw_segs = static_cast<int>(cong_cwnd() / smss);
+    send_n_segments(iw_segs);
+    const auto una = send_una();
+
+    EXPECT_CALL(output(), send).Times(0);
+    send_dup_ack(una);
+    Mock::VerifyAndClearExpectations(&output());
+
+    EXPECT_CALL(output(), send).Times(0);
+    send_dup_ack(una);
+    Mock::VerifyAndClearExpectations(&output());
+
+    EXPECT_CALL(output(), send)
+        .Times(1)
+        .WillOnce(Return(static_cast<ssize_t>(
+            netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+    send_dup_ack(una);
+    Mock::VerifyAndClearExpectations(&output());
+}
+
+// ─── fast recovery — cwnd and ssthresh ─────────────────────────────────────
+
+// ssthresh = max(FlightSize/2, 2*SMSS) on dupACK #3.
+TEST_F(TcpFastRetransTest, DupAck3SetsSsthresh)
+{
+    do_handshake();
+    const auto smss         = send_mss();
+    const auto iw_segs      = static_cast<int>(cong_cwnd() / smss);
+    const auto flight_size  = static_cast<std::uint32_t>(iw_segs) * smss;
+    const auto expected_sst = std::max(flight_size / 2, 2u * smss);
+
+    enter_fast_recovery();
+
+    EXPECT_EQ(cong_ssthresh(), expected_sst);
+}
+
+// cwnd = ssthresh + 3*SMSS on dupACK #3 (+3 for the 3 buffered segments).
+TEST_F(TcpFastRetransTest, DupAck3InflatesCwndToSsthreshPlus3Smss)
+{
+    do_handshake();
+    const auto smss          = send_mss();
+    const auto iw_segs       = static_cast<int>(cong_cwnd() / smss);
+    const auto flight_size   = static_cast<std::uint32_t>(iw_segs) * smss;
+    const auto ssthresh      = std::max(flight_size / 2, 2u * smss);
+    const auto expected_cwnd = ssthresh + 3u * smss;
+
+    enter_fast_recovery();
+
+    EXPECT_EQ(cong_cwnd(), expected_cwnd);
+}
+
+// Each dupACK after the third inflates cwnd by exactly SMSS.
+TEST_F(TcpFastRetransTest, SubsequentDupAcksEachInflateCwndBySmss)
+{
+    do_handshake();
+    const auto smss = send_mss();
+    const auto una  = enter_fast_recovery();
+
+    for (int i = 0; i < 3; ++i) {
+        const auto cwnd_before = cong_cwnd();
+
+        EXPECT_CALL(output(), send).Times(AnyNumber());
+        send_dup_ack(una);
+        Mock::VerifyAndClearExpectations(&output());
+
+        EXPECT_EQ(cong_cwnd(), cwnd_before + smss)
+            << "dupACK #" << (4 + i);
+    }
+}
+
+// Recovery ACK (first new ACK after recovery): cwnd = ssthresh.
+TEST_F(TcpFastRetransTest, RecoveryAckDeflatesCwndToSsthresh)
+{
+    do_handshake();
+    enter_fast_recovery();
+
+    const auto ssthresh = cong_ssthresh();
+
+    // ACK all in-flight data — this is the recovery ACK
+    send_new_ack(get_send_nxt());
+
+    EXPECT_EQ(cong_cwnd(), ssthresh);
+}
+
+// ─── send behavior during and after recovery ───────────────────────────────
+
+// Inflated cwnd opens an effective window beyond FlightSize.
+// on_tick must send exactly floor(effective/SMSS) new segments.
+TEST_F(TcpFastRetransTest, InflatedCwndAllowsNewDataDuringRecovery)
+{
+    do_handshake();
+    const auto smss = send_mss();
+    enter_fast_recovery();
+
+    // effective = inflated cwnd - FlightSize
+    const auto flight    = get_send_nxt() - send_una();
+    const auto effective = cong_cwnd() > flight ? cong_cwnd() - flight : 0u;
+    const auto new_segs  = static_cast<int>(effective / smss);
+
+    ASSERT_GT(new_segs, 0) << "test precondition: inflated window must allow at least 1 send";
+
+    std::vector<std::byte> data(smss * 6); // more than effective
+    write(data);
+
+    EXPECT_CALL(output(), send)
+        .Times(new_segs)
+        .WillRepeatedly(Return(static_cast<ssize_t>(
+            netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+}
+
+// After the recovery ACK deflates cwnd to ssthresh, sends must be
+// limited to ssthresh/SMSS segments (FlightSize = 0, fresh start).
+TEST_F(TcpFastRetransTest, AfterRecoveryAckSendLimitedBySsthresh)
+{
+    do_handshake();
+    const auto smss = send_mss();
+    enter_fast_recovery();
+
+    // Recovery ACK — cwnd deflates to ssthresh, all data ACKed
+    send_new_ack(get_send_nxt());
+
+    const auto ssthresh      = cong_ssthresh(); // = cwnd now
+    const auto expected_segs = static_cast<int>(ssthresh / smss);
+
+    std::vector<std::byte> data(smss * 8);
+    write(data);
+
+    EXPECT_CALL(output(), send)
+        .Times(expected_segs)
+        .WillRepeatedly(Return(static_cast<ssize_t>(
+            netparser::IPV4H_MIN_SIZE + netparser::TCPH_MIN_SIZE + smss)));
+    conn_.on_tick();
+    Mock::VerifyAndClearExpectations(&output());
+}

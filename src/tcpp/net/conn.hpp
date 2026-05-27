@@ -32,60 +32,29 @@ constexpr static inline std::uint32_t RECEIVER_DEF_MSS = 1440;
 class SendSequence
 {
 public:
-    [[nodiscard]] std::uint32_t wnd() const
-    {
-        return wnd_;
-    }
+    [[nodiscard]] std::uint32_t wnd() const { return wnd_; }
+
     void set_wnd(const std::uint32_t wnd)
     {
         wnd_max_ = std::max(wnd_max_, wnd);
         wnd_ = wnd;
     }
 
-    [[nodiscard]] std::uint32_t nxt() const
-    {
-        return nxt_;
-    }
-    void set_nxt(const std::uint32_t nxt)
-    {
-        nxt_ = nxt;
-    }
+    [[nodiscard]] std::uint32_t nxt() const { return nxt_; }
+    void set_nxt(const std::uint32_t nxt) { nxt_ = nxt; }
 
-    [[nodiscard]] std::uint32_t una() const
-    {
-        return una_;
-    }
-    void set_una(const std::uint32_t una)
-    {
-        una_ = una;
-    }
+    [[nodiscard]] std::uint32_t una() const { return una_; }
+    void set_una(const std::uint32_t una) { una_ = una; }
 
-    [[nodiscard]] std::uint32_t iss() const
-    {
-        return iss_;
-    }
-    void set_iss(const std::uint32_t iss)
-    {
-        iss_ = iss;
-    }
+    [[nodiscard]] std::uint32_t iss() const { return iss_; }
+    void set_iss(const std::uint32_t iss) { iss_ = iss; }
 
-    [[nodiscard]] std::uint32_t wl1() const
-    {
-        return wl1_;
-    }
-    void set_wl1(const std::uint32_t wl1)
-    {
-        wl1_ = wl1;
-    }
+    [[nodiscard]] std::uint32_t wl1() const { return wl1_; }
+    void set_wl1(const std::uint32_t wl1) { wl1_ = wl1; }
 
-    [[nodiscard]] std::uint32_t wl2() const
-    {
-        return wl2_;
-    }
-    void set_wl2(const std::uint32_t wl2)
-    {
-        wl2_ = wl2;
-    }
+    [[nodiscard]] std::uint32_t wl2() const { return wl2_; }
+    void set_wl2(const std::uint32_t wl2) { wl2_ = wl2; }
+
 private:
     std::uint32_t una_;// send unack'ed
     std::uint32_t nxt_;// send next
@@ -107,40 +76,17 @@ public:
         right_wnd_edge_ = nxt_ + wnd;
     }
 
-    [[nodiscard]] std::uint32_t wnd() const
-    {
-        return right_wnd_edge_ - nxt_;
-    }
-    [[nodiscard]] std::uint32_t nxt() const
-    {
-        return nxt_;
-    }
-    void set_nxt(const std::uint32_t nxt)
-    {
-        nxt_ = nxt;
-    }
+    [[nodiscard]] std::uint32_t wnd() const { return right_wnd_edge_ - nxt_; }
+    [[nodiscard]] std::uint32_t nxt() const { return nxt_; }
+    void set_nxt(const std::uint32_t nxt) { nxt_ = nxt; }
 
-    void set_irs(const std::uint32_t irs)
-    {
-        irs_ = irs;
-    }
+    void set_irs(const std::uint32_t irs) { irs_ = irs; }
 
-    void set_ts_recent(const std::uint32_t val)
-    {
-        ts_recent_ = val;
-    }
-    std::uint32_t ts_recent() const
-    {
-        return ts_recent_;
-    }
-    void set_last_ack(const std::uint32_t val)
-    {
-        last_ack_sent_ = val;
-    }
-    std::uint32_t last_ack() const
-    {
-        return last_ack_sent_;
-    }
+    void set_ts_recent(const std::uint32_t val) { ts_recent_ = val; }
+    std::uint32_t ts_recent() const { return ts_recent_; }
+    void set_last_ack(const std::uint32_t val) { last_ack_sent_ = val; }
+    std::uint32_t last_ack() const { return last_ack_sent_; }
+
 private:
     std::uint32_t nxt_;// next to receive, which is +1 byte. so this equals to the next seqn that is expected
     std::uint32_t wnd_;// receiver window size. It is recommended to use 32 bit int for WND
@@ -155,52 +101,87 @@ private:
 
 class CongestionControl
 {
+private:
+    bool is_dup_ack(const netparser::TcpHeaderView& tcph, const std::size_t pl_size, const SendSequence &seq)
+    {
+        if (seq.una() != seq.nxt() &&
+            pl_size == 0 &&
+            (!tcph.syn() && !tcph.fin()) &&
+            tcph.ackn() == seq.una() &&
+            tcph.window() == last_window_) {
+            return true;
+        }
+        return false;
+    }
+
+    void on_fast_recovery(const std::uint32_t ackn, const SendSequence& seq, const std::uint32_t send_mss)
+    {
+        if (wrapping_gt(ackn, seq.una()) && dup_acks_ > 0) {
+            if (dup_acks_ >= 3) {
+                // We were in a fast recovery state
+                cwnd_ = ssthresh_;
+            }
+            dup_acks_ = 0;
+        }
+
+        if (dup_acks_ == 3) {
+            const auto in_flignt = seq.nxt() - seq.una();
+            ssthresh_ = std::max(in_flignt / 2, 2 * send_mss);
+            cwnd_ = ssthresh_ + 3 * send_mss;
+        } else if (dup_acks_ > 3) { cwnd_ += send_mss; }
+    }
+    void on_slow_start(const std::uint32_t ackn, const std::uint32_t snd_una, const std::uint32_t send_mss)
+    {
+        const auto acked_bytes = ackn - snd_una;
+        cwnd_ += std::min<std::uint32_t>(acked_bytes, send_mss);
+    }
+    void on_cong_avoidance(const std::uint32_t send_mss)
+    {
+        const auto increased_bytes = std::max<std::uint32_t>(send_mss * send_mss / cwnd_, 1);
+        // If 0, SHOULD be rounded to 1
+        cwnd_ += increased_bytes;
+    }
 public:
-    std::uint32_t get_cwnd() const
-    {
-        return cwnd_;
-    }
-    void set_cwnd(const std::uint32_t cwnd)
-    {
-        cwnd_ = cwnd;
-    }
+    std::uint32_t get_cwnd() const { return cwnd_; }
+    void set_cwnd(const std::uint32_t cwnd) { cwnd_ = cwnd; }
 
-    std::uint32_t get_ssthresh() const
-    {
-        return ssthresh_;
-    }
-    void set_ssthresh(const std::uint32_t ssth)
-    {
-        ssthresh_ = ssth;
-    }
+    std::uint32_t get_ssthresh() const { return ssthresh_; }
+    void set_ssthresh(const std::uint32_t ssth) { ssthresh_ = ssth; }
 
-    void on_ack(const std::uint32_t snd_una, const std::uint32_t ackn, const std::uint32_t send_mss)
+    int dup_acks() const { return dup_acks_; }
+
+    void set_last_window(const std::uint32_t win) { last_window_ = win; }
+
+    void on_ack(const netparser::TcpHeaderView &tcph,
+        const std::size_t pl_size,
+        const SendSequence &send,
+        const std::uint32_t send_mss)
     {
-        if (wrapping_gt(ackn, snd_una)) {
-            // Cong. control stuff
+        if (is_dup_ack(tcph, pl_size, send)) {
+            ++dup_acks_;
+        }
+
+        if (dup_acks_ < 3 && wrapping_gt(tcph.ackn(), send.una())) {
             if (cwnd_ < ssthresh_) {
-                // Slow start
-                const auto acked_bytes = ackn - snd_una;
-                cwnd_ += std::min<std::uint32_t>(acked_bytes, send_mss);
+                on_slow_start(tcph.ackn(), send.una(), send_mss);
             } else {
-                // Congestion avoidance
-                const auto increased_bytes = std::max<std::uint32_t>(send_mss * send_mss / cwnd_, 1); // If 0, SHOULD be rounded to 1
-                cwnd_ += increased_bytes;
+                on_cong_avoidance(send_mss);
             }
         }
+
+        if (dup_acks_ > 0) {
+            on_fast_recovery(tcph.ackn(), send, send_mss);
+        }
+
+        last_window_ = tcph.window();
     }
 
     void init(const std::uint32_t send_mss)
     {
         ssthresh_ = std::numeric_limits<std::uint16_t>::max();
         const auto smss = std::max<std::uint16_t>(536, static_cast<std::uint16_t>(send_mss));
-        if (smss > 2190) {
-            cwnd_ = 2 * send_mss;
-        } else if (smss > 1095 && smss <= 2190) {
-            cwnd_ = 3 * send_mss;
-        } else if (smss <= 1095) {
-            cwnd_ = 4 * send_mss;
-        }
+        if (smss > 2190) { cwnd_ = 2 * send_mss; } else if (
+            smss > 1095 && smss <= 2190) { cwnd_ = 3 * send_mss; } else if (smss <= 1095) { cwnd_ = 4 * send_mss; }
     }
 
     void retransmitted(const std::uint32_t send_mss, const std::uint32_t nxt, const std::uint32_t una)
@@ -209,9 +190,13 @@ public:
         ssthresh_ = std::max<std::uint32_t>(in_flight / 2, send_mss * 2);
         cwnd_ = send_mss;
     }
+
 private:
     std::uint32_t cwnd_;
     std::uint32_t ssthresh_;
+
+    std::uint32_t last_window_{ 0 };
+    int dup_acks_{ 0 };
 };
 
 class Tcp;
@@ -225,9 +210,10 @@ enum class ConnectionOption : std::uint8_t
 
 struct Config
 {
-    bool is_nodelay{false};
-    bool is_quickack{false};
+    bool is_nodelay{ false };
+    bool is_quickack{ false };
 };
+
 static inline constexpr bool is_timestamp = true;
 
 class TcpConnection
@@ -241,15 +227,9 @@ public:
     [[nodiscard]] std::condition_variable &get_recv_var() { return recv_var_; }
     [[nodiscard]] std::condition_variable &get_send_var() { return send_var_; }
     [[nodiscard]] bool is_recv_empty() const { return recv_buf_.empty(); }
-    [[nodiscard]] bool is_finished() const
-    {
-        return recv_buf_.empty() ? false : recv_buf_.back().fin();
-    }
+    [[nodiscard]] bool is_finished() const { return recv_buf_.empty() ? false : recv_buf_.back().fin(); }
     [[nodiscard]] TcpState get_state() const { return state_; }
-    [[nodiscard]] std::size_t send_buf_free_space() const
-    {
-        return send_buf_.available_space();
-    }
+    [[nodiscard]] std::size_t send_buf_free_space() const { return send_buf_.available_space(); }
 
     // "Userspace" kinda functions -------------------------------------
     void shutdown(ShutdownType sht);
@@ -257,8 +237,7 @@ public:
     [[nodiscard]] ssize_t read(void *buf, const std::size_t buf_size);
     [[nodiscard]] ssize_t write(std::span<const std::byte> buf);
 
-    template<typename Value>
-    void set_option(const ConnectionOption cfg, const Value& val)
+    template<typename Value> void set_option(const ConnectionOption cfg, const Value &val)
     {
         switch (cfg) {
         case ConnectionOption::NODELAY: {
@@ -269,7 +248,8 @@ public:
             config_.is_quickack = val;
             break;
         }
-        default: throw std::runtime_error("TcpCon: Config option not implemented");
+        default:
+            throw std::runtime_error("TcpCon: Config option not implemented");
         }
     }
 
@@ -278,11 +258,13 @@ public:
     void on_tick();
     void on_packet(const netparser::TcpHeaderView &tcph,
         std::span<const std::byte> payload);
+
 private:
     // Helpers
     void add_fin_segment();
-    void update_ts(const netparser::TcpHeaderView& tcph);
+    void update_ts(const netparser::TcpHeaderView &tcph);
     bool is_sync() const;
+    void fast_recovery(const netparser::TcpHeaderView &tcph, const std::size_t pl_size);
     // void append_recv_data(const std::span<const std::byte> data);
     // void erase_recv_data(const std::size_t bytes_n);
 
@@ -308,9 +290,10 @@ private:
     // ssize_t send(const std::uint32_t seqn_from, [[maybe_unused]] const std::size_t max_size);
 
     // Used for sending data segments
-    ssize_t send_data(const std::size_t max_size_pl);
-    ssize_t send_pure(TcpSegment& seg);
-    ssize_t send_retransmit(TcpSegment& retrans_seg, const std::size_t max_size_pl);
+    ssize_t send_data(const std::size_t max_size_pl,
+        const std::size_t segments_limit = std::numeric_limits<std::size_t>::max());
+    ssize_t send_pure(TcpSegment &seg);
+    ssize_t send_retransmit(TcpSegment &retrans_seg, const std::size_t max_size_pl);
 
     // Conn. establishment functions
     void open_passive(const netparser::IpHeaderView &iph, const netparser::TcpHeaderView &tcph);
@@ -319,7 +302,7 @@ private:
         const std::uint32_t daddr,
         const std::uint16_t dport);
 
-    std::uint32_t retransmit(Timer& timer);
+    std::uint32_t retransmit(Timer &timer);
     void update_timers();
 
     friend class Tcp;
@@ -369,17 +352,18 @@ private:
 
     // Del. Ack
     ExpireTimer ack_timer_{};
-    int fs_segs_cnt_{0};
+    int fs_segs_cnt_{ 0 };
 
     std::unique_ptr<ClockInterface> clock_;
     // retransmissions -----
 
     Config config_;
 
-    bool is_tsopt{false};
+    bool is_tsopt{ false };
 
     // Cong. control
     CongestionControl cong_;
+    int dup_acks_{ 0 };
 };
 
 
