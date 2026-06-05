@@ -48,7 +48,6 @@ TEST_F(TcpConnActiveTeardown, FullSequence)
         .fin   = true,
     });
     auto peer_fin_d = peer_fin.serialize();
-    std::println("LAST ON PACKET-----");
     conn_.on_packet(netparser::TcpHeaderView{peer_fin_d}, {});
 
     ASSERT_EQ(conn_.get_state(), TcpState::TIME_WAIT);

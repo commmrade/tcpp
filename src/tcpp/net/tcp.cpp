@@ -26,13 +26,11 @@ void Tcp::dispatch_packet(const std::span<const std::byte> buf)
             const std::span<const std::byte> payload{ std::next(buf.data(), rd_offset),
                                                       buf.size() - static_cast<std::size_t>(rd_offset) };
             conn->on_packet(tcph, payload);
-            std::println("CONN STATE: {}", (int)conn->get_state());
             if (conn->get_state() == TcpState::CLOSED) { established_connections_.erase(eiter); }
         } else if (bound_.contains(quad.src_port)) {
             if (auto riter = syn_recv_connections_.find(quad); riter != syn_recv_connections_.end()) {
                 auto &conn = riter->second;
                 conn->on_packet(tcph, {});// ACK for SYNACK cannot contain data
-                std::println("State: {}", (int)conn->get_state());
                 assert(conn->get_state() == TcpState::ESTAB);// It can't really be in other states
 
                 std::unique_ptr<TcpConnection> conn_ptr{ conn.release() };

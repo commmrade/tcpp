@@ -88,7 +88,6 @@ bool RetransTimer::update(
 {
     if (start_time_.has_value()) {
         if (ack_n >= send_nxt && is_armed()) {
-            std::println("All outstanding data ACKED. Disable timer");
             // (5.2) When all outstanding data has been acknowledged, turn off the retransmission timer.
             stop();
         } else if (wrapping_gt(ack_n, start_seq_at_) &&
@@ -96,8 +95,6 @@ bool RetransTimer::update(
             // Window was moved, restart timer
             // (5.3) When an ACK is received that acknowledges new data, restart the retransmission timer so that it will expire
             // after RTO seconds (for the current value of RTO).
-            std::println("Window moved. Restart the timer");
-
             // Restart
             stop();
             start(cur_time_ms, rto_ms, ack_n, data_length_);

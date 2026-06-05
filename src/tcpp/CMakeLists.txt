@@ -16,6 +16,7 @@ add_executable(main main.cpp
         net/output.hpp
         net/cong_control.cpp
         net/cong_control.hpp
+        net/sequence.hpp
 )
 
 add_custom_target(setcap

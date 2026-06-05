@@ -21,19 +21,34 @@ class OutputInterface
 {
 public:
     virtual ~OutputInterface() = default;
-    virtual ssize_t send(const TcpSegment& seg, const std::size_t offset, const std::size_t max_size_pl, const std::uint32_t rwnd) = 0;
-    virtual void init(const std::uint32_t src_addr, const std::uint32_t dst_addr, const std::uint16_t src_port, const std::uint16_t dst_port) = 0;
+    virtual ssize_t send(const TcpSegment &seg,
+        const std::size_t offset,
+        const std::size_t max_size_pl,
+        const std::uint32_t rwnd) = 0;
+    virtual void init(const std::uint32_t src_addr,
+        const std::uint32_t dst_addr,
+        const std::uint16_t src_port,
+        const std::uint16_t dst_port) = 0;
 };
+
 // Class responsible for constructing network-level segments and sending them out
 class SegmentOutput final : public OutputInterface
 {
 public:
-    explicit SegmentOutput(IOInterface& io) : io_(io) {}
+    explicit SegmentOutput(IOInterface &io)
+        : io_(io) {}
 
-    ssize_t send(const TcpSegment& seg, const std::size_t offset, const std::size_t max_size_pl, const std::uint32_t rwnd) override;
-    void init(const std::uint32_t src_addr, const std::uint32_t dst_addr, const std::uint16_t src_port, const std::uint16_t dst_port) override;
+    ssize_t send(const TcpSegment &seg,
+        const std::size_t offset,
+        const std::size_t max_size_pl,
+        const std::uint32_t rwnd) override;
+    void init(const std::uint32_t src_addr,
+        const std::uint32_t dst_addr,
+        const std::uint16_t src_port,
+        const std::uint16_t dst_port) override;
+
 private:
-    IOInterface& io_;
+    IOInterface &io_;
     netparser::IpHeader iph_;
     netparser::TcpHeader tcph_;
 };

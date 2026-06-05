@@ -3,6 +3,9 @@
 //
 
 #include "cong_control.hpp"
+#include "sequence.hpp"
+#include "../../netparser/netparser.hpp"
+#include "../util.hpp"
 
 bool CongestionControl::is_dup_ack(const netparser::TcpHeaderView &tcph,
     const std::size_t pl_size,

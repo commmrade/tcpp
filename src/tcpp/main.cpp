@@ -55,7 +55,6 @@ struct TcpSocket
     {
         auto &ctx_ = Context::instance();
         std::unique_lock recv_lock{ ctx_.mx };
-        std::println("USER: TAKE THE READ LOCK");
         auto &conn = ctx_.tcp.get_connection(quad_);
 
         // It isn't supposed to go into TcpConnection::read() until either new data comes in or conneciton is terminated
@@ -134,7 +133,6 @@ public:
         std::unique_lock accept_lock{ ctx_.mx };
         ctx_.tcp.get_accept_var().wait(accept_lock,
             [this, &ctx_] { return ctx_.tcp.has_conn_on_port(port_); });
-        std::println("AFTER ACCEPT WAIT");
         auto quad = ctx_.tcp.pop_conn(port_);
         TcpSocket ret{ quad };
         return ret;
@@ -166,19 +164,16 @@ int main()
     TcpListener listener{};
     listener.bind(8090);
     listener.listen(999);
-    std::println("user: bound and listening");
     auto sock = listener.accept();
     // sock.set_option(ConnectionOption::NAGLE, false);
-    std::println("user: accepted");
     while (true) {
-        std::array<std::byte, 512> buf{};
+        std::array<std::byte, 10000> buf{};
         auto rd = sock.read(buf.data(), buf.size());
         if (rd == 0) {
-            std::println("user: DATA FINISHED, CLOSING...");
             sock.close();
             break;
         } else {
-            std::array<std::byte, 1440 * 150> data{};
+            std::array<std::byte, 1440> data{};
             auto wr = sock.write(std::span<const std::byte>(data.data(), data.size()));
         }
     }
@@ -188,9 +183,7 @@ int main()
     // TcpListener listener{};
     // listener.bind(8090);
     // listener.listen(999);
-    // std::println("user: bound and listening");
     // auto sock = listener.accept();
-    // std::println("user: accepted");
     // sock.shutdown(ShutdownType::WRITE);
 
 

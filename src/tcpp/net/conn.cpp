@@ -56,8 +56,6 @@ bool TcpConnection::on_rst(const netparser::TcpHeaderView &tcph)
     }
     case TcpState::SYN_SENT: {
         // This should signal "connection refused" to the user.
-
-        // TODO: signal state, impl. errno variable
         state_ = TcpState::CLOSED;
         break;
     }
@@ -65,8 +63,6 @@ bool TcpConnection::on_rst(const netparser::TcpHeaderView &tcph)
     case TcpState::FIN_WAIT_1:
     case TcpState::FIN_WAIT_2:
     case TcpState::CLOSE_WAIT:
-        // TODO: signal "connection reset" errno
-
         state_ = TcpState::CLOSED;
         break;
     case TcpState::CLOSING:
@@ -109,7 +105,6 @@ bool TcpConnection::on_syn(const netparser::TcpHeaderView &tcph)
 
         state_ = TcpState::CLOSED;
 
-        // TODO: "connection reset" error errno
 
         return false;// Signal that we should return, then delete TCB.
     }
@@ -123,15 +118,12 @@ bool TcpConnection::on_syn(const netparser::TcpHeaderView &tcph)
 
 bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
 {
-    std::println("Got ack n {}, SEND.NXT {}, UNA", tcph.ackn(), send_.nxt(), send_.una());
     const auto old_wnd = send_.wnd();
 
     switch (state_) {
     case TcpState::SYN_RCVD: {
         // got ACK for our SYNACK
-        std::println("Ack is invalid: una {} < ackn {} <= nxt {}", send_.una(), tcph.ackn(), send_.nxt());
         if (!is_between_wrapped(send_.una(), tcph.ackn(), send_.nxt() + 1)) {
-            std::println("ACK IS NOT VALID. RST SET HERE");
             // tcph_.rst(true);
             // send(tcph.ackn(), 0);
             TcpSegment rst_seg{ tcph.ackn(), {} };
@@ -179,7 +171,6 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
                 // if empty, probably means that SYN/FIN was ACKed
                 // erase_send_data(acked_bytes_n);
             }
-            std::println("SEND.UNA IS SET TO {}", tcph.ackn());
             send_.set_una(tcph.ackn());
         } else if (wrapping_lt(tcph.ackn(), send_.una() + 1)) {
             // duplicate ACK
@@ -211,10 +202,7 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
     case TcpState::LAST_ACK: {
         // The only thing that can arrive in this state is an acknowledgment of our FIN
         send_buf_.consume_seq(tcph.ackn());
-        if (!send_buf_.empty()) {
-            std::println("LAST_ACK: Fin was not ACKed");
-            return false;
-        }
+        if (!send_buf_.empty()) { return false; }
 
         state_ = TcpState::CLOSED;
         break;
@@ -266,7 +254,7 @@ bool TcpConnection::on_ack(const netparser::TcpHeaderView &tcph)
 
 void TcpConnection::update_recv_window()
 {
-    const std::size_t buffer_size = std::numeric_limits<std::uint16_t>::max();
+    constexpr std::size_t buffer_size = std::numeric_limits<std::uint16_t>::max();
     const auto free_space = buffer_size - recv_buf_.size_payload_bytes();
 
     if (free_space == 0) {
@@ -647,23 +635,9 @@ bool TcpConnection::handle_send()
         if (can_send) {
             s_timer_.stop();
 
-            std::println("SWS SEnding: {} {} {} {}, flight: {}",
-                send_buf_bytes,
-                usable_wnd,
-                bytes_to_send,
-                unsent,
-                in_flight_n);
-
-
             send_data(bytes_to_send);
         } else {
-            std::println("Start SWS override timer. send nxt: {}, send una: {}, data len {}",
-                send_.nxt(),
-                send_.una(),
-                bytes_to_send);
-
             const auto &seg = send_buf_.find(send_.nxt());
-            std::println("Afetr SWS START OVERRIDE");
             s_timer_.start(clock_->now(),
                 RttMeasurement::SWS_OVERRIDE_MS,
                 seg.seq_start(),
@@ -795,7 +769,6 @@ void TcpConnection::open_passive(const netparser::IpHeaderView &iph, const netpa
     // Second, check for an ACK:
     if (tcph.ack()) {
         // ACK shouldn't be set in initial SYN segment
-        std::println("RST IS SET IN ACCEPT");
 
         TcpSegment rst_seg{ tcph.ackn(), {} };
         rst_seg.set_rst(true);
@@ -920,7 +893,6 @@ void TcpConnection::update_timers()
         // Timer expired, send pure ACK
         // Can I piggyback it at this point??
         if (should_del_ack) {
-            std::println("DELACK TIMER EXPIRED");
             TcpSegment ack_seg{ send_.nxt(), {} };
             ack_seg.set_ack(true);
             ack_seg.set_ackn(recv_.nxt());

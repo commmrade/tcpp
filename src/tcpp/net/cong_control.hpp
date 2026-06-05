@@ -4,13 +4,14 @@
 
 #ifndef TCPP_CONG_CONTROL_HPP
 #define TCPP_CONG_CONTROL_HPP
-#include "conn.hpp"
-
 #include <cstddef>
+#include <cstdint>
 
 namespace netparser {
 class TcpHeaderView;
 }
+
+class SendSequence;
 
 class CongestionControl
 {
