@@ -198,15 +198,8 @@ cmake --build out/build/unixlike-gcc-debug
 The stack needs `CAP_NET_ADMIN` to create and configure the TUN device. The easiest path is the provided script:
 
 ```bash
-cmake --build build --target setcap   # grants CAP_NET_ADMIN to the binary (requires sudo once)
-./run.sh                              # starts the stack and configures the TUN interface
+sudo ./executable
 ```
-
-What `run.sh` does:
-
-1. Starts `main` in the background (creates `tun1`, stack listens on `10.0.0.2`)
-2. Assigns `10.0.0.1/24` to `tun1` from the host side
-3. Brings the interface up
 
 After that, connecting to `10.0.0.2:8090` from the host exercises the stack. The default `main.cpp` listens on port 8090 and echoes data back.
 
