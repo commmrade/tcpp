@@ -170,7 +170,7 @@ std::pair<std::vector<std::byte>, std::uint32_t> TcpReceiverBuffer::read(const s
         const auto read_n = std::min(to_read, iter->payload_size());
         const auto pload = iter->payload();
 
-        std::copy(pload.begin(), pload.begin() + static_cast<std::ptrdiff_t>(read_n), std::back_inserter(res));
+        std::copy(pload.begin(), std::next(pload.begin(), static_cast<std::ptrdiff_t>(read_n)), std::back_inserter(res));
 
         to_read -= read_n;
         // If we read whole segment, then also skip SYN/FIN that there may be

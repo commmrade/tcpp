@@ -45,7 +45,7 @@ private:
     void erase(const std::size_t range_to)
     {
         assert(range_to <= payload_.size());
-        payload_.erase(payload_.begin(), payload_.begin() + static_cast<std::ptrdiff_t>(range_to));
+        payload_.erase(payload_.begin(), std::next(payload_.begin(), static_cast<std::ptrdiff_t>(range_to)));
         seq_n_ += range_to;
     }
 

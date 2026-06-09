@@ -48,7 +48,7 @@ ssize_t SegmentOutput::send(const TcpSegment &seg,
 
     const auto payload = seg.payload();
     if (!payload.empty()) {
-        std::copy(payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(max_size_pl), std::back_inserter(buf));
+        std::copy(payload.begin(), std::next(payload.begin(), static_cast<std::ptrdiff_t>(max_size_pl)), std::back_inserter(buf));
     }
 
     const auto written = io_.write(std::span<const std::byte>{ buf.data(), buf.size() });

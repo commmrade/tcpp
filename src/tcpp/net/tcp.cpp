@@ -66,6 +66,7 @@ void Tcp::process_packet()
     }
 
     // It makes sence to call on_tick on syn_recv_conns, because they may retransmit SYNACK
+    // This implies that there is never data in FIN segment I guess?
     for (const auto &[quad, conn] : syn_recv_connections_) { conn->on_tick(); }
     for (auto iter = established_connections_.begin(); iter != established_connections_.end();) {
         auto &conn = iter->second;

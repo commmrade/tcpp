@@ -160,12 +160,10 @@ int main()
 {
     auto net_thread = run_underlying_stuff();
 
-
     TcpListener listener{};
     listener.bind(8090);
     listener.listen(999);
     auto sock = listener.accept();
-    // sock.set_option(ConnectionOption::NAGLE, false);
     while (true) {
         std::array<std::byte, 10000> buf{};
         auto rd = sock.read(buf.data(), buf.size());
@@ -199,7 +197,7 @@ int main()
     //     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     // }
 
-    sleep(100);
+    // sleep(100);
     net_thread.request_stop();
     net_thread.join();
     return 0;

@@ -645,7 +645,7 @@ void TcpHeader::calculate_checksum(const netparser::IpHeader &iph, std::span<con
         }
 
         // Odd trailing byte — pad with zero
-        if (length == 1) { sum += *reinterpret_cast<const uint8_t *>(ptr); }//NOLINT
+        if (length == 1) { sum += static_cast<uint32_t>(*reinterpret_cast<const uint8_t *>(ptr)) << 8; }
     };
 
     const auto opt_bytes = options_.serialize();

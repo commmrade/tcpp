@@ -922,10 +922,6 @@ void TcpConnection::close()
 
 ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
 {
-    // TODO: Handle FIN, return 0.
-    // How the fuck do i even check fin
-    // I think, read should kinda stop if it comes across FIN segment, and then we can check if front() contains FIN in which case return 0
-
     auto [data, seq_n] = recv_buf_.read(buf_size, recv_.nxt());
     const auto &back_segment = recv_buf_.back();
 
@@ -936,6 +932,7 @@ ssize_t TcpConnection::read(void *buf, const std::size_t buf_size)
         } else {
             // We read data, and came across a FIN
             seq_n = back_segment.seq_start();// That is to leave 1 byte in a segment (FIN), which I will read
+            // This implies that there is never data in FIN segment I guess?
         }
     }
 
